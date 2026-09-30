@@ -72,7 +72,8 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure
-          cmake --install build --prefix dist/windows
+          # Qt's deploy script (windeployqt) needs an absolute install prefix.
+          cmake --install build --prefix "${{ github.workspace }}/dist/windows"
           Compress-Archive -Path dist/windows/* -DestinationPath dist/Easel-windows-x64.zip
 
       - name: Upload artifact
