@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Easel
+GenericName=Image Editor
+Comment=Balanced layered image editor
+Exec=easel %f
+Icon=easel
+Terminal=false
+Categories=Graphics;RasterGraphics;2DGraphics;
+MimeType=image/png;image/jpeg;image/webp;image/bmp;
