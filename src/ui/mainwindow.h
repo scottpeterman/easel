@@ -1,5 +1,6 @@
 #pragma once
 
+#include "history.h"
 #include "tilepyramid.h"
 #include "tilestore.h"
 
@@ -12,10 +13,14 @@ namespace easel {
 struct LoadedDocument;
 }
 
+class BrushOptionsBar;
+class BrushTool;
 class CanvasView;
 class ColorPanel;
+class QAction;
 class QLabel;
 class QListWidget;
+class QListWidgetItem;
 class QMenu;
 
 class MainWindow : public QMainWindow
@@ -31,6 +36,13 @@ public:
     void openImage(const QString &path);
 
     CanvasView *canvasView() const { return m_view; }
+    easel::TileStore *layer() const { return m_layer.get(); }
+    BrushTool *brushTool() const { return m_brush; }
+    const easel::History &history() const { return m_history; }
+
+public slots:
+    void undo();
+    void redo();
 
 signals:
     void documentOpened(const QString &path, bool ok);
@@ -40,15 +52,18 @@ protected:
 
 private:
     void createActions();
+    void createToolBars();
     void createDocks();
     void createStatusBar();
     void showNewDialog();
     void showOpenDialog();
     void showAbout();
     void setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
-                     const QString &name, easel::TilePyramid pyramid = {});
+                     const QString &name, const QString &historyLabel,
+                     easel::TilePyramid pyramid = {});
     void finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc);
-    void logHistory(const QString &entry);
+    void historyChanged();
+    void historyItemClicked(QListWidgetItem *item);
     void updateTitle();
     void updateMemoryLabel();
 
@@ -56,12 +71,19 @@ private:
     QSize m_size;
     QString m_name;
     QString m_lastDir;
+    easel::History m_history;
 
     CanvasView *m_view = nullptr;
+    BrushTool *m_brush = nullptr;
+    BrushOptionsBar *m_options = nullptr;
     QListWidget *m_layers = nullptr;
-    QListWidget *m_history = nullptr;
+    QListWidget *m_historyList = nullptr;
     ColorPanel *m_color = nullptr;
     QMenu *m_viewMenu = nullptr;
+    QAction *m_undoAct = nullptr;
+    QAction *m_redoAct = nullptr;
+    QAction *m_brushAct = nullptr;
+    QAction *m_eraserAct = nullptr;
 
     QLabel *m_posLabel = nullptr;
     QLabel *m_zoomLabel = nullptr;

@@ -4,13 +4,19 @@ A balanced layered image editor: Paint.NET approachability with Photoshop's laye
 
 ## Status
 
-M0. Opens images into a sparse tile store (64×64, RGBA16F, linear light) and draws them on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux), with pan, zoom and rotate. Zoomed-out views draw from a mip pyramid, so work per frame scales with window size, not canvas size. Layers, painting and tools arrive by milestone.
+M1. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step.
+
+The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Opening an image runs in the background. Layers, selections and the rest arrive by milestone.
 
 ## Controls
 
 | Action | Input |
 | --- | --- |
-| Pan | Middle-drag, or hold Space and left-drag |
+| Paint | Left-drag or pen |
+| Brush / Eraser | B / E |
+| Smaller / larger brush | [ / ] |
+| Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
+| Pan | Middle-drag, or hold Space and drag |
 | Zoom at cursor | Mouse wheel |
 | Rotate view | Shift + wheel, or Ctrl+[ and Ctrl+] |
 | Reset rotation | Ctrl+Shift+R |

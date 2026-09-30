@@ -9,6 +9,10 @@ add_library(easel_core STATIC
     tileatlas.cpp
     documentio.h
     documentio.cpp
+    brush.h
+    brush.cpp
+    history.h
+    history.cpp
 )
 
 target_include_directories(easel_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

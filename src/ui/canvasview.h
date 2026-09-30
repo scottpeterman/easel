@@ -1,5 +1,6 @@
 #pragma once
 
+#include "brush.h"
 #include "tileatlas.h"
 #include "tilepyramid.h"
 #include "tilestore.h"
@@ -18,6 +19,19 @@ class QRhiGraphicsPipeline;
 class QRhiSampler;
 class QRhiShaderResourceBindings;
 class QRhiTexture;
+
+// Something that acts on the canvas with pen or mouse strokes (brush, eraser).
+// Positions are in canvas pixels; pressure is 0..1 (1 for a mouse).
+class CanvasTool
+{
+public:
+    virtual ~CanvasTool() = default;
+    virtual void press(const easel::StrokeSample &s) = 0;
+    virtual void move(const easel::StrokeSample &s) = 0;
+    virtual void release(const easel::StrokeSample &s) = 0;
+    // Diameter of the cursor circle in canvas pixels; 0 hides it.
+    virtual double cursorDiameter() const = 0;
+};
 
 // GPU canvas: draws one TileStore with pan, zoom and rotate through QRhi
 // (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux).
@@ -62,6 +76,11 @@ public:
     // Pulls dirty tiles from the store and schedules a redraw.
     void refresh();
 
+    // Left-button / pen strokes go to the tool; null means view-only.
+    void setTool(CanvasTool *tool);
+    CanvasTool *tool() const { return m_tool; }
+    bool isStroking() const { return m_stroking; }
+
     void setUploadBudget(int tilesPerFrame) { m_uploadBudget = qMax(1, tilesPerFrame); }
     int uploadBudget() const { return m_uploadBudget; }
 
@@ -81,6 +100,7 @@ public slots:
 signals:
     void viewChanged(double zoom, double rotation);
     void cursorMoved(const QPointF &canvasPos, bool insideCanvas);
+    void strokeFinished();
 
 protected:
     void initialize(QRhiCommandBuffer *cb) override;
@@ -91,6 +111,8 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void tabletEvent(QTabletEvent *event) override;
+    void leaveEvent(QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
@@ -101,6 +123,13 @@ private:
     void resetResidency();
     void updateCursor();
     void emitViewChanged();
+    bool cursorVisible() const;
+    easel::StrokeSample sampleAt(const QPointF &viewPos, double pressure) const;
+    void beginStroke(const easel::StrokeSample &s);
+    void continueStroke(const easel::StrokeSample &s);
+    void endStroke(const easel::StrokeSample &s);
+    void trackCursor(const QPointF &viewPos);
+    void startPan(const QPointF &viewPos);
 
     easel::TileStore *m_store = nullptr;
     QSize m_canvasSize;
@@ -133,4 +162,10 @@ private:
     bool m_spaceHeld = false;
     bool m_panning = false;
     QPointF m_lastPos;
+
+    CanvasTool *m_tool = nullptr;
+    bool m_stroking = false;
+    easel::StrokeSample m_lastSample;
+    bool m_hovering = false;
+    QPointF m_cursorCanvas;
 };

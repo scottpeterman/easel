@@ -1,0 +1,98 @@
+#include "history.h"
+
+#include <algorithm>
+
+namespace easel {
+
+History::History(qint64 budgetBytes)
+    : m_budget(std::max<qint64>(budgetBytes, 0))
+{
+}
+
+void History::reset(const QString &baseLabel)
+{
+    m_baseLabel = baseLabel;
+    m_entries.clear();
+    m_position = 0;
+    m_bytes = 0;
+    m_dropped = 0;
+}
+
+qint64 History::bytesOf(const QHash<TileCoord, QImage> &tiles)
+{
+    qint64 n = 0;
+    for (auto it = tiles.cbegin(); it != tiles.cend(); ++it)
+        if (!it.value().isNull())
+            n += TileStore::BytesPerTile;
+    return n;
+}
+
+void History::push(const QString &label, QHash<TileCoord, QImage> tiles)
+{
+    while (m_entries.size() > m_position) {
+        m_bytes -= m_entries.last().bytes;
+        m_entries.removeLast();
+    }
+    Entry e{label, std::move(tiles), 0};
+    e.bytes = bytesOf(e.tiles);
+    m_bytes += e.bytes;
+    m_entries.append(std::move(e));
+    m_position = m_entries.size();
+    enforceBudget();
+}
+
+void History::swap(Entry &e, TileStore &store)
+{
+    for (auto it = e.tiles.begin(); it != e.tiles.end(); ++it) {
+        const QImage current = store.tile(it.key());
+        store.setTile(it.key(), it.value());
+        it.value() = current;
+    }
+    m_bytes -= e.bytes;
+    e.bytes = bytesOf(e.tiles);
+    m_bytes += e.bytes;
+}
+
+void History::undo(TileStore &store)
+{
+    if (!canUndo())
+        return;
+    --m_position;
+    swap(m_entries[m_position], store);
+}
+
+void History::redo(TileStore &store)
+{
+    if (!canRedo())
+        return;
+    swap(m_entries[m_position], store);
+    ++m_position;
+}
+
+void History::jumpTo(qsizetype position, TileStore &store)
+{
+    position = std::clamp<qsizetype>(position, 0, m_entries.size());
+    while (m_position > position)
+        undo(store);
+    while (m_position < position)
+        redo(store);
+}
+
+void History::setBudget(qint64 bytes)
+{
+    m_budget = std::max<qint64>(bytes, 0);
+    enforceBudget();
+}
+
+void History::enforceBudget()
+{
+    // Keep at least the newest entry, whatever its size.
+    while (m_bytes > m_budget && m_position > 1) {
+        m_bytes -= m_entries.first().bytes;
+        m_entries.removeFirst();
+        --m_position;
+        ++m_dropped;
+    }
+}
+
+} // namespace easel

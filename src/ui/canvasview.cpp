@@ -5,11 +5,13 @@
 #include <QKeyEvent>
 #include <QMatrix4x4>
 #include <QMouseEvent>
+#include <QTabletEvent>
 #include <QWheelEvent>
 #include <rhi/qrhi.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
 using easel::AtlasSlot;
@@ -35,6 +37,18 @@ struct FrameUniforms {
     float checker[4];
 };
 static_assert(sizeof(FrameUniforms) == 96);
+
+// Overlay line vertex: canvas position plus an sRGB colour.
+struct OverlayVertex {
+    float x, y;
+    float r, g, b, a;
+};
+constexpr double kTwoPi = 6.283185307179586;
+constexpr int kCircleSegments = 64;
+constexpr int kCanvasOutlineVertices = 5;
+constexpr int kRingVertices = kCircleSegments + 1;
+constexpr int kOverlayVertices = kCanvasOutlineVertices + 2 * kRingVertices;
+constexpr float kOutlineShade = 30.0f / 255.0f;
 
 QShader loadShader(const QString &path)
 {
@@ -62,6 +76,7 @@ CanvasView::CanvasView(QWidget *parent)
     : QRhiWidget(parent)
 {
     setMouseTracking(true);
+    setAttribute(Qt::WA_TabletTracking); // pen hover moves the brush cursor
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(200, 150);
 }
@@ -160,7 +175,8 @@ void CanvasView::createPipelines()
     m_quad.reset(r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, 8 * sizeof(float)));
     m_quad->create();
 
-    m_outline.reset(r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, 5 * 2 * sizeof(float)));
+    m_outline.reset(r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                                 kOverlayVertices * sizeof(OverlayVertex)));
     m_outline->create();
 
     m_nearest.reset(r->newSampler(QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None,
@@ -209,8 +225,11 @@ void CanvasView::createPipelines()
         {QRhiShaderStage::Fragment, loadShader(QStringLiteral(":/shaders/outline.frag.qsb"))},
     });
     QRhiVertexInputLayout outlineLayout;
-    outlineLayout.setBindings({{2 * sizeof(float)}});
-    outlineLayout.setAttributes({{0, 0, QRhiVertexInputAttribute::Float2, 0}});
+    outlineLayout.setBindings({{sizeof(OverlayVertex)}});
+    outlineLayout.setAttributes({
+        {0, 0, QRhiVertexInputAttribute::Float2, offsetof(OverlayVertex, x)},
+        {0, 1, QRhiVertexInputAttribute::Float4, offsetof(OverlayVertex, r)},
+    });
     m_outlinePipeline->setVertexInputLayout(outlineLayout);
     m_outlinePipeline->setShaderResourceBindings(m_outlineBindings.get());
     m_outlinePipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
@@ -365,9 +384,34 @@ void CanvasView::render(QRhiCommandBuffer *cb)
     uni.checker[3] = 0.0f;
     u->updateDynamicBuffer(m_uniforms.get(), 0, sizeof(uni), &uni);
 
-    const float w = float(m_canvasSize.width()), h = float(m_canvasSize.height());
-    const float outline[] = {0, 0, w, 0, w, h, 0, h, 0, 0};
-    u->updateDynamicBuffer(m_outline.get(), 0, sizeof(outline), outline);
+    // Overlay: canvas outline, then the brush cursor as a light and a dark ring
+    // one screen pixel apart, so it shows on any content.
+    OverlayVertex overlay[kOverlayVertices];
+    {
+        const float w = float(m_canvasSize.width()), h = float(m_canvasSize.height());
+        const float k = kOutlineShade;
+        const float corners[5][2] = {{0, 0}, {w, 0}, {w, h}, {0, h}, {0, 0}};
+        for (int i = 0; i < kCanvasOutlineVertices; ++i)
+            overlay[i] = {corners[i][0], corners[i][1], k, k, k, 1.0f};
+    }
+    const bool showCursor = cursorVisible();
+    if (showCursor) {
+        const double px1 = 1.0 / m_zoom; // one screen pixel in canvas units
+        const double inner = std::max(m_tool->cursorDiameter() * 0.5, 2.0 * px1);
+        const double radii[2] = {inner + px1, inner};
+        const float shade[2] = {1.0f, kOutlineShade};
+        for (int ring = 0; ring < 2; ++ring) {
+            for (int i = 0; i < kRingVertices; ++i) {
+                const double a = kTwoPi * i / kCircleSegments;
+                overlay[kCanvasOutlineVertices + ring * kRingVertices + i] = {
+                    float(m_cursorCanvas.x() + std::cos(a) * radii[ring]),
+                    float(m_cursorCanvas.y() + std::sin(a) * radii[ring]),
+                    shade[ring], shade[ring], shade[ring], 1.0f};
+            }
+        }
+    }
+    const int overlayCount = showCursor ? kOverlayVertices : kCanvasOutlineVertices;
+    u->updateDynamicBuffer(m_outline.get(), 0, quint32(overlayCount * sizeof(OverlayVertex)), overlay);
 
     // Draw.
     const bool nearest = plan.level == 0 && m_zoom * dpr >= 1.0 - 1e-9;
@@ -394,7 +438,11 @@ void CanvasView::render(QRhiCommandBuffer *cb)
     cb->setShaderResources(m_outlineBindings.get());
     const QRhiCommandBuffer::VertexInput outlineInput(m_outline.get(), 0);
     cb->setVertexInput(0, 1, &outlineInput);
-    cb->draw(5);
+    cb->draw(kCanvasOutlineVertices);
+    if (showCursor) {
+        cb->draw(kRingVertices, 1, kCanvasOutlineVertices);
+        cb->draw(kRingVertices, 1, kCanvasOutlineVertices + kRingVertices);
+    }
 
     cb->endPass();
 
@@ -498,14 +546,80 @@ void CanvasView::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
+void CanvasView::setTool(CanvasTool *tool)
+{
+    if (m_stroking)
+        endStroke(m_lastSample);
+    m_tool = tool;
+    updateCursor();
+    update();
+}
+
+bool CanvasView::cursorVisible() const
+{
+    return m_tool && m_hovering && !m_spaceHeld && !m_panning && m_tool->cursorDiameter() > 0.0;
+}
+
+easel::StrokeSample CanvasView::sampleAt(const QPointF &viewPos, double pressure) const
+{
+    return {viewToCanvas(viewPos), pressure};
+}
+
+void CanvasView::beginStroke(const easel::StrokeSample &s)
+{
+    if (!m_tool)
+        return;
+    m_stroking = true;
+    m_lastSample = s;
+    m_tool->press(s);
+    refresh();
+}
+
+void CanvasView::continueStroke(const easel::StrokeSample &s)
+{
+    m_lastSample = s;
+    m_tool->move(s);
+    refresh();
+}
+
+void CanvasView::endStroke(const easel::StrokeSample &s)
+{
+    m_stroking = false;
+    m_tool->release(s);
+    refresh();
+    emit strokeFinished();
+}
+
+void CanvasView::trackCursor(const QPointF &viewPos)
+{
+    m_cursorCanvas = viewToCanvas(viewPos);
+    m_hovering = true;
+    const bool inside = m_cursorCanvas.x() >= 0 && m_cursorCanvas.y() >= 0
+                        && m_cursorCanvas.x() < m_canvasSize.width()
+                        && m_cursorCanvas.y() < m_canvasSize.height();
+    emit cursorMoved(m_cursorCanvas, inside);
+    if (m_tool)
+        update();
+}
+
+void CanvasView::startPan(const QPointF &viewPos)
+{
+    m_panning = true;
+    m_lastPos = viewPos;
+    updateCursor();
+}
+
 void CanvasView::mousePressEvent(QMouseEvent *event)
 {
     const bool panButton = event->button() == Qt::MiddleButton
                            || (event->button() == Qt::LeftButton && m_spaceHeld);
     if (panButton) {
-        m_panning = true;
-        m_lastPos = event->position();
-        updateCursor();
+        startPan(event->position());
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && m_tool && !m_stroking) {
+        beginStroke(sampleAt(event->position(), 1.0));
         event->accept();
         return;
     }
@@ -518,11 +632,10 @@ void CanvasView::mouseMoveEvent(QMouseEvent *event)
         m_pan += event->position() - m_lastPos;
         m_lastPos = event->position();
         update();
+    } else if (m_stroking) {
+        continueStroke(sampleAt(event->position(), 1.0));
     }
-    const QPointF c = viewToCanvas(event->position());
-    const bool inside = c.x() >= 0 && c.y() >= 0 && c.x() < m_canvasSize.width()
-                        && c.y() < m_canvasSize.height();
-    emit cursorMoved(c, inside);
+    trackCursor(event->position());
 }
 
 void CanvasView::mouseReleaseEvent(QMouseEvent *event)
@@ -534,7 +647,58 @@ void CanvasView::mouseReleaseEvent(QMouseEvent *event)
         event->accept();
         return;
     }
+    if (m_stroking && event->button() == Qt::LeftButton) {
+        endStroke(sampleAt(event->position(), 1.0));
+        event->accept();
+        return;
+    }
     QRhiWidget::mouseReleaseEvent(event);
+}
+
+void CanvasView::tabletEvent(QTabletEvent *event)
+{
+    // Accepted tablet events are not re-sent as mouse events, so pen input
+    // arrives here once, with pressure.
+    const QPointF pos = event->position();
+    const double pressure = std::clamp(double(event->pressure()), 0.0, 1.0);
+
+    switch (event->type()) {
+    case QEvent::TabletPress:
+        if (event->button() == Qt::MiddleButton || m_spaceHeld)
+            startPan(pos);
+        else if (event->button() == Qt::LeftButton && m_tool && !m_stroking)
+            beginStroke({viewToCanvas(pos), pressure});
+        break;
+    case QEvent::TabletMove:
+        if (m_panning) {
+            m_pan += pos - m_lastPos;
+            m_lastPos = pos;
+            update();
+        } else if (m_stroking) {
+            continueStroke({viewToCanvas(pos), pressure});
+        }
+        trackCursor(pos);
+        break;
+    case QEvent::TabletRelease:
+        if (m_panning) {
+            m_panning = false;
+            updateCursor();
+        } else if (m_stroking) {
+            // Release reports zero pressure; finish at the last real one.
+            endStroke({viewToCanvas(pos), m_lastSample.pressure});
+        }
+        break;
+    default:
+        break;
+    }
+    event->accept();
+}
+
+void CanvasView::leaveEvent(QEvent *event)
+{
+    m_hovering = false;
+    update();
+    QRhiWidget::leaveEvent(event);
 }
 
 void CanvasView::keyPressEvent(QKeyEvent *event)
@@ -542,6 +706,7 @@ void CanvasView::keyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_spaceHeld = true;
         updateCursor();
+        update();
         event->accept();
         return;
     }
@@ -554,6 +719,7 @@ void CanvasView::keyReleaseEvent(QKeyEvent *event)
         m_spaceHeld = false;
         m_panning = false;
         updateCursor();
+        update();
         event->accept();
         return;
     }
@@ -564,6 +730,8 @@ void CanvasView::focusOutEvent(QFocusEvent *event)
 {
     m_spaceHeld = false;
     m_panning = false;
+    if (m_stroking)
+        endStroke(m_lastSample);
     updateCursor();
     QRhiWidget::focusOutEvent(event);
 }
@@ -574,6 +742,8 @@ void CanvasView::updateCursor()
         setCursor(Qt::ClosedHandCursor);
     else if (m_spaceHeld)
         setCursor(Qt::OpenHandCursor);
+    else if (m_tool)
+        setCursor(Qt::CrossCursor);
     else
         unsetCursor();
 }

@@ -1,11 +1,14 @@
 #include "mainwindow.h"
 
+#include "brushoptionsbar.h"
+#include "brushtool.h"
 #include "canvasview.h"
 #include "colorpanel.h"
 #include "documentio.h"
 #include "newdocumentdialog.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDir>
@@ -23,12 +26,15 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QThreadPool>
+#include <QToolBar>
 
 #include <memory>
 
+using easel::BrushMode;
+
 namespace {
 
-constexpr int kSettingsVersion = 1;
+constexpr int kSettingsVersion = 2;
 
 QString imageFilter()
 {
@@ -46,21 +52,31 @@ MainWindow::MainWindow(QWidget *parent)
     m_view = new CanvasView(this);
     setCentralWidget(m_view);
 
+    m_brush = new BrushTool(this);
+    m_view->setTool(m_brush);
+
     createDocks();
+    createToolBars();
     createActions();
     createStatusBar();
 
     QSettings settings;
     m_lastDir = settings.value(QStringLiteral("lastDir")).toString();
+    m_brush->loadSettings(settings);
+    m_color->setColor(settings.value(QStringLiteral("color"), QColor(Qt::black)).value<QColor>());
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
     if (!settings.contains(QStringLiteral("geometry")))
-        resize(1280, 800);
+        resize(1400, 900);
 
     newDocument(QSize(2000, 1500), Qt::white);
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow()
+{
+    // The canvas holds a pointer to the tool; detach before either goes.
+    m_view->setTool(nullptr);
+}
 
 void MainWindow::createActions()
 {
@@ -76,6 +92,17 @@ void MainWindow::createActions()
     auto *quitAct = file->addAction(tr("&Quit"), this, &QWidget::close);
     quitAct->setShortcut(QKeySequence::Quit);
     quitAct->setMenuRole(QAction::QuitRole);
+
+    QMenu *edit = menuBar()->addMenu(tr("&Edit"));
+    m_undoAct = edit->addAction(tr("&Undo"), this, &MainWindow::undo);
+    m_undoAct->setShortcut(QKeySequence::Undo);
+    m_redoAct = edit->addAction(tr("&Redo"), this, &MainWindow::redo);
+    m_redoAct->setShortcuts({QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y)});
+    edit->addSeparator();
+    auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
+    smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
+    auto *larger = edit->addAction(tr("Larger Brush"), this, [this] { m_brush->scaleSize(1.2); });
+    larger->setShortcut(QKeySequence(Qt::Key_BracketRight));
 
     m_viewMenu = menuBar()->addMenu(tr("&View"));
 
@@ -105,10 +132,43 @@ void MainWindow::createActions()
     m_viewMenu->addSeparator();
     for (QDockWidget *dock : findChildren<QDockWidget *>())
         m_viewMenu->addAction(dock->toggleViewAction());
+    for (QToolBar *bar : findChildren<QToolBar *>())
+        m_viewMenu->addAction(bar->toggleViewAction());
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
     auto *about = help->addAction(tr("&About Easel"), this, &MainWindow::showAbout);
     about->setMenuRole(QAction::AboutRole);
+}
+
+void MainWindow::createToolBars()
+{
+    auto *tools = new QToolBar(tr("Tools"), this);
+    tools->setObjectName(QStringLiteral("ToolsBar"));
+    tools->setMovable(false);
+    tools->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    addToolBar(Qt::LeftToolBarArea, tools);
+
+    auto *group = new QActionGroup(this);
+    m_brushAct = tools->addAction(tr("Brush"), this, [this] { m_brush->setMode(BrushMode::Paint); });
+    m_brushAct->setShortcut(QKeySequence(Qt::Key_B));
+    m_brushAct->setToolTip(tr("Brush (B)"));
+    m_eraserAct = tools->addAction(tr("Eraser"), this, [this] { m_brush->setMode(BrushMode::Erase); });
+    m_eraserAct->setShortcut(QKeySequence(Qt::Key_E));
+    m_eraserAct->setToolTip(tr("Eraser (E)"));
+    for (QAction *a : {m_brushAct, m_eraserAct}) {
+        a->setCheckable(true);
+        group->addAction(a);
+    }
+    m_brushAct->setChecked(true);
+    connect(m_brush, &BrushTool::modeChanged, this, [this](BrushMode mode) {
+        (mode == BrushMode::Erase ? m_eraserAct : m_brushAct)->setChecked(true);
+    });
+
+    m_options = new BrushOptionsBar(m_brush, this);
+    addToolBar(Qt::TopToolBarArea, m_options);
+
+    // The cursor circle follows size changes immediately.
+    connect(m_brush, &BrushTool::settingsChanged, m_view, qOverload<>(&QWidget::update));
 }
 
 void MainWindow::createDocks()
@@ -126,12 +186,16 @@ void MainWindow::createDocks()
     colorDock->setObjectName(QStringLiteral("ColorDock"));
     colorDock->setWidget(m_color);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
+    connect(m_color, &ColorPanel::colorChanged, m_brush, &BrushTool::setColor);
+    m_brush->setColor(m_color->color());
 
-    m_history = new QListWidget;
+    m_historyList = new QListWidget;
     auto *historyDock = new QDockWidget(tr("History"), this);
     historyDock->setObjectName(QStringLiteral("HistoryDock"));
-    historyDock->setWidget(m_history);
+    historyDock->setWidget(m_historyList);
     addDockWidget(Qt::RightDockWidgetArea, historyDock);
+    connect(m_historyList, &QListWidget::itemClicked, this, &MainWindow::historyItemClicked);
+    connect(m_brush, &BrushTool::strokeCommitted, this, &MainWindow::historyChanged);
 }
 
 void MainWindow::createStatusBar()
@@ -166,8 +230,8 @@ void MainWindow::createStatusBar()
 
 void MainWindow::newDocument(const QSize &size, const QColor &background)
 {
-    setDocument(std::make_unique<easel::TileStore>(background), size, tr("Untitled"));
-    logHistory(tr("New %1 × %2").arg(size.width()).arg(size.height()));
+    setDocument(std::make_unique<easel::TileStore>(background), size, tr("Untitled"),
+                tr("New %1 × %2").arg(size.width()).arg(size.height()));
 }
 
 void MainWindow::openImage(const QString &path)
@@ -214,32 +278,85 @@ void MainWindow::finishOpen(const QString &path, quint64 generation, easel::Load
 
     const QFileInfo info(path);
     m_lastDir = info.absolutePath();
-    setDocument(std::move(doc.store), doc.size, info.fileName(), std::move(doc.pyramid));
-    logHistory(tr("Open %1").arg(info.fileName()));
+    setDocument(std::move(doc.store), doc.size, info.fileName(), tr("Open %1").arg(info.fileName()),
+                std::move(doc.pyramid));
     emit documentOpened(path, true);
 }
 
 void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
-                             const QString &name, easel::TilePyramid pyramid)
+                             const QString &name, const QString &historyLabel,
+                             easel::TilePyramid pyramid)
 {
+    // Detach everything from the old document before it's freed.
+    m_brush->setDocument(nullptr, {}, nullptr);
+    m_history.reset(historyLabel);
+
     m_layer = std::move(layer);
     m_size = size;
     m_name = name;
     m_view->setDocument(m_layer.get(), m_size, std::move(pyramid));
+    m_brush->setDocument(m_layer.get(), QRect(QPoint(0, 0), m_size), &m_history);
 
     m_layers->clear();
     m_layers->addItem(m_name == tr("Untitled") ? tr("Background") : m_name);
     m_layers->setCurrentRow(0);
-    m_history->clear();
 
+    historyChanged();
     updateTitle();
     updateMemoryLabel();
 }
 
-void MainWindow::logHistory(const QString &entry)
+void MainWindow::undo()
 {
-    m_history->addItem(entry);
-    m_history->setCurrentRow(m_history->count() - 1);
+    if (!m_layer || m_view->isStroking() || !m_history.canUndo())
+        return;
+    m_history.undo(*m_layer);
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::redo()
+{
+    if (!m_layer || m_view->isStroking() || !m_history.canRedo())
+        return;
+    m_history.redo(*m_layer);
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::historyItemClicked(QListWidgetItem *item)
+{
+    if (!m_layer || m_view->isStroking())
+        return;
+    m_history.jumpTo(m_historyList->row(item), *m_layer);
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::historyChanged()
+{
+    // Row 0 is the base state; row i is "after entry i". Rows past the current
+    // position are undone steps you can still click to redo.
+    const QSignalBlocker block(m_historyList);
+    m_historyList->clear();
+    const QString base = m_history.droppedCount() > 0
+                             ? tr("… %1 older steps").arg(m_history.droppedCount())
+                             : m_history.baseLabel();
+    m_historyList->addItem(base);
+    for (qsizetype i = 0; i < m_history.count(); ++i)
+        m_historyList->addItem(m_history.label(i));
+
+    const QColor undone = palette().color(QPalette::Disabled, QPalette::Text);
+    for (int row = int(m_history.position()) + 1; row < m_historyList->count(); ++row)
+        m_historyList->item(row)->setForeground(undone);
+    m_historyList->setCurrentRow(int(m_history.position()));
+    m_historyList->scrollToItem(m_historyList->currentItem());
+
+    m_undoAct->setEnabled(m_history.canUndo());
+    m_undoAct->setText(m_history.canUndo() ? tr("&Undo %1").arg(m_history.undoLabel()) : tr("&Undo"));
+    m_redoAct->setEnabled(m_history.canRedo());
+    m_redoAct->setText(m_history.canRedo() ? tr("&Redo %1").arg(m_history.redoLabel()) : tr("&Redo"));
+    updateMemoryLabel();
 }
 
 void MainWindow::updateTitle()
@@ -251,10 +368,12 @@ void MainWindow::updateMemoryLabel()
 {
     const qint64 bytes = m_layer ? m_layer->memoryBytes() : 0;
     const qsizetype tiles = m_layer ? m_layer->tileCount() : 0;
-    const QString text = tr("%1 tiles, %2 · GPU %3")
+    const QLocale loc;
+    const QString text = tr("%1 tiles, %2 · Undo %3 · GPU %4")
                              .arg(tiles)
-                             .arg(QLocale().formattedDataSize(bytes),
-                                  QLocale().formattedDataSize(m_view->gpuMemoryBytes()));
+                             .arg(loc.formattedDataSize(bytes),
+                                  loc.formattedDataSize(m_history.memoryBytes()),
+                                  loc.formattedDataSize(m_view->gpuMemoryBytes()));
     if (m_memoryLabel->text() != text)
         m_memoryLabel->setText(text);
 }
@@ -287,5 +406,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue(QStringLiteral("geometry"), saveGeometry());
     settings.setValue(QStringLiteral("windowState"), saveState(kSettingsVersion));
     settings.setValue(QStringLiteral("lastDir"), m_lastDir);
+    settings.setValue(QStringLiteral("color"), m_color->color());
+    m_brush->saveSettings(settings);
     event->accept();
 }
