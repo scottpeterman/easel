@@ -79,6 +79,8 @@ public:
 
     QTransform canvasToView() const;
     QPointF viewToCanvas(const QPointF &viewPos) const;
+    // The canvas's bounding box in view coordinates (rotation included).
+    QRectF canvasViewBounds() const;
 
     // Pulls dirty tiles from the store and schedules a redraw.
     void refresh();
@@ -115,6 +117,7 @@ protected:
     void initialize(QRhiCommandBuffer *cb) override;
     void render(QRhiCommandBuffer *cb) override;
     void releaseResources() override;
+    void resizeEvent(QResizeEvent *event) override;
 
     void wheelEvent(QWheelEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;

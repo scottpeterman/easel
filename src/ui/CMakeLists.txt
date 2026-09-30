@@ -1,6 +1,8 @@
 add_library(easel_ui STATIC
     canvasview.h
     canvasview.cpp
+    canvasarea.h
+    canvasarea.cpp
     brushtool.h
     brushtool.cpp
     brushoptionsbar.h

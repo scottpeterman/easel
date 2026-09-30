@@ -142,6 +142,17 @@ QPointF CanvasView::viewToCanvas(const QPointF &viewPos) const
     return canvasToView().inverted().map(viewPos);
 }
 
+QRectF CanvasView::canvasViewBounds() const
+{
+    return canvasToView().mapRect(QRectF(QPointF(0, 0), QSizeF(m_canvasSize)));
+}
+
+void CanvasView::resizeEvent(QResizeEvent *event)
+{
+    QRhiWidget::resizeEvent(event);
+    emit viewChanged(m_zoom, m_rotation); // the visible area changed
+}
+
 void CanvasView::refresh()
 {
     if (!m_store)
@@ -707,7 +718,7 @@ void CanvasView::mouseMoveEvent(QMouseEvent *event)
     if (m_panning) {
         m_pan += event->position() - m_lastPos;
         m_lastPos = event->position();
-        update();
+        emitViewChanged();
     } else if (m_stroking) {
         continueStroke(sampleAt(event->position(), 1.0));
     }
@@ -750,7 +761,7 @@ void CanvasView::tabletEvent(QTabletEvent *event)
         if (m_panning) {
             m_pan += pos - m_lastPos;
             m_lastPos = pos;
-            update();
+            emitViewChanged();
         } else if (m_stroking) {
             continueStroke({viewToCanvas(pos), pressure});
         }

@@ -2,6 +2,7 @@
 
 #include "brushoptionsbar.h"
 #include "brushtool.h"
+#include "canvasarea.h"
 #include "canvasview.h"
 #include "colorpanel.h"
 #include "documentio.h"
@@ -50,8 +51,8 @@ QString imageFilter()
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    m_view = new CanvasView(this);
-    setCentralWidget(m_view);
+    m_view = new CanvasView;
+    setCentralWidget(new CanvasArea(m_view, this));
 
     m_brush = new BrushTool(this);
     m_eyedropper = new EyedropperTool(this);
