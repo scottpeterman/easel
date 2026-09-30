@@ -10,7 +10,7 @@
 
 class QSettings;
 
-// Brush and eraser. Each mode keeps its own settings (size, opacity, ...).
+// Brush, eraser and smudge. Each mode keeps its own settings (size, opacity, ...).
 // A finished stroke is recorded in the document's history.
 class BrushTool : public QObject, public CanvasTool
 {
@@ -20,6 +20,8 @@ public:
     explicit BrushTool(QObject *parent = nullptr);
 
     void setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history);
+    // Strokes stay inside this selection when it isn't empty.
+    void setSelection(const easel::Selection *selection) { m_selection = selection; }
 
     easel::BrushMode mode() const { return m_mode; }
     void setMode(easel::BrushMode mode);
@@ -56,6 +58,8 @@ private:
     easel::BrushMode m_mode = easel::BrushMode::Paint;
     easel::BrushSettings m_paint;
     easel::BrushSettings m_erase;
+    easel::BrushSettings m_smudge;
+    const easel::Selection *m_selection = nullptr;
     QColor m_color = Qt::black;
     easel::BrushStroke m_stroke;
 };

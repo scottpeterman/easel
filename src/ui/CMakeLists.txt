@@ -13,6 +13,8 @@ add_library(easel_ui STATIC
     colorwheel.cpp
     eyedroppertool.h
     eyedroppertool.cpp
+    selecttools.h
+    selecttools.cpp
     newdocumentdialog.h
     newdocumentdialog.cpp
     mainwindow.h

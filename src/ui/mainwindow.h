@@ -1,6 +1,8 @@
 #pragma once
 
 #include "history.h"
+#include "regionops.h"
+#include "selection.h"
 #include "tilepyramid.h"
 #include "tilestore.h"
 
@@ -15,8 +17,11 @@ struct LoadedDocument;
 
 class BrushOptionsBar;
 class BrushTool;
+class CanvasTool;
 class CanvasView;
 class EyedropperTool;
+class MoveTool;
+class SelectTool;
 class ColorPanel;
 class QAction;
 class QLabel;
@@ -49,12 +54,31 @@ public:
     EyedropperTool *eyedropperTool() const { return m_eyedropper; }
     ColorPanel *colorPanel() const { return m_color; }
     const easel::History &history() const { return m_history; }
+    SelectTool *rectSelectTool() const { return m_rectSelect; }
+    SelectTool *ellipseSelectTool() const { return m_ellipseSelect; }
+    MoveTool *moveTool() const { return m_move; }
+
+    const easel::Selection &selection() const { return m_selection; }
+    void setSelection(const easel::Selection &selection);
+    // Pasted or lifted pixels not yet committed.
+    bool isFloating() const { return m_floating.isActive(); }
+    QPoint floatingPosition() const { return m_floating.position(); }
 
 public slots:
     void undo();
     void redo();
     bool save();
     bool saveAs();
+
+    void cut();
+    void copy();
+    void paste();
+    void deleteSelection();
+    void selectAll();
+    void deselect();
+    // Drops floating pixels where they are (one undo step) / puts them back.
+    void commitFloating();
+    void cancelFloating();
 
 signals:
     void documentOpened(const QString &path, bool ok);
@@ -71,6 +95,19 @@ private:
     void createStatusBar();
     void selectBrushMode(int mode);
     void selectEyedropper();
+    // Switches the canvas tool, committing floating pixels unless it's Move.
+    void activateTool(CanvasTool *tool, bool brushOptions);
+    // Floats the selection (or the whole canvas) so Move can place it.
+    bool liftForMove();
+    void moveDragStarted(const QPointF &pos);
+    void moveDragged(const QPointF &pos);
+    void nudge(const QPoint &delta);
+    // Clears the selected pixels, or discards floating ones, as one undo step.
+    void clearSelected(const QString &label);
+    void storeClip(const QImage &content, const easel::Selection &shape, const QPoint &origin);
+    QRect visibleCanvasRect() const;
+    QRect canvasRect() const { return QRect(QPoint(0, 0), m_size); }
+    void updateSelectionActions();
     void showNewDialog();
     void showOpenDialog();
     void showExportDialog();
@@ -105,12 +142,41 @@ private:
     QListWidget *m_layers = nullptr;
     QListWidget *m_historyList = nullptr;
     ColorPanel *m_color = nullptr;
+    SelectTool *m_rectSelect = nullptr;
+    SelectTool *m_ellipseSelect = nullptr;
+    MoveTool *m_move = nullptr;
+
+    easel::Selection m_selection;
+    easel::FloatingContent m_floating;
+    easel::Selection m_selectionBeforeFloat; // restored on cancel
+    QString m_floatLabel;                    // history label when committed
+    QPoint m_floatStart;                     // where the floating pixels began
+    QPointF m_dragStart;
+    QPoint m_dragOrigin;
+    bool m_moveDragging = false;
+
+    // The last copy, kept at full precision. The system clipboard gets an
+    // 8-bit copy tagged with m_clip.token so a paste can tell it's ours.
+    struct Clip {
+        QImage content;          // RGBA16F, transparent outside the shape
+        easel::Selection shape;  // relative to the content's top-left
+        QPoint origin;           // where it was copied from
+        QByteArray token;
+    } m_clip;
     QMenu *m_viewMenu = nullptr;
     QAction *m_undoAct = nullptr;
     QAction *m_redoAct = nullptr;
     QAction *m_brushAct = nullptr;
     QAction *m_eraserAct = nullptr;
     QAction *m_eyedropperAct = nullptr;
+    QAction *m_smudgeAct = nullptr;
+    QAction *m_rectSelectAct = nullptr;
+    QAction *m_ellipseSelectAct = nullptr;
+    QAction *m_moveAct = nullptr;
+    QAction *m_cutAct = nullptr;
+    QAction *m_copyAct = nullptr;
+    QAction *m_deleteAct = nullptr;
+    QAction *m_deselectAct = nullptr;
     QAction *m_fitAct = nullptr;
     QAction *m_actualAct = nullptr;
 
@@ -118,6 +184,7 @@ private:
     QLabel *m_zoomLabel = nullptr;
     QLabel *m_rotationLabel = nullptr;
     QLabel *m_memoryLabel = nullptr;
+    QLabel *m_selectionLabel = nullptr;
     bool m_reportedRenderFailure = false;
     quint64 m_openGeneration = 0;
     bool m_busy = false;

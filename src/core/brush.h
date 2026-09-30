@@ -1,5 +1,6 @@
 #pragma once
 
+#include "selection.h"
 #include "tilestore.h"
 
 #include <QColor>
@@ -9,6 +10,9 @@
 #include <QPointF>
 #include <QRect>
 
+#include <QSet>
+
+#include <array>
 #include <deque>
 #include <vector>
 
@@ -23,6 +27,9 @@ struct BrushSettings {
     double stabilizer = 0.0; // 0 = raw input, 1 = heavy smoothing
     bool pressureSize = true;
     bool pressureOpacity = false;
+    // Hard, unantialiased dabs centred on pixels: a 1 px brush sets exactly one
+    // pixel. For sprites and pixel art; hardness is ignored.
+    bool pixel = false;
 
     static constexpr double MinSize = 1.0;
     static constexpr double MaxSize = 1000.0;
@@ -32,7 +39,8 @@ struct BrushSettings {
     double spacingAt(double pressure) const;
 };
 
-enum class BrushMode { Paint, Erase };
+// Smudge drags and blends existing colour; opacity is its strength.
+enum class BrushMode { Paint, Erase, Smudge };
 
 struct StrokeSample {
     QPointF pos;
@@ -81,12 +89,15 @@ private:
 // and every touched pixel is recomposited from its pre-stroke value with
 // coverage x opacity. So overlapping dabs within one stroke never exceed the
 // opacity setting, while a new stroke over the old one builds up as expected.
-// Painting is clipped to the canvas bounds.
+// Smudge instead drags colour along the stroke (see smudgeDab). Painting is
+// clipped to the canvas bounds and to the selection, when there is one.
 class BrushStroke
 {
 public:
+    // clip: painting stays inside it when it isn't empty.
     void begin(TileStore *target, const QRect &bounds, const BrushSettings &settings,
-               const QColor &color, BrushMode mode, const StrokeSample &first);
+               const QColor &color, BrushMode mode, const StrokeSample &first,
+               const Selection &clip = {});
     void moveTo(const StrokeSample &raw);
     // Ends the stroke and returns the pre-stroke content of every tile it
     // touched (a null image = the tile didn't exist).
@@ -98,6 +109,8 @@ public:
 private:
     void paintDabs(const QList<StrokeSample> &dabs);
     void paintDab(const StrokeSample &dab);
+    void smudgeDab(const StrokeSample &dab);
+    float coverageAt(double dist, double radius) const;
 
     TileStore *m_target = nullptr;
     TileStore m_before;
@@ -109,7 +122,15 @@ private:
     Stabilizer m_stabilizer;
     DabSpacer m_spacer;
     QHash<TileCoord, std::vector<float>> m_mask;
+    QSet<TileCoord> m_touched;
+    Selection m_clip;
     int m_dabCount = 0;
+
+    // Smudge: colour picked up under the brush, one premultiplied RGBA per
+    // pixel offset from the dab centre.
+    std::vector<std::array<float, 4>> m_carry;
+    std::vector<quint8> m_carryLoaded; // per cell: picked up yet?
+    int m_carryHalf = 0;
 };
 
 } // namespace easel

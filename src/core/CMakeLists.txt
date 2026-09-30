@@ -13,6 +13,10 @@ add_library(easel_core STATIC
     brush.cpp
     history.h
     history.cpp
+    selection.h
+    selection.cpp
+    regionops.h
+    regionops.cpp
 )
 
 target_include_directories(easel_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

@@ -22,7 +22,9 @@ double BrushSettings::dabStrengthAt(double pressure) const
 
 double BrushSettings::spacingAt(double pressure) const
 {
-    return std::max(0.5, std::clamp(spacing, 0.01, 2.0) * diameterAt(pressure));
+    const double step = std::max(0.5, std::clamp(spacing, 0.01, 2.0) * diameterAt(pressure));
+    // Pixel mode snaps dabs to pixels: step at most a pixel so lines stay unbroken.
+    return pixel ? std::min(step, 1.0) : step;
 }
 
 float dabCoverage(double distance, double radius, double hardness)
@@ -121,11 +123,18 @@ void DabSpacer::moveTo(const StrokeSample &to, const BrushSettings &settings,
 // --- Stroke -------------------------------------------------------------------
 
 void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSettings &settings,
-                        const QColor &color, BrushMode mode, const StrokeSample &first)
+                        const QColor &color, BrushMode mode, const StrokeSample &first,
+                        const Selection &clip)
 {
     m_target = target;
     m_before = target->snapshot();
-    m_bounds = bounds;
+    m_clip = clip;
+    m_bounds = clip.isEmpty() ? bounds : (bounds & clip.bounds());
+    m_touched.clear();
+    m_carryHalf = int(std::ceil(settings.diameterAt(1.0) / 2.0)) + 2;
+    const size_t cells = size_t(2 * m_carryHalf + 1) * size_t(2 * m_carryHalf + 1);
+    m_carry.assign(cells, {0, 0, 0, 0});
+    m_carryLoaded.assign(cells, 0);
     m_settings = settings;
     m_mode = mode;
     m_mask.clear();
@@ -168,20 +177,43 @@ QHash<TileCoord, QImage> BrushStroke::end()
         m_spacer.moveTo(s, m_settings, dabs);
     paintDabs(dabs);
 
-    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it)
-        before.insert(it.key(), m_before.tile(it.key()));
+    for (const TileCoord c : std::as_const(m_touched))
+        before.insert(c, m_before.tile(c));
 
     m_target = nullptr;
     m_before = TileStore();
     m_mask.clear();
+    m_touched.clear();
+    m_carry.clear();
     return before;
 }
 
 void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
 {
-    for (const StrokeSample &d : dabs)
-        paintDab(d);
+    for (const StrokeSample &d : dabs) {
+        if (m_mode == BrushMode::Smudge)
+            smudgeDab(d);
+        else
+            paintDab(d);
+    }
 }
+
+float BrushStroke::coverageAt(double dist, double radius) const
+{
+    if (m_settings.pixel)
+        return dist <= radius + 1e-9 ? 1.0f : 0.0f;
+    return dabCoverage(dist, radius, m_settings.hardness);
+}
+
+namespace {
+
+// Pixel mode centres dabs on pixel centres.
+QPointF dabCentre(const QPointF &pos, bool pixel)
+{
+    return pixel ? QPointF(std::floor(pos.x()) + 0.5, std::floor(pos.y()) + 0.5) : pos;
+}
+
+} // namespace
 
 void BrushStroke::paintDab(const StrokeSample &dab)
 {
@@ -192,7 +224,8 @@ void BrushStroke::paintDab(const StrokeSample &dab)
         return;
     ++m_dabCount;
 
-    const double cx = dab.pos.x(), cy = dab.pos.y();
+    const QPointF centre = dabCentre(dab.pos, m_settings.pixel);
+    const double cx = centre.x(), cy = centre.y();
     const QRect box = QRect(QPoint(int(std::floor(cx - radius - 1.0)), int(std::floor(cy - radius - 1.0))),
                             QPoint(int(std::ceil(cx + radius + 1.0)), int(std::ceil(cy + radius + 1.0))))
                       & m_bounds;
@@ -210,6 +243,7 @@ void BrushStroke::paintDab(const StrokeSample &dab)
         std::vector<float> &mask = m_mask[c];
         if (mask.empty())
             mask.assign(size_t(N) * N, 0.0f);
+        m_touched.insert(c);
 
         const QImage beforeImg = m_before.tile(c);
         const auto *before = beforeImg.isNull() ? nullptr
@@ -224,7 +258,9 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                 const float dist = std::sqrt(dx * dx + dy * dy);
                 if (dist >= reach)
                     continue;
-                const float a = dabCoverage(dist, radius, m_settings.hardness) * strength;
+                if (!m_clip.isEmpty() && !m_clip.contains(x, y))
+                    continue;
+                const float a = coverageAt(dist, radius) * strength;
                 if (a <= 0.0f)
                     continue;
 
@@ -244,6 +280,65 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                     out[i] = makePixel(m_color[0] * sa + dr * k, m_color[1] * sa + dg * k,
                                        m_color[2] * sa + db * k, sa + da * k);
                 }
+            }
+        }
+    }
+}
+
+void BrushStroke::smudgeDab(const StrokeSample &dab)
+{
+    // Each dab blends the colour carried from earlier dabs into the canvas,
+    // then picks up some of what it passed over. Strength (the opacity setting)
+    // sets how far colour is dragged: 1 smears it all the way, 0 does nothing.
+    constexpr int N = TileStore::TileSize;
+    const double radius = std::min(std::max(0.5, m_settings.diameterAt(dab.pressure) * 0.5),
+                                   double(m_carryHalf - 1));
+    const float strength = float(std::clamp(m_settings.opacity, 0.0, 1.0))
+                           * float(m_settings.pressureOpacity ? std::clamp(dab.pressure, 0.0, 1.0) : 1.0);
+    ++m_dabCount;
+
+    const QPointF centre = dabCentre(dab.pos, m_settings.pixel);
+    const int ix = int(std::floor(centre.x())), iy = int(std::floor(centre.y()));
+    const int reach = int(std::ceil(radius)) + 1;
+    const QRect box = QRect(ix - reach, iy - reach, 2 * reach + 1, 2 * reach + 1) & m_bounds;
+    if (box.isEmpty())
+        return;
+    const int side = 2 * m_carryHalf + 1;
+
+    for (const TileCoord c : TileStore::tilesIntersecting(box)) {
+        const QRect tr = TileStore::tileRect(c);
+        const QRect part = tr & box;
+        m_touched.insert(c);
+        auto *px = reinterpret_cast<Pixel *>(m_target->writableTile(c).bits());
+
+        for (int y = part.top(); y <= part.bottom(); ++y) {
+            const double dy = y + 0.5 - centre.y();
+            for (int x = part.left(); x <= part.right(); ++x) {
+                if (!m_clip.isEmpty() && !m_clip.contains(x, y))
+                    continue;
+                const double dx = x + 0.5 - centre.x();
+                const float a = coverageAt(std::sqrt(dx * dx + dy * dy), radius);
+                if (a <= 0.0f)
+                    continue;
+
+                Pixel &p = px[(y - tr.top()) * N + (x - tr.left())];
+                const float cur[4] = {float(p.r), float(p.g), float(p.b), float(p.a)};
+                const size_t cell = size_t(y - iy + m_carryHalf) * size_t(side) + size_t(x - ix + m_carryHalf);
+                auto &carry = m_carry[cell];
+                if (!m_carryLoaded[cell]) {
+                    // First time the brush covers this part of itself (the
+                    // first dab, or the brush grew with pressure): pick up only.
+                    carry = {cur[0], cur[1], cur[2], cur[3]};
+                    m_carryLoaded[cell] = 1;
+                    continue;
+                }
+                const float t = a * strength;
+                float out[4];
+                for (int k = 0; k < 4; ++k) {
+                    out[k] = cur[k] + (carry[size_t(k)] - cur[k]) * t;
+                    carry[size_t(k)] += (cur[k] - carry[size_t(k)]) * a * (1.0f - strength);
+                }
+                p = makePixel(out[0], out[1], out[2], out[3]);
             }
         }
     }

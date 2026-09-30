@@ -28,7 +28,8 @@ private:
     };
 
     Control addControl(QWidget *host, const QString &label, int min, int max, const QString &suffix,
-                       std::function<int(int)> spinToSlider, std::function<int(int)> sliderToSpin);
+                       std::function<int(int)> spinToSlider, std::function<int(int)> sliderToSpin,
+                       QLabel **labelOut = nullptr);
     void apply(const std::function<void(easel::BrushSettings &)> &change);
     void syncFromTool();
 
@@ -39,4 +40,6 @@ private:
     Control m_size, m_opacity, m_hardness, m_stabilizer, m_flow, m_spacing;
     QCheckBox *m_pressureSize = nullptr;
     QCheckBox *m_pressureOpacity = nullptr;
+    QCheckBox *m_pixel = nullptr;
+    QLabel *m_opacityLabel = nullptr;
 };

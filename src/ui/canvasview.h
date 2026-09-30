@@ -6,7 +6,9 @@
 #include "tilestore.h"
 
 #include <QPointF>
+#include <QPolygonF>
 #include <QRhiWidget>
+#include <QTimer>
 #include <QSize>
 #include <QTransform>
 
@@ -14,6 +16,7 @@
 #include <memory>
 #include <vector>
 
+class QKeyEvent;
 class QRhiBuffer;
 class QRhiGraphicsPipeline;
 class QRhiSampler;
@@ -36,6 +39,13 @@ public:
     {
         Q_UNUSED(picked);
         Q_UNUSED(previous);
+        return false;
+    }
+    virtual Qt::CursorShape cursorShape() const { return Qt::CrossCursor; }
+    // Keys pressed while the canvas has focus; return true if handled.
+    virtual bool keyPress(QKeyEvent *event)
+    {
+        Q_UNUSED(event);
         return false;
     }
 };
@@ -91,6 +101,10 @@ public:
     CanvasTool *tool() const { return m_tool; }
     // Used instead while Alt is held (the eyedropper, from any tool).
     void setAltTool(CanvasTool *tool) { m_altTool = tool; }
+
+    // Marching ants around this outline (canvas coordinates); empty for none.
+    void setSelectionOutline(const QPolygonF &outline);
+    QPolygonF selectionOutline() const { return m_selectionOutline; }
     bool isStroking() const { return m_stroking; }
 
     void setUploadBudget(int tilesPerFrame) { m_uploadBudget = qMax(1, tilesPerFrame); }
@@ -175,6 +189,9 @@ private:
     std::unique_ptr<QRhiGraphicsPipeline> m_tilePipeline;
     std::unique_ptr<QRhiGraphicsPipeline> m_outlinePipeline;
     std::unique_ptr<QRhiGraphicsPipeline> m_fillPipeline; // same shaders, triangles
+    std::unique_ptr<QRhiGraphicsPipeline> m_linesPipeline; // same shaders, separate segments
+    std::unique_ptr<QRhiBuffer> m_ants;
+    quint32 m_antsCapacity = 0;
 
     bool m_spaceHeld = false;
     bool m_panning = false;
@@ -188,4 +205,8 @@ private:
     easel::StrokeSample m_lastSample;
     bool m_hovering = false;
     QPointF m_cursorCanvas;
+
+    QPolygonF m_selectionOutline;
+    QTimer *m_antsTimer = nullptr;
+    int m_antsPhase = 0;
 };

@@ -8,10 +8,12 @@
 #include "documentio.h"
 #include "eyedroppertool.h"
 #include "newdocumentdialog.h"
+#include "selecttools.h"
 
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
@@ -25,13 +27,17 @@
 #include <QLocale>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPointer>
 #include <QSettings>
 #include <QStatusBar>
 #include <QThreadPool>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUuid>
 
+#include <climits>
+#include <cmath>
 #include <memory>
 
 using easel::BrushMode;
@@ -39,6 +45,7 @@ using easel::BrushMode;
 namespace {
 
 constexpr int kSettingsVersion = 2;
+constexpr char kClipMime[] = "application/x-easel-clip";
 
 QString openFilter()
 {
@@ -65,6 +72,21 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_brush = new BrushTool(this);
     m_eyedropper = new EyedropperTool(this);
+    m_rectSelect = new SelectTool(easel::Selection::Shape::Rect, this);
+    m_ellipseSelect = new SelectTool(easel::Selection::Shape::Ellipse, this);
+    m_move = new MoveTool(this);
+    m_brush->setSelection(&m_selection);
+    for (SelectTool *t : {m_rectSelect, m_ellipseSelect}) {
+        connect(t, &SelectTool::selectionDragged, this, &MainWindow::setSelection);
+        connect(t, &SelectTool::selectionFinished, this, &MainWindow::setSelection);
+    }
+    connect(m_move, &MoveTool::dragStarted, this, &MainWindow::moveDragStarted);
+    connect(m_move, &MoveTool::dragged, this, &MainWindow::moveDragged);
+    connect(m_move, &MoveTool::dragEnded, this, [this](const QPointF &pos) {
+        moveDragged(pos);
+        m_moveDragging = false;
+    });
+    connect(m_move, &MoveTool::nudged, this, &MainWindow::nudge);
     m_view->setTool(m_brush);
     m_view->setAltTool(m_eyedropper);
 
@@ -121,10 +143,43 @@ void MainWindow::createActions()
     m_redoAct = edit->addAction(tr("&Redo"), this, &MainWindow::redo);
     m_redoAct->setShortcuts({QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y)});
     edit->addSeparator();
+    m_cutAct = edit->addAction(tr("Cu&t"), this, &MainWindow::cut);
+    m_cutAct->setShortcut(QKeySequence::Cut);
+    m_copyAct = edit->addAction(tr("&Copy"), this, &MainWindow::copy);
+    m_copyAct->setShortcut(QKeySequence::Copy);
+    auto *pasteAct = edit->addAction(tr("&Paste"), this, &MainWindow::paste);
+    pasteAct->setShortcut(QKeySequence::Paste);
+    m_deleteAct = edit->addAction(tr("&Delete"), this, &MainWindow::deleteSelection);
+    m_deleteAct->setShortcuts({QKeySequence::Delete, QKeySequence(Qt::Key_Backspace)});
+    edit->addSeparator();
+    auto *selectAllAct = edit->addAction(tr("Select &All"), this, &MainWindow::selectAll);
+    selectAllAct->setShortcut(QKeySequence::SelectAll);
+    m_deselectAct = edit->addAction(tr("D&eselect"), this, &MainWindow::deselect);
+    m_deselectAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    edit->addSeparator();
     auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
     smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
     auto *larger = edit->addAction(tr("Larger Brush"), this, [this] { m_brush->scaleSize(1.2); });
     larger->setShortcut(QKeySequence(Qt::Key_BracketRight));
+
+    // Enter drops floating pixels, Escape puts them back (or deselects). Only
+    // while the canvas has focus, so they don't steal keys from dialogs and fields.
+    auto *commitAct = new QAction(tr("Commit"), m_view);
+    commitAct->setShortcuts({QKeySequence(Qt::Key_Return), QKeySequence(Qt::Key_Enter)});
+    commitAct->setShortcutContext(Qt::WidgetShortcut);
+    connect(commitAct, &QAction::triggered, this, &MainWindow::commitFloating);
+    m_view->addAction(commitAct);
+    auto *escapeAct = new QAction(tr("Cancel"), m_view);
+    escapeAct->setShortcut(QKeySequence(Qt::Key_Escape));
+    escapeAct->setShortcutContext(Qt::WidgetShortcut);
+    connect(escapeAct, &QAction::triggered, this, [this] {
+        if (m_floating.isActive())
+            cancelFloating();
+        else
+            deselect();
+    });
+    m_view->addAction(escapeAct);
+    updateSelectionActions();
 
     m_viewMenu = menuBar()->addMenu(tr("&View"));
 
@@ -181,17 +236,35 @@ void MainWindow::createToolBars()
     m_eraserAct = tools->addAction(tr("Eraser"), this, [this] { selectBrushMode(int(BrushMode::Erase)); });
     m_eraserAct->setShortcut(QKeySequence(Qt::Key_E));
     m_eraserAct->setToolTip(tr("Eraser (E)"));
+    m_smudgeAct = tools->addAction(tr("Smudge"), this, [this] { selectBrushMode(int(BrushMode::Smudge)); });
+    m_smudgeAct->setShortcut(QKeySequence(Qt::Key_S));
+    m_smudgeAct->setToolTip(tr("Smudge (S): drags and blends colour"));
     m_eyedropperAct = tools->addAction(tr("Picker"), this, &MainWindow::selectEyedropper);
     m_eyedropperAct->setShortcut(QKeySequence(Qt::Key_I));
     m_eyedropperAct->setToolTip(tr("Eyedropper (I). Hold Alt with any tool to pick once."));
-    for (QAction *a : {m_brushAct, m_eraserAct, m_eyedropperAct}) {
+    tools->addSeparator();
+    m_rectSelectAct = tools->addAction(tr("Rect"), this, [this] { activateTool(m_rectSelect, false); });
+    m_rectSelectAct->setShortcut(QKeySequence(Qt::Key_M));
+    m_rectSelectAct->setToolTip(tr("Rectangle select (M). Shift for a square; click to deselect."));
+    m_ellipseSelectAct = tools->addAction(tr("Ellipse"), this, [this] { activateTool(m_ellipseSelect, false); });
+    m_ellipseSelectAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M));
+    m_ellipseSelectAct->setToolTip(tr("Ellipse select (Shift+M). Shift for a circle."));
+    m_moveAct = tools->addAction(tr("Move"), this, [this] { activateTool(m_move, false); });
+    m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
+    m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
+                             "Enter drops, Escape cancels."));
+    for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
+                       m_ellipseSelectAct, m_moveAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
     m_brushAct->setChecked(true);
     connect(m_brush, &BrushTool::modeChanged, this, [this](BrushMode mode) {
         if (m_view->tool() == m_brush)
-            (mode == BrushMode::Erase ? m_eraserAct : m_brushAct)->setChecked(true);
+            (mode == BrushMode::Erase    ? m_eraserAct
+             : mode == BrushMode::Smudge ? m_smudgeAct
+                                         : m_brushAct)
+                ->setChecked(true);
     });
 
     m_options = new BrushOptionsBar(m_brush, this);
@@ -242,8 +315,10 @@ void MainWindow::createStatusBar()
     m_zoomLabel = new QLabel(this);
     m_rotationLabel = new QLabel(this);
     m_memoryLabel = new QLabel(this);
+    m_selectionLabel = new QLabel(this);
 
     statusBar()->addWidget(m_posLabel, 1);
+    statusBar()->addPermanentWidget(m_selectionLabel);
     statusBar()->addPermanentWidget(m_memoryLabel);
     statusBar()->addPermanentWidget(m_rotationLabel);
     for (QAction *a : {m_fitAct, m_actualAct}) {
@@ -277,14 +352,244 @@ void MainWindow::createStatusBar()
 void MainWindow::selectBrushMode(int mode)
 {
     m_brush->setMode(BrushMode(mode));
-    m_view->setTool(m_brush);
-    m_options->setEnabled(true);
+    activateTool(m_brush, true);
 }
 
 void MainWindow::selectEyedropper()
 {
-    m_view->setTool(m_eyedropper);
-    m_options->setEnabled(false); // brush options don't apply
+    activateTool(m_eyedropper, false); // brush options don't apply
+}
+
+void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
+{
+    if (tool != m_move)
+        commitFloating();
+    m_view->setTool(tool);
+    m_options->setEnabled(brushOptions);
+    QAction *act = tool == m_rectSelect      ? m_rectSelectAct
+                   : tool == m_ellipseSelect ? m_ellipseSelectAct
+                   : tool == m_move          ? m_moveAct
+                   : tool == m_eyedropper    ? m_eyedropperAct
+                                             : nullptr;
+    if (act)
+        act->setChecked(true);
+}
+
+// --- Selection, clipboard and moving ------------------------------------------
+
+void MainWindow::setSelection(const easel::Selection &selection)
+{
+    const easel::Selection clipped = selection.isEmpty() ? easel::Selection() : selection;
+    m_selection = clipped;
+    m_view->setSelectionOutline(clipped.isEmpty() ? QPolygonF() : clipped.outline());
+    updateSelectionActions();
+}
+
+void MainWindow::updateSelectionActions()
+{
+    const bool any = !m_selection.isEmpty();
+    for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct})
+        if (a)
+            a->setEnabled(any);
+    if (m_selectionLabel) {
+        const QRect b = m_selection.bounds();
+        m_selectionLabel->setText(any ? tr("Selection %1 × %2 at %3, %4")
+                                            .arg(b.width()).arg(b.height()).arg(b.x()).arg(b.y())
+                                      : QString());
+    }
+}
+
+void MainWindow::selectAll()
+{
+    commitFloating();
+    setSelection(easel::Selection::rect(canvasRect()));
+}
+
+void MainWindow::deselect()
+{
+    commitFloating();
+    setSelection({});
+}
+
+void MainWindow::storeClip(const QImage &content, const easel::Selection &shape, const QPoint &origin)
+{
+    m_clip.content = content;
+    m_clip.shape = shape;
+    m_clip.origin = origin;
+    m_clip.token = QUuid::createUuid().toByteArray();
+
+    auto *mime = new QMimeData;
+    mime->setImageData(easel::toClipboardImage(content));
+    mime->setData(QString::fromLatin1(kClipMime), m_clip.token);
+    QGuiApplication::clipboard()->setMimeData(mime);
+}
+
+void MainWindow::copy()
+{
+    if (!m_layer || m_selection.isEmpty())
+        return;
+    if (m_floating.isActive()) {
+        const easel::Selection sel = m_floating.selection();
+        storeClip(m_floating.content(), sel.translated(-m_floating.position()), m_floating.position());
+        return;
+    }
+    const easel::Selection sel = m_selection;
+    const QRect b = sel.bounds();
+    storeClip(easel::extractSelection(*m_layer, sel), sel.translated(-b.topLeft()), b.topLeft());
+}
+
+void MainWindow::cut()
+{
+    if (!m_layer || m_selection.isEmpty() || m_view->isStroking())
+        return;
+    copy();
+    clearSelected(tr("Cut"));
+}
+
+void MainWindow::deleteSelection()
+{
+    if (!m_layer || m_selection.isEmpty() || m_view->isStroking())
+        return;
+    clearSelected(tr("Delete"));
+}
+
+void MainWindow::clearSelected(const QString &label)
+{
+    const easel::Selection target = m_selection;
+    QHash<easel::TileCoord, QImage> before;
+    if (m_floating.isActive()) {
+        // Floating pixels just go away: for a paste that's no change at all,
+        // for a lift it's the original area cleared.
+        const bool lifted = m_floating.wasLifted();
+        const easel::Selection origin = m_selectionBeforeFloat;
+        m_floating.cancel();
+        if (lifted)
+            before = easel::clearSelection(*m_layer, origin, canvasRect());
+    } else {
+        before = easel::clearSelection(*m_layer, target, canvasRect());
+    }
+    if (!before.isEmpty())
+        m_history.push(label, std::move(before));
+    setSelection(target);
+    m_view->refresh();
+    historyChanged();
+}
+
+QRect MainWindow::visibleCanvasRect() const
+{
+    const QRectF view = m_view->canvasToView().inverted().mapRect(QRectF(m_view->rect()));
+    return view.toAlignedRect() & canvasRect();
+}
+
+void MainWindow::paste()
+{
+    if (!m_layer || m_view->isStroking())
+        return;
+
+    const QMimeData *mime = QGuiApplication::clipboard()->mimeData();
+    const bool ours = !m_clip.content.isNull() &&
+                      (!mime || !mime->hasImage() || mime->data(QString::fromLatin1(kClipMime)) == m_clip.token);
+    QImage content;
+    easel::Selection shape;
+    QPoint pos;
+    const QRect visible = visibleCanvasRect();
+    if (ours) {
+        // Lossless, with its shape, back where it came from if that's in view.
+        content = m_clip.content;
+        shape = m_clip.shape;
+        pos = QRect(m_clip.origin, content.size()).intersects(visible)
+                  ? m_clip.origin
+                  : visible.center() - QPoint(content.width() / 2, content.height() / 2);
+    } else if (mime && mime->hasImage()) {
+        const QImage image = qvariant_cast<QImage>(mime->imageData());
+        if (image.isNull())
+            return;
+        content = easel::fromClipboardImage(image);
+        pos = visible.isEmpty() ? QPoint(0, 0)
+                                : visible.center() - QPoint(content.width() / 2, content.height() / 2);
+    } else {
+        return;
+    }
+
+    commitFloating();
+    m_selectionBeforeFloat = m_selection;
+    m_floating.paste(m_layer.get(), content, pos, shape, canvasRect());
+    m_floatLabel = tr("Paste");
+    m_floatStart = QPoint(INT_MIN, INT_MIN); // always a change
+    setSelection(m_floating.selection());
+    activateTool(m_move, false);
+    m_view->refresh();
+}
+
+bool MainWindow::liftForMove()
+{
+    if (m_floating.isActive())
+        return true;
+    if (!m_layer)
+        return false;
+    // With nothing selected, Move takes the whole layer.
+    const easel::Selection sel = m_selection.isEmpty() ? easel::Selection::rect(canvasRect()) : m_selection;
+    m_selectionBeforeFloat = m_selection;
+    m_floating.lift(m_layer.get(), sel, canvasRect());
+    if (!m_floating.isActive())
+        return false;
+    m_floatLabel = tr("Move");
+    m_floatStart = m_floating.position();
+    setSelection(m_floating.selection());
+    return true;
+}
+
+void MainWindow::moveDragStarted(const QPointF &pos)
+{
+    m_moveDragging = liftForMove();
+    m_dragStart = pos;
+    m_dragOrigin = m_floating.position();
+}
+
+void MainWindow::moveDragged(const QPointF &pos)
+{
+    if (!m_moveDragging || !m_floating.isActive())
+        return;
+    const QPointF d = pos - m_dragStart;
+    m_floating.moveTo(m_dragOrigin + QPoint(int(std::lround(d.x())), int(std::lround(d.y()))));
+    setSelection(m_floating.selection());
+    m_view->refresh();
+}
+
+void MainWindow::nudge(const QPoint &delta)
+{
+    if (m_moveDragging || !liftForMove())
+        return;
+    m_floating.moveBy(delta);
+    setSelection(m_floating.selection());
+    m_view->refresh();
+}
+
+void MainWindow::commitFloating()
+{
+    if (!m_floating.isActive())
+        return;
+    if (m_floating.position() == m_floatStart) {
+        // Lifted and put back where it was: nothing to record.
+        cancelFloating();
+        return;
+    }
+    const easel::Selection placed = m_floating.selection();
+    m_history.push(m_floatLabel, m_floating.commit());
+    m_moveDragging = false;
+    setSelection(placed);
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::cancelFloating()
+{
+    if (!m_floating.isActive())
+        return;
+    m_floating.cancel();
+    m_moveDragging = false;
+    setSelection(m_selectionBeforeFloat);
+    m_view->refresh();
 }
 
 void MainWindow::newDocument(const QSize &size, const QColor &background)
@@ -376,6 +681,7 @@ bool MainWindow::saveDocumentTo(const QString &path, bool wait)
 {
     if (!m_layer)
         return false;
+    commitFloating();
     // The snapshot shares tiles with the live document (copy-on-write), so
     // painting can go on while it's written out.
     easel::TileStore snapshot = m_layer->snapshot();
@@ -434,6 +740,7 @@ void MainWindow::finishSave(const QString &path, quint64 stateId, quint64 docGen
 
 bool MainWindow::maybeSave()
 {
+    commitFloating();
     if (!isModified())
         return true;
     const auto answer = QMessageBox::warning(
@@ -452,6 +759,9 @@ void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSiz
                              easel::TilePyramid pyramid, const QString &path)
 {
     // Detach everything from the old document before it's freed.
+    m_floating.cancel();
+    m_moveDragging = false;
+    setSelection({});
     m_brush->setDocument(nullptr, {}, nullptr);
     m_eyedropper->setDocument(nullptr, {});
     m_history.reset(historyLabel);
@@ -477,7 +787,14 @@ void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSiz
 
 void MainWindow::undo()
 {
-    if (!m_layer || m_view->isStroking() || !m_history.canUndo())
+    if (!m_layer || m_view->isStroking())
+        return;
+    if (m_floating.isActive()) {
+        // Undoing an uncommitted move or paste is just putting it back.
+        cancelFloating();
+        return;
+    }
+    if (!m_history.canUndo())
         return;
     m_history.undo(*m_layer);
     m_view->refresh();
@@ -486,7 +803,7 @@ void MainWindow::undo()
 
 void MainWindow::redo()
 {
-    if (!m_layer || m_view->isStroking() || !m_history.canRedo())
+    if (!m_layer || m_view->isStroking() || m_floating.isActive() || !m_history.canRedo())
         return;
     m_history.redo(*m_layer);
     m_view->refresh();
@@ -497,6 +814,7 @@ void MainWindow::historyItemClicked(QListWidgetItem *item)
 {
     if (!m_layer || m_view->isStroking())
         return;
+    cancelFloating(); // like undo: jumping in history drops an uncommitted move
     m_history.jumpTo(m_historyList->row(item), *m_layer);
     m_view->refresh();
     historyChanged();
@@ -572,6 +890,7 @@ void MainWindow::showExportDialog()
 {
     if (!m_layer)
         return;
+    commitFloating();
     QStringList filters{tr("PNG image (*.png)"), tr("JPEG image (*.jpg *.jpeg)")};
     if (QImageWriter::supportedImageFormats().contains("webp"))
         filters << tr("WebP image (*.webp)");

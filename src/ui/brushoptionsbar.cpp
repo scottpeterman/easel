@@ -61,14 +61,17 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     m_size = addControl(host, tr("Size"), int(BrushSettings::MinSize), int(BrushSettings::MaxSize),
                         tr(" px"), sizeToSlider, sliderToSize);
     m_size.slider->setRange(0, 1000);
-    m_opacity = addControl(host, tr("Opacity"), 1, 100, tr("%"), identity, identity);
+    m_opacity = addControl(host, tr("Opacity"), 1, 100, tr("%"), identity, identity, &m_opacityLabel);
     m_hardness = addControl(host, tr("Hardness"), 0, 100, tr("%"), identity, identity);
     m_stabilizer = addControl(host, tr("Stabilizer"), 0, 100, tr("%"), identity, identity);
 
     m_pressureSize = new QCheckBox(tr("Pressure size"), host);
     m_pressureOpacity = new QCheckBox(tr("Pressure opacity"), host);
+    m_pixel = new QCheckBox(tr("Pixel"), host);
+    m_pixel->setToolTip(tr("Hard, unantialiased pixels: a 1 px brush sets exactly one pixel"));
     row->addWidget(m_pressureSize);
     row->addWidget(m_pressureOpacity);
+    row->addWidget(m_pixel);
 
     // Less-used settings behind "More".
     auto *more = new QToolButton(host);
@@ -100,6 +103,7 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     connect(m_spacing.spin, &QSpinBox::valueChanged, this, [this](int v) { apply([v](BrushSettings &b) { b.spacing = v / 100.0; }); });
     connect(m_pressureSize, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pressureSize = on; }); });
     connect(m_pressureOpacity, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pressureOpacity = on; }); });
+    connect(m_pixel, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pixel = on; }); });
 
     connect(m_tool, &BrushTool::settingsChanged, this, &BrushOptionsBar::syncFromTool);
     syncFromTool();
@@ -108,15 +112,20 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
 BrushOptionsBar::Control BrushOptionsBar::addControl(QWidget *host, const QString &label, int min, int max,
                                                      const QString &suffix,
                                                      std::function<int(int)> spinToSlider,
-                                                     std::function<int(int)> sliderToSpin)
+                                                     std::function<int(int)> sliderToSpin,
+                                                     QLabel **labelOut)
 {
     auto *layout = qobject_cast<QHBoxLayout *>(host->layout());
     if (!layout) {
         layout = new QHBoxLayout(host);
         layout->setContentsMargins(0, 0, 0, 0);
     }
-    if (!label.isEmpty())
-        layout->addWidget(new QLabel(label, host));
+    if (!label.isEmpty()) {
+        auto *l = new QLabel(label, host);
+        layout->addWidget(l);
+        if (labelOut)
+            *labelOut = l;
+    }
 
     Control c;
     c.slider = new QSlider(Qt::Horizontal, host);
@@ -152,7 +161,12 @@ void BrushOptionsBar::syncFromTool()
 {
     m_syncing = true;
     const BrushSettings b = m_tool->settings();
-    m_mode->setText(m_tool->mode() == easel::BrushMode::Erase ? tr("Eraser") : tr("Brush"));
+    const easel::BrushMode mode = m_tool->mode();
+    m_mode->setText(mode == easel::BrushMode::Erase    ? tr("Eraser")
+                    : mode == easel::BrushMode::Smudge ? tr("Smudge")
+                                                       : tr("Brush"));
+    // For smudge, "opacity" is how far colour is dragged.
+    m_opacityLabel->setText(mode == easel::BrushMode::Smudge ? tr("Strength") : tr("Opacity"));
 
     const auto set = [](Control &c, int spinValue, int sliderValue) {
         const QSignalBlocker a(c.spin), s(c.slider);
@@ -167,8 +181,9 @@ void BrushOptionsBar::syncFromTool()
     set(m_flow, percent(b.flow), percent(b.flow));
     set(m_spacing, percent(b.spacing), percent(b.spacing));
 
-    const QSignalBlocker ps(m_pressureSize), po(m_pressureOpacity);
+    const QSignalBlocker ps(m_pressureSize), po(m_pressureOpacity), px(m_pixel);
     m_pressureSize->setChecked(b.pressureSize);
     m_pressureOpacity->setChecked(b.pressureOpacity);
+    m_pixel->setChecked(b.pixel);
     m_syncing = false;
 }

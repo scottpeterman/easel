@@ -161,6 +161,75 @@ private slots:
         QCOMPARE(rest.last().pos, QPointF(0, -10)); // ends where the pen lifted
     }
 
+    void pixelModeSetsExactPixels()
+    {
+        TileStore s(QColor(0, 0, 0, 0));
+        BrushSettings b = hard(1);
+        b.pixel = true;
+        b.hardness = 0.2; // ignored in pixel mode
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, Qt::red, BrushMode::Paint, {{10.7, 10.2}, 1.0});
+        stroke.moveTo({{15.3, 10.9}, 1.0});
+        stroke.end();
+        for (int x = 10; x <= 15; ++x)
+            QCOMPARE(pixelToColor(s.pixel(x, 10)), QColor(Qt::red)); // solid, unbroken
+        QCOMPARE(float(s.pixel(12, 9).a), 0.0f);  // nothing above
+        QCOMPARE(float(s.pixel(12, 11).a), 0.0f); // or below
+    }
+
+    void selectionClipsPainting()
+    {
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, hard(40), Qt::red, BrushMode::Paint, {{100, 100}, 1.0},
+                     Selection::rect(QRect(100, 80, 50, 50)));
+        stroke.end();
+        QVERIFY(near(at(s, 110, 100), Qt::red));
+        QVERIFY(near(at(s, 90, 100), Qt::white)); // left of the selection
+    }
+
+    void smudgeDragsColour()
+    {
+        // Red on the left half, white on the right; smudge from red into white.
+        TileStore s(Qt::white);
+        s.fillRect(QRect(0, 0, 100, 200), Qt::red);
+        BrushSettings b = hard(30);
+        b.hardness = 0.5;
+        b.opacity = 0.8; // strength
+        b.spacing = 0.1;
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Smudge, {{80, 100}, 1.0});
+        for (int x = 83; x <= 140; x += 3)
+            stroke.moveTo({{double(x), 100}, 1.0});
+        const auto before = stroke.end();
+        QVERIFY(!before.isEmpty());
+
+        const QColor dragged = at(s, 115, 100);
+        QVERIFY2(dragged.red() > 230 && dragged.green() < 200, qPrintable(dragged.name())); // reddish now
+        QCOMPARE(at(s, 115, 140), QColor(Qt::white)); // away from the stroke: untouched
+        QCOMPARE(at(s, 20, 100), QColor(Qt::red));
+        QCOMPARE(at(s, 115, 100).alpha(), 255); // smudging never pulls in transparency
+    }
+
+    void smudgeWithGrowingPressureKeepsOpacity()
+    {
+        // A pressure ramp enlarges the brush mid-stroke; the newly covered
+        // ring must pick up canvas colour, not transparent black.
+        TileStore s(Qt::white);
+        s.fillRect(QRect(0, 0, 60, 200), Qt::blue);
+        BrushSettings b = hard(40);
+        b.pressureSize = true;
+        b.opacity = 0.7;
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Smudge, {{50, 100}, 0.2});
+        for (int i = 1; i <= 20; ++i)
+            stroke.moveTo({{50.0 + i * 2.0, 100}, 0.2 + i * 0.04});
+        stroke.end();
+        for (int y = 85; y <= 115; ++y)
+            for (int x = 40; x <= 110; ++x)
+                QVERIFY2(pixelToColor(s.pixel(x, y)).alpha() == 255, qPrintable(QStringLiteral("%1,%2").arg(x).arg(y)));
+    }
+
     void clippedToCanvas()
     {
         // A 120 px dab at the corner of a 100x100 canvas. Unclipped it would

@@ -20,6 +20,7 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.stabilizer = s.value(QStringLiteral("stabilizer"), b.stabilizer).toDouble();
     b.pressureSize = s.value(QStringLiteral("pressureSize"), b.pressureSize).toBool();
     b.pressureOpacity = s.value(QStringLiteral("pressureOpacity"), b.pressureOpacity).toBool();
+    b.pixel = s.value(QStringLiteral("pixel"), b.pixel).toBool();
     s.endGroup();
 }
 
@@ -34,6 +35,7 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("stabilizer"), b.stabilizer);
     s.setValue(QStringLiteral("pressureSize"), b.pressureSize);
     s.setValue(QStringLiteral("pressureOpacity"), b.pressureOpacity);
+    s.setValue(QStringLiteral("pixel"), b.pixel);
     s.endGroup();
 }
 
@@ -44,6 +46,10 @@ BrushTool::BrushTool(QObject *parent)
 {
     m_erase.size = 40.0;
     m_erase.hardness = 0.9;
+    m_smudge.size = 40.0;
+    m_smudge.hardness = 0.5;
+    m_smudge.opacity = 0.6; // strength
+    m_smudge.spacing = 0.08;
 }
 
 void BrushTool::setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history)
@@ -66,12 +72,20 @@ void BrushTool::setMode(BrushMode mode)
 
 BrushSettings &BrushTool::current()
 {
-    return m_mode == BrushMode::Erase ? m_erase : m_paint;
+    switch (m_mode) {
+    case BrushMode::Erase:
+        return m_erase;
+    case BrushMode::Smudge:
+        return m_smudge;
+    case BrushMode::Paint:
+        break;
+    }
+    return m_paint;
 }
 
 BrushSettings BrushTool::settings() const
 {
-    return m_mode == BrushMode::Erase ? m_erase : m_paint;
+    return const_cast<BrushTool *>(this)->current();
 }
 
 void BrushTool::setSettings(const BrushSettings &settings)
@@ -97,6 +111,7 @@ void BrushTool::loadSettings(QSettings &s)
 {
     load(s, QStringLiteral("brush"), m_paint);
     load(s, QStringLiteral("eraser"), m_erase);
+    load(s, QStringLiteral("smudge"), m_smudge);
     emit settingsChanged();
 }
 
@@ -104,13 +119,15 @@ void BrushTool::saveSettings(QSettings &s) const
 {
     save(s, QStringLiteral("brush"), m_paint);
     save(s, QStringLiteral("eraser"), m_erase);
+    save(s, QStringLiteral("smudge"), m_smudge);
 }
 
 void BrushTool::press(const easel::StrokeSample &s)
 {
     if (!m_store)
         return;
-    m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s);
+    m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s,
+                   m_selection ? *m_selection : easel::Selection());
 }
 
 void BrushTool::move(const easel::StrokeSample &s)
@@ -127,7 +144,10 @@ void BrushTool::release(const easel::StrokeSample &s)
     auto before = m_stroke.end();
     if (before.isEmpty() || !m_history)
         return;
-    m_history->push(m_mode == BrushMode::Erase ? tr("Eraser") : tr("Brush"), std::move(before));
+    const QString label = m_mode == BrushMode::Erase    ? tr("Eraser")
+                          : m_mode == BrushMode::Smudge ? tr("Smudge")
+                                                        : tr("Brush");
+    m_history->push(label, std::move(before));
     emit strokeCommitted();
 }
 

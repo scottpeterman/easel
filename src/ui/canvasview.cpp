@@ -85,6 +85,13 @@ CanvasView::CanvasView(QWidget *parent)
     setMouseTracking(true);
     setAttribute(Qt::WA_TabletTracking); // pen hover moves the brush cursor
     setFocusPolicy(Qt::StrongFocus);
+
+    m_antsTimer = new QTimer(this);
+    m_antsTimer->setInterval(150);
+    connect(m_antsTimer, &QTimer::timeout, this, [this] {
+        ++m_antsPhase;
+        update();
+    });
     setMinimumSize(200, 150);
 }
 
@@ -259,6 +266,17 @@ void CanvasView::createPipelines()
     m_outlinePipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
     m_outlinePipeline->create();
 
+    m_linesPipeline.reset(r->newGraphicsPipeline());
+    m_linesPipeline->setTopology(QRhiGraphicsPipeline::Lines);
+    m_linesPipeline->setShaderStages({
+        {QRhiShaderStage::Vertex, loadShader(QStringLiteral(":/shaders/outline.vert.qsb"))},
+        {QRhiShaderStage::Fragment, loadShader(QStringLiteral(":/shaders/outline.frag.qsb"))},
+    });
+    m_linesPipeline->setVertexInputLayout(outlineLayout);
+    m_linesPipeline->setShaderResourceBindings(m_outlineBindings.get());
+    m_linesPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+    m_linesPipeline->create();
+
     m_fillPipeline.reset(r->newGraphicsPipeline());
     m_fillPipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
     m_fillPipeline->setShaderStages({
@@ -303,6 +321,9 @@ void CanvasView::releaseResources()
     m_tilePipeline.reset();
     m_outlinePipeline.reset();
     m_fillPipeline.reset();
+    m_linesPipeline.reset();
+    m_ants.reset();
+    m_antsCapacity = 0;
     m_outlineBindings.reset();
     m_pageBindings.clear();
     m_pages.clear();
@@ -470,6 +491,65 @@ void CanvasView::render(QRhiCommandBuffer *cb)
                                           : kCanvasOutlineVertices;
     u->updateDynamicBuffer(m_outline.get(), 0, quint32(overlayCount * sizeof(OverlayVertex)), overlay);
 
+    // Marching ants: 4-pixel black and white dashes along the selection
+    // outline, only where it's on screen, shifted each timer tick.
+    std::vector<OverlayVertex> ants;
+    if (m_selectionOutline.size() >= 2) {
+        const double dash = 4.0 / m_zoom;
+        const double phase = (m_antsPhase % 8) * (1.0 / m_zoom);
+        const QRectF vis = xf.inverted().mapRect(QRectF(rect())).adjusted(-dash, -dash, dash, dash);
+        constexpr size_t kMaxSegments = 40000;
+        double along = 0.0;
+        for (qsizetype i = 0; i + 1 < m_selectionOutline.size() && ants.size() < 2 * kMaxSegments; ++i) {
+            const QPointF p0 = m_selectionOutline.at(i), p1 = m_selectionOutline.at(i + 1);
+            const QPointF d = p1 - p0;
+            const double len = std::hypot(d.x(), d.y());
+            if (len <= 0.0)
+                continue;
+            // Clip the edge to the visible area (Liang-Barsky).
+            double t0 = 0.0, t1 = 1.0;
+            const double pc[4] = {-d.x(), d.x(), -d.y(), d.y()};
+            const double qc[4] = {p0.x() - vis.left(), vis.right() - p0.x(), p0.y() - vis.top(), vis.bottom() - p0.y()};
+            bool visible = true;
+            for (int k = 0; k < 4 && visible; ++k) {
+                if (pc[k] == 0.0) {
+                    visible = qc[k] >= 0.0;
+                } else {
+                    const double t = qc[k] / pc[k];
+                    if (pc[k] < 0.0)
+                        t0 = std::max(t0, t);
+                    else
+                        t1 = std::min(t1, t);
+                    visible = t0 <= t1;
+                }
+            }
+            if (visible) {
+                double u = t0 * len;
+                const double end = t1 * len;
+                while (u < end && ants.size() < 2 * kMaxSegments) {
+                    const double k = std::floor((along + u + phase) / dash);
+                    double next = std::min(end, (k + 1.0) * dash - phase - along);
+                    if (next <= u) // rounding at a dash boundary
+                        next = std::min(end, u + dash);
+                    const float shade = (static_cast<long long>(k) & 1) ? 1.0f : 0.0f;
+                    const QPointF a = p0 + d * (u / len), b = p0 + d * (next / len);
+                    ants.push_back({float(a.x()), float(a.y()), shade, shade, shade, 1.0f});
+                    ants.push_back({float(b.x()), float(b.y()), shade, shade, shade, 1.0f});
+                    u = next;
+                }
+            }
+            along += len;
+        }
+        const quint32 bytes = quint32(ants.size() * sizeof(OverlayVertex));
+        if (bytes > m_antsCapacity) {
+            m_antsCapacity = std::max<quint32>(bytes, std::max<quint32>(m_antsCapacity * 2, 16 * 1024));
+            m_ants.reset(m_rhi->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, m_antsCapacity));
+            m_ants->create();
+        }
+        if (bytes)
+            u->updateDynamicBuffer(m_ants.get(), 0, bytes, ants.data());
+    }
+
     // Draw.
     const bool nearest = plan.level == 0 && m_zoom * dpr >= 1.0 - 1e-9;
     cb->beginPass(renderTarget(), clear, {1.0f, 0}, u);
@@ -509,6 +589,13 @@ void CanvasView::render(QRhiCommandBuffer *cb)
     if (showCursor || showPreview) {
         cb->draw(kRingVertices, 1, kCanvasOutlineVertices);
         cb->draw(kRingVertices, 1, kCanvasOutlineVertices + kRingVertices);
+    }
+    if (!ants.empty()) {
+        cb->setGraphicsPipeline(m_linesPipeline.get());
+        cb->setShaderResources(m_outlineBindings.get());
+        const QRhiCommandBuffer::VertexInput antsInput(m_ants.get(), 0);
+        cb->setVertexInput(0, 1, &antsInput);
+        cb->draw(quint32(ants.size()));
     }
 
     cb->endPass();
@@ -811,7 +898,22 @@ void CanvasView::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     }
+    if (CanvasTool *t = activeTool(); t && !m_stroking && t->keyPress(event)) {
+        refresh();
+        event->accept();
+        return;
+    }
     QRhiWidget::keyPressEvent(event);
+}
+
+void CanvasView::setSelectionOutline(const QPolygonF &outline)
+{
+    m_selectionOutline = outline;
+    if (outline.isEmpty())
+        m_antsTimer->stop();
+    else if (!m_antsTimer->isActive())
+        m_antsTimer->start();
+    update();
 }
 
 void CanvasView::keyReleaseEvent(QKeyEvent *event)
@@ -846,8 +948,8 @@ void CanvasView::updateCursor()
         setCursor(Qt::ClosedHandCursor);
     else if (m_spaceHeld)
         setCursor(Qt::OpenHandCursor);
-    else if (m_tool)
-        setCursor(Qt::CrossCursor);
+    else if (const CanvasTool *t = activeTool())
+        setCursor(t->cursorShape());
     else
         unsetCursor();
 }

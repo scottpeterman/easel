@@ -16,7 +16,13 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Save / Save As | Ctrl+S / Ctrl+Shift+S |
 | Export PNG, JPEG or WebP | Ctrl+Shift+E |
 | Paint | Left-drag or pen |
-| Brush / Eraser / Eyedropper | B / E / I |
+| Brush / Eraser / Smudge / Eyedropper | B / E / S / I |
+| Hard 1 px pixels (sprites) | Tick **Pixel** in the tool options |
+| Rectangle / ellipse select | M / Shift+M; drag, Shift for square or circle, click to deselect |
+| Select all / deselect | Ctrl+A / Ctrl+D |
+| Cut / copy / paste / delete | Ctrl+X / Ctrl+C / Ctrl+V / Delete |
+| Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
+| Drop / cancel floating pixels | Enter / Escape |
 | Pick a colour from any tool | Hold Alt and click or drag |
 | Smaller / larger brush | [ / ] |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
