@@ -1,0 +1,106 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  QT_VERSION: '6.10.3'
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            qt_arch: linux_gcc_64
+          - name: Windows x64
+            os: windows-2022
+            qt_arch: win64_msvc2022_64
+          - name: macOS universal
+            os: macos-14
+            qt_arch: clang_64
+            osx_arch: arm64;x86_64
+
+    env:
+      CMAKE_OSX_ARCHITECTURES: ${{ matrix.osx_arch }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libgl1-mesa-dri xvfb
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.qt_arch }}
+          modules: qtshadertools
+          cache: true
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      # Linux and macOS run the same script you run locally (Qt from $QT_ROOT_DIR).
+      # Headless Linux gets its display for the GPU tests from Xvfb.
+      - name: Build, test and package (Linux)
+        if: runner.os == 'Linux'
+        run: scripts/build.sh --appimage
+
+      - name: Build, test and package (macOS)
+        if: runner.os == 'macOS'
+        run: scripts/build.sh --dmg
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build, test and package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+          cmake --install build --prefix dist/windows
+          Compress-Archive -Path dist/windows/* -DestinationPath dist/Easel-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Easel-${{ runner.os }}
+          path: |
+            dist/*.AppImage
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
