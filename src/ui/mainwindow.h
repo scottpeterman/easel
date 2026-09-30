@@ -16,6 +16,7 @@ struct LoadedDocument;
 class BrushOptionsBar;
 class BrushTool;
 class CanvasView;
+class EyedropperTool;
 class ColorPanel;
 class QAction;
 class QLabel;
@@ -38,6 +39,8 @@ public:
     CanvasView *canvasView() const { return m_view; }
     easel::TileStore *layer() const { return m_layer.get(); }
     BrushTool *brushTool() const { return m_brush; }
+    EyedropperTool *eyedropperTool() const { return m_eyedropper; }
+    ColorPanel *colorPanel() const { return m_color; }
     const easel::History &history() const { return m_history; }
 
 public slots:
@@ -55,6 +58,8 @@ private:
     void createToolBars();
     void createDocks();
     void createStatusBar();
+    void selectBrushMode(int mode);
+    void selectEyedropper();
     void showNewDialog();
     void showOpenDialog();
     void showAbout();
@@ -75,6 +80,7 @@ private:
 
     CanvasView *m_view = nullptr;
     BrushTool *m_brush = nullptr;
+    EyedropperTool *m_eyedropper = nullptr;
     BrushOptionsBar *m_options = nullptr;
     QListWidget *m_layers = nullptr;
     QListWidget *m_historyList = nullptr;
@@ -84,6 +90,7 @@ private:
     QAction *m_redoAct = nullptr;
     QAction *m_brushAct = nullptr;
     QAction *m_eraserAct = nullptr;
+    QAction *m_eyedropperAct = nullptr;
 
     QLabel *m_posLabel = nullptr;
     QLabel *m_zoomLabel = nullptr;

@@ -1,5 +1,7 @@
 #include "brushtool.h"
 #include "canvasview.h"
+#include "colorpanel.h"
+#include "eyedroppertool.h"
 #include "mainwindow.h"
 
 #include <QPointingDevice>
@@ -12,7 +14,8 @@ namespace {
 
 QColor pixel(MainWindow &w, int x, int y)
 {
-    return pixelToColor(w.layer()->pixel(x, y));
+    const QColor c = pixelToColor(w.layer()->pixel(x, y));
+    return QColor(c.red(), c.green(), c.blue(), c.alpha()); // compare at 8 bits
 }
 
 QPoint viewPos(MainWindow &w, QPointF canvas)
@@ -128,6 +131,44 @@ private slots:
 
         QTest::keyClick(view, Qt::Key_B);
         QCOMPARE(w.brushTool()->mode(), BrushMode::Paint);
+    }
+
+    void eyedropperPicksWithoutHistory()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        w.layer()->fillRect(QRect(0, 0, 100, 100), QColor(20, 140, 60));
+        view->refresh();
+
+        // Alt-click with the brush picks, then painting uses the picked colour.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::AltModifier, viewPos(w, {50, 50}));
+        QCOMPARE(w.colorPanel()->color(), QColor(20, 140, 60));
+        QCOMPARE(w.history().count(), 0);
+        QCOMPARE(view->tool(), static_cast<CanvasTool *>(w.brushTool())); // still the brush
+
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {300, 200}));
+        QCOMPARE(pixel(w, 300, 200), QColor(20, 140, 60));
+        QCOMPARE(w.history().count(), 1);
+        QCOMPARE(w.colorPanel()->recentColors().value(0), QColor(20, 140, 60));
+
+        // The I tool: dragging picks continuously; outside the canvas is ignored.
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        view->setFocus();
+        QTest::keyClick(view, Qt::Key_I);
+        QCOMPARE(view->tool(), static_cast<CanvasTool *>(w.eyedropperTool()));
+        QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {150, 150}));
+        QCOMPARE(w.colorPanel()->color(), QColor(Qt::white));
+        QTest::mouseMove(view, viewPos(w, {50, 50}));
+        QCOMPARE(w.colorPanel()->color(), QColor(20, 140, 60));
+        QTest::mouseMove(view, viewPos(w, {-40, -40}));
+        QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {-40, -40}));
+        QCOMPARE(w.colorPanel()->color(), QColor(20, 140, 60));
+        QCOMPARE(w.history().count(), 1);
+
+        QTest::keyClick(view, Qt::Key_B);
+        QCOMPARE(view->tool(), static_cast<CanvasTool *>(w.brushTool()));
     }
 
     void spaceDragPansInsteadOfPainting()

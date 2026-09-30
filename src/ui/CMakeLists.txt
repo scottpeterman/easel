@@ -7,6 +7,10 @@ add_library(easel_ui STATIC
     brushoptionsbar.cpp
     colorpanel.h
     colorpanel.cpp
+    colorwheel.h
+    colorwheel.cpp
+    eyedroppertool.h
+    eyedroppertool.cpp
     newdocumentdialog.h
     newdocumentdialog.cpp
     mainwindow.h

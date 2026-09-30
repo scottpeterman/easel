@@ -31,6 +31,13 @@ public:
     virtual void release(const easel::StrokeSample &s) = 0;
     // Diameter of the cursor circle in canvas pixels; 0 hides it.
     virtual double cursorDiameter() const = 0;
+    // A before/after colour ring to draw around the cursor (eyedropper).
+    virtual bool colorPreview(QColor *picked, QColor *previous) const
+    {
+        Q_UNUSED(picked);
+        Q_UNUSED(previous);
+        return false;
+    }
 };
 
 // GPU canvas: draws one TileStore with pan, zoom and rotate through QRhi
@@ -79,6 +86,8 @@ public:
     // Left-button / pen strokes go to the tool; null means view-only.
     void setTool(CanvasTool *tool);
     CanvasTool *tool() const { return m_tool; }
+    // Used instead while Alt is held (the eyedropper, from any tool).
+    void setAltTool(CanvasTool *tool) { m_altTool = tool; }
     bool isStroking() const { return m_stroking; }
 
     void setUploadBudget(int tilesPerFrame) { m_uploadBudget = qMax(1, tilesPerFrame); }
@@ -130,6 +139,8 @@ private:
     void endStroke(const easel::StrokeSample &s);
     void trackCursor(const QPointF &viewPos);
     void startPan(const QPointF &viewPos);
+    CanvasTool *activeTool() const;
+    void setAltHeld(bool held);
 
     easel::TileStore *m_store = nullptr;
     QSize m_canvasSize;
@@ -158,12 +169,16 @@ private:
     std::unique_ptr<QRhiShaderResourceBindings> m_outlineBindings;
     std::unique_ptr<QRhiGraphicsPipeline> m_tilePipeline;
     std::unique_ptr<QRhiGraphicsPipeline> m_outlinePipeline;
+    std::unique_ptr<QRhiGraphicsPipeline> m_fillPipeline; // same shaders, triangles
 
     bool m_spaceHeld = false;
     bool m_panning = false;
     QPointF m_lastPos;
 
     CanvasTool *m_tool = nullptr;
+    CanvasTool *m_altTool = nullptr;
+    CanvasTool *m_strokeTool = nullptr; // the tool that owns the current stroke
+    bool m_altHeld = false;
     bool m_stroking = false;
     easel::StrokeSample m_lastSample;
     bool m_hovering = false;

@@ -47,7 +47,14 @@ constexpr double kTwoPi = 6.283185307179586;
 constexpr int kCircleSegments = 64;
 constexpr int kCanvasOutlineVertices = 5;
 constexpr int kRingVertices = kCircleSegments + 1;
-constexpr int kOverlayVertices = kCanvasOutlineVertices + 2 * kRingVertices;
+// Eyedropper preview: two half-rings (picked on top, previous below) drawn as
+// triangle strips, outlined with the two cursor rings.
+constexpr int kHalfSegments = kCircleSegments / 2;
+constexpr int kHalfRingVertices = (kHalfSegments + 1) * 2;
+constexpr int kPreviewFirst = 5 + 2 * kRingVertices;
+constexpr int kOverlayVertices = kPreviewFirst + 2 * kHalfRingVertices;
+constexpr double kPreviewOuter = 34.0; // screen pixels
+constexpr double kPreviewInner = 20.0;
 constexpr float kOutlineShade = 30.0f / 255.0f;
 
 QShader loadShader(const QString &path)
@@ -235,6 +242,17 @@ void CanvasView::createPipelines()
     m_outlinePipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
     m_outlinePipeline->create();
 
+    m_fillPipeline.reset(r->newGraphicsPipeline());
+    m_fillPipeline->setTopology(QRhiGraphicsPipeline::TriangleStrip);
+    m_fillPipeline->setShaderStages({
+        {QRhiShaderStage::Vertex, loadShader(QStringLiteral(":/shaders/outline.vert.qsb"))},
+        {QRhiShaderStage::Fragment, loadShader(QStringLiteral(":/shaders/outline.frag.qsb"))},
+    });
+    m_fillPipeline->setVertexInputLayout(outlineLayout);
+    m_fillPipeline->setShaderResourceBindings(m_outlineBindings.get());
+    m_fillPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
+    m_fillPipeline->create();
+
     m_quadUploaded = false;
 }
 
@@ -267,6 +285,7 @@ void CanvasView::releaseResources()
 {
     m_tilePipeline.reset();
     m_outlinePipeline.reset();
+    m_fillPipeline.reset();
     m_outlineBindings.reset();
     m_pageBindings.clear();
     m_pages.clear();
@@ -395,22 +414,43 @@ void CanvasView::render(QRhiCommandBuffer *cb)
             overlay[i] = {corners[i][0], corners[i][1], k, k, k, 1.0f};
     }
     const bool showCursor = cursorVisible();
-    if (showCursor) {
-        const double px1 = 1.0 / m_zoom; // one screen pixel in canvas units
-        const double inner = std::max(m_tool->cursorDiameter() * 0.5, 2.0 * px1);
-        const double radii[2] = {inner + px1, inner};
-        const float shade[2] = {1.0f, kOutlineShade};
-        for (int ring = 0; ring < 2; ++ring) {
-            for (int i = 0; i < kRingVertices; ++i) {
-                const double a = kTwoPi * i / kCircleSegments;
-                overlay[kCanvasOutlineVertices + ring * kRingVertices + i] = {
-                    float(m_cursorCanvas.x() + std::cos(a) * radii[ring]),
-                    float(m_cursorCanvas.y() + std::sin(a) * radii[ring]),
-                    shade[ring], shade[ring], shade[ring], 1.0f};
+    QColor picked, previous;
+    const bool showPreview = m_stroking && m_strokeTool && m_strokeTool->colorPreview(&picked, &previous);
+    const double px1 = 1.0 / m_zoom; // one screen pixel in canvas units
+    const auto ringAt = [&](int ring, double radius, float shade) {
+        for (int i = 0; i < kRingVertices; ++i) {
+            const double a = kTwoPi * i / kCircleSegments;
+            overlay[kCanvasOutlineVertices + ring * kRingVertices + i] = {
+                float(m_cursorCanvas.x() + std::cos(a) * radius),
+                float(m_cursorCanvas.y() + std::sin(a) * radius), shade, shade, shade, 1.0f};
+        }
+    };
+    if (showPreview) {
+        // Picked colour on the top half, the previous one on the bottom.
+        const double ro = kPreviewOuter * px1, ri = kPreviewInner * px1;
+        const QColor halves[2] = {picked.toRgb(), previous.toRgb()};
+        for (int h = 0; h < 2; ++h) {
+            const float r = halves[h].redF(), g = halves[h].greenF(), b = halves[h].blueF();
+            for (int i = 0; i <= kHalfSegments; ++i) {
+                // y grows downward: the top half is pi..2pi, the bottom 0..pi.
+                const double half = kTwoPi / 2.0;
+                const double a = (h == 0 ? half : 0.0) + half * i / kHalfSegments;
+                const double ca = std::cos(a), sa = std::sin(a);
+                OverlayVertex *v = overlay + kPreviewFirst + h * kHalfRingVertices + i * 2;
+                v[0] = {float(m_cursorCanvas.x() + ca * ro), float(m_cursorCanvas.y() + sa * ro), r, g, b, 1.0f};
+                v[1] = {float(m_cursorCanvas.x() + ca * ri), float(m_cursorCanvas.y() + sa * ri), r, g, b, 1.0f};
             }
         }
+        ringAt(0, kPreviewOuter * px1, kOutlineShade);
+        ringAt(1, kPreviewInner * px1, kOutlineShade);
+    } else if (showCursor) {
+        const double inner = std::max(m_tool->cursorDiameter() * 0.5, 2.0 * px1);
+        ringAt(0, inner + px1, 1.0f);
+        ringAt(1, inner, kOutlineShade);
     }
-    const int overlayCount = showCursor ? kOverlayVertices : kCanvasOutlineVertices;
+    const int overlayCount = showPreview ? kOverlayVertices
+                             : showCursor ? kPreviewFirst
+                                          : kCanvasOutlineVertices;
     u->updateDynamicBuffer(m_outline.get(), 0, quint32(overlayCount * sizeof(OverlayVertex)), overlay);
 
     // Draw.
@@ -439,7 +479,17 @@ void CanvasView::render(QRhiCommandBuffer *cb)
     const QRhiCommandBuffer::VertexInput outlineInput(m_outline.get(), 0);
     cb->setVertexInput(0, 1, &outlineInput);
     cb->draw(kCanvasOutlineVertices);
-    if (showCursor) {
+    if (showPreview) {
+        cb->setGraphicsPipeline(m_fillPipeline.get());
+        cb->setShaderResources(m_outlineBindings.get());
+        cb->setVertexInput(0, 1, &outlineInput);
+        cb->draw(kHalfRingVertices, 1, kPreviewFirst);
+        cb->draw(kHalfRingVertices, 1, kPreviewFirst + kHalfRingVertices);
+        cb->setGraphicsPipeline(m_outlinePipeline.get());
+        cb->setShaderResources(m_outlineBindings.get());
+        cb->setVertexInput(0, 1, &outlineInput);
+    }
+    if (showCursor || showPreview) {
         cb->draw(kRingVertices, 1, kCanvasOutlineVertices);
         cb->draw(kRingVertices, 1, kCanvasOutlineVertices + kRingVertices);
     }
@@ -555,9 +605,26 @@ void CanvasView::setTool(CanvasTool *tool)
     update();
 }
 
+CanvasTool *CanvasView::activeTool() const
+{
+    if (m_stroking)
+        return m_strokeTool;
+    return (m_altHeld && m_altTool) ? m_altTool : m_tool;
+}
+
+void CanvasView::setAltHeld(bool held)
+{
+    if (held == m_altHeld)
+        return;
+    m_altHeld = held;
+    updateCursor();
+    update();
+}
+
 bool CanvasView::cursorVisible() const
 {
-    return m_tool && m_hovering && !m_spaceHeld && !m_panning && m_tool->cursorDiameter() > 0.0;
+    const CanvasTool *t = activeTool();
+    return t && m_hovering && !m_spaceHeld && !m_panning && t->cursorDiameter() > 0.0;
 }
 
 easel::StrokeSample CanvasView::sampleAt(const QPointF &viewPos, double pressure) const
@@ -567,26 +634,33 @@ easel::StrokeSample CanvasView::sampleAt(const QPointF &viewPos, double pressure
 
 void CanvasView::beginStroke(const easel::StrokeSample &s)
 {
-    if (!m_tool)
+    CanvasTool *tool = activeTool();
+    if (!tool)
         return;
+    m_strokeTool = tool; // stays in charge until release, whatever Alt does
     m_stroking = true;
     m_lastSample = s;
-    m_tool->press(s);
+    m_cursorCanvas = s.pos;
+    tool->press(s);
     refresh();
+    update();
 }
 
 void CanvasView::continueStroke(const easel::StrokeSample &s)
 {
     m_lastSample = s;
-    m_tool->move(s);
+    m_strokeTool->move(s);
     refresh();
 }
 
 void CanvasView::endStroke(const easel::StrokeSample &s)
 {
+    CanvasTool *tool = m_strokeTool;
     m_stroking = false;
-    m_tool->release(s);
+    m_strokeTool = nullptr;
+    tool->release(s);
     refresh();
+    update();
     emit strokeFinished();
 }
 
@@ -598,7 +672,7 @@ void CanvasView::trackCursor(const QPointF &viewPos)
                         && m_cursorCanvas.x() < m_canvasSize.width()
                         && m_cursorCanvas.y() < m_canvasSize.height();
     emit cursorMoved(m_cursorCanvas, inside);
-    if (m_tool)
+    if (activeTool())
         update();
 }
 
@@ -618,7 +692,8 @@ void CanvasView::mousePressEvent(QMouseEvent *event)
         event->accept();
         return;
     }
-    if (event->button() == Qt::LeftButton && m_tool && !m_stroking) {
+    setAltHeld(event->modifiers() & Qt::AltModifier);
+    if (event->button() == Qt::LeftButton && activeTool() && !m_stroking) {
         beginStroke(sampleAt(event->position(), 1.0));
         event->accept();
         return;
@@ -628,6 +703,7 @@ void CanvasView::mousePressEvent(QMouseEvent *event)
 
 void CanvasView::mouseMoveEvent(QMouseEvent *event)
 {
+    setAltHeld(event->modifiers() & Qt::AltModifier);
     if (m_panning) {
         m_pan += event->position() - m_lastPos;
         m_lastPos = event->position();
@@ -661,12 +737,13 @@ void CanvasView::tabletEvent(QTabletEvent *event)
     // arrives here once, with pressure.
     const QPointF pos = event->position();
     const double pressure = std::clamp(double(event->pressure()), 0.0, 1.0);
+    setAltHeld(event->modifiers() & Qt::AltModifier);
 
     switch (event->type()) {
     case QEvent::TabletPress:
         if (event->button() == Qt::MiddleButton || m_spaceHeld)
             startPan(pos);
-        else if (event->button() == Qt::LeftButton && m_tool && !m_stroking)
+        else if (event->button() == Qt::LeftButton && activeTool() && !m_stroking)
             beginStroke({viewToCanvas(pos), pressure});
         break;
     case QEvent::TabletMove:
@@ -703,6 +780,8 @@ void CanvasView::leaveEvent(QEvent *event)
 
 void CanvasView::keyPressEvent(QKeyEvent *event)
 {
+    if (event->key() == Qt::Key_Alt)
+        setAltHeld(true);
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_spaceHeld = true;
         updateCursor();
@@ -715,6 +794,8 @@ void CanvasView::keyPressEvent(QKeyEvent *event)
 
 void CanvasView::keyReleaseEvent(QKeyEvent *event)
 {
+    if (event->key() == Qt::Key_Alt)
+        setAltHeld(false);
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_spaceHeld = false;
         m_panning = false;
@@ -730,6 +811,7 @@ void CanvasView::focusOutEvent(QFocusEvent *event)
 {
     m_spaceHeld = false;
     m_panning = false;
+    m_altHeld = false;
     if (m_stroking)
         endStroke(m_lastSample);
     updateCursor();

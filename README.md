@@ -4,7 +4,7 @@ A balanced layered image editor: Paint.NET approachability with Photoshop's laye
 
 ## Status
 
-M1. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step.
+M1. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
 
 The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Opening an image runs in the background. Layers, selections and the rest arrive by milestone.
 
@@ -13,7 +13,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Action | Input |
 | --- | --- |
 | Paint | Left-drag or pen |
-| Brush / Eraser | B / E |
+| Brush / Eraser / Eyedropper | B / E / I |
+| Pick a colour from any tool | Hold Alt and click or drag |
 | Smaller / larger brush | [ / ] |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
 | Pan | Middle-drag, or hold Space and drag |

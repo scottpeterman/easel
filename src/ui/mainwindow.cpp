@@ -5,6 +5,7 @@
 #include "canvasview.h"
 #include "colorpanel.h"
 #include "documentio.h"
+#include "eyedroppertool.h"
 #include "newdocumentdialog.h"
 
 #include <QAction>
@@ -53,7 +54,9 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(m_view);
 
     m_brush = new BrushTool(this);
+    m_eyedropper = new EyedropperTool(this);
     m_view->setTool(m_brush);
+    m_view->setAltTool(m_eyedropper);
 
     createDocks();
     createToolBars();
@@ -63,7 +66,7 @@ MainWindow::MainWindow(QWidget *parent)
     QSettings settings;
     m_lastDir = settings.value(QStringLiteral("lastDir")).toString();
     m_brush->loadSettings(settings);
-    m_color->setColor(settings.value(QStringLiteral("color"), QColor(Qt::black)).value<QColor>());
+    m_color->loadSettings(settings);
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
     if (!settings.contains(QStringLiteral("geometry")))
@@ -74,8 +77,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    // The canvas holds a pointer to the tool; detach before either goes.
+    // The canvas holds pointers to the tools; detach before they go.
     m_view->setTool(nullptr);
+    m_view->setAltTool(nullptr);
 }
 
 void MainWindow::createActions()
@@ -149,19 +153,23 @@ void MainWindow::createToolBars()
     addToolBar(Qt::LeftToolBarArea, tools);
 
     auto *group = new QActionGroup(this);
-    m_brushAct = tools->addAction(tr("Brush"), this, [this] { m_brush->setMode(BrushMode::Paint); });
+    m_brushAct = tools->addAction(tr("Brush"), this, [this] { selectBrushMode(int(BrushMode::Paint)); });
     m_brushAct->setShortcut(QKeySequence(Qt::Key_B));
     m_brushAct->setToolTip(tr("Brush (B)"));
-    m_eraserAct = tools->addAction(tr("Eraser"), this, [this] { m_brush->setMode(BrushMode::Erase); });
+    m_eraserAct = tools->addAction(tr("Eraser"), this, [this] { selectBrushMode(int(BrushMode::Erase)); });
     m_eraserAct->setShortcut(QKeySequence(Qt::Key_E));
     m_eraserAct->setToolTip(tr("Eraser (E)"));
-    for (QAction *a : {m_brushAct, m_eraserAct}) {
+    m_eyedropperAct = tools->addAction(tr("Picker"), this, &MainWindow::selectEyedropper);
+    m_eyedropperAct->setShortcut(QKeySequence(Qt::Key_I));
+    m_eyedropperAct->setToolTip(tr("Eyedropper (I). Hold Alt with any tool to pick once."));
+    for (QAction *a : {m_brushAct, m_eraserAct, m_eyedropperAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
     m_brushAct->setChecked(true);
     connect(m_brush, &BrushTool::modeChanged, this, [this](BrushMode mode) {
-        (mode == BrushMode::Erase ? m_eraserAct : m_brushAct)->setChecked(true);
+        if (m_view->tool() == m_brush)
+            (mode == BrushMode::Erase ? m_eraserAct : m_brushAct)->setChecked(true);
     });
 
     m_options = new BrushOptionsBar(m_brush, this);
@@ -187,7 +195,15 @@ void MainWindow::createDocks()
     colorDock->setWidget(m_color);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
     connect(m_color, &ColorPanel::colorChanged, m_brush, &BrushTool::setColor);
+    connect(m_color, &ColorPanel::colorChanged, m_eyedropper, &EyedropperTool::setCurrentColor);
+    connect(m_eyedropper, &EyedropperTool::colorPicked, m_color, &ColorPanel::setColor);
     m_brush->setColor(m_color->color());
+    m_eyedropper->setCurrentColor(m_color->color());
+    // Colours actually painted with go to the Recent row.
+    connect(m_brush, &BrushTool::strokeCommitted, this, [this] {
+        if (m_brush->mode() == BrushMode::Paint)
+            m_color->noteUsed(m_brush->color());
+    });
 
     m_historyList = new QListWidget;
     auto *historyDock = new QDockWidget(tr("History"), this);
@@ -226,6 +242,19 @@ void MainWindow::createStatusBar()
                               tr("The canvas could not start the GPU renderer. "
                                  "Update your graphics driver and try again."));
     });
+}
+
+void MainWindow::selectBrushMode(int mode)
+{
+    m_brush->setMode(BrushMode(mode));
+    m_view->setTool(m_brush);
+    m_options->setEnabled(true);
+}
+
+void MainWindow::selectEyedropper()
+{
+    m_view->setTool(m_eyedropper);
+    m_options->setEnabled(false); // brush options don't apply
 }
 
 void MainWindow::newDocument(const QSize &size, const QColor &background)
@@ -289,6 +318,7 @@ void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSiz
 {
     // Detach everything from the old document before it's freed.
     m_brush->setDocument(nullptr, {}, nullptr);
+    m_eyedropper->setDocument(nullptr, {});
     m_history.reset(historyLabel);
 
     m_layer = std::move(layer);
@@ -296,6 +326,7 @@ void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSiz
     m_name = name;
     m_view->setDocument(m_layer.get(), m_size, std::move(pyramid));
     m_brush->setDocument(m_layer.get(), QRect(QPoint(0, 0), m_size), &m_history);
+    m_eyedropper->setDocument(m_layer.get(), QRect(QPoint(0, 0), m_size));
 
     m_layers->clear();
     m_layers->addItem(m_name == tr("Untitled") ? tr("Background") : m_name);
@@ -406,7 +437,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue(QStringLiteral("geometry"), saveGeometry());
     settings.setValue(QStringLiteral("windowState"), saveState(kSettingsVersion));
     settings.setValue(QStringLiteral("lastDir"), m_lastDir);
-    settings.setValue(QStringLiteral("color"), m_color->color());
+    m_color->saveSettings(settings);
     m_brush->saveSettings(settings);
     event->accept();
 }
