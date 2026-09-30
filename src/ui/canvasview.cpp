@@ -123,6 +123,7 @@ qint64 CanvasView::gpuMemoryBytes() const
 
 void CanvasView::setPan(const QPointF &pan)
 {
+    m_autoFit = false;
     m_pan = pan;
     emitViewChanged();
 }
@@ -150,7 +151,12 @@ QRectF CanvasView::canvasViewBounds() const
 void CanvasView::resizeEvent(QResizeEvent *event)
 {
     QRhiWidget::resizeEvent(event);
-    emit viewChanged(m_zoom, m_rotation); // the visible area changed
+    // Until you zoom, pan or rotate, the canvas keeps fitting the window, so
+    // it's right after the window first appears or is resized.
+    if (m_autoFit)
+        fitToWindow();
+    else
+        emit viewChanged(m_zoom, m_rotation); // the visible area changed
 }
 
 void CanvasView::refresh()
@@ -528,6 +534,7 @@ void CanvasView::zoomBy(double factor, const QPointF &anchor)
     if (qFuzzyCompare(next, m_zoom))
         return;
     const QPointF anchorCanvas = viewToCanvas(anchor);
+    m_autoFit = false;
     m_zoom = next;
     m_pan += anchor - canvasToView().map(anchorCanvas);
     emitViewChanged();
@@ -566,6 +573,7 @@ void CanvasView::fitToWindow()
     const double margin = 0.92;
     m_zoom = std::clamp(std::min(width() / bounds.width(), height() / bounds.height()) * margin,
                         MinZoom, MaxZoom);
+    m_autoFit = true;
     emitViewChanged();
 }
 
@@ -574,6 +582,7 @@ void CanvasView::rotateBy(double degrees)
     // Rotate about the view centre: the pan vector rotates with the canvas.
     QTransform r;
     r.rotate(degrees);
+    m_autoFit = false;
     m_pan = r.map(m_pan);
     m_rotation = normalizeDegrees(m_rotation + degrees);
     emitViewChanged();
@@ -716,6 +725,7 @@ void CanvasView::mouseMoveEvent(QMouseEvent *event)
 {
     setAltHeld(event->modifiers() & Qt::AltModifier);
     if (m_panning) {
+        m_autoFit = false;
         m_pan += event->position() - m_lastPos;
         m_lastPos = event->position();
         emitViewChanged();
@@ -759,6 +769,7 @@ void CanvasView::tabletEvent(QTabletEvent *event)
         break;
     case QEvent::TabletMove:
         if (m_panning) {
+            m_autoFit = false;
             m_pan += pos - m_lastPos;
             m_lastPos = pos;
             emitViewChanged();

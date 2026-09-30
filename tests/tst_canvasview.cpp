@@ -54,6 +54,34 @@ private slots:
         QVERIFY(view.zoom() < 0.4 && view.zoom() > 0.3);
     }
 
+    void fitFollowsResizeUntilUserNavigates()
+    {
+        TileStore store;
+        CanvasView view;
+        view.resize(400, 300);
+        view.show(); // hidden widgets get no resize events
+        QVERIFY(QTest::qWaitForWindowExposed(&view));
+        view.setDocument(&store, QSize(2000, 1500));
+        QVERIFY(view.isAutoFit());
+        const double small = view.zoom();
+
+        view.resize(1200, 900); // e.g. the window reaching its real size
+        QVERIFY(view.zoom() > small * 2.5);
+        const QRectF b = view.canvasViewBounds();
+        QVERIFY(b.left() >= 0 && b.top() >= 0 && b.right() <= 1200 && b.bottom() <= 900);
+
+        view.zoomIn();
+        QVERIFY(!view.isAutoFit());
+        const double chosen = view.zoom();
+        view.resize(600, 450);
+        QCOMPARE(view.zoom(), chosen); // your zoom survives a resize
+
+        view.fitToWindow(); // Fit turns it back on
+        QVERIFY(view.isAutoFit());
+        view.setPan(QPointF(10, 0));
+        QVERIFY(!view.isAutoFit());
+    }
+
     void zoomKeepsAnchorFixed()
     {
         TileStore store;

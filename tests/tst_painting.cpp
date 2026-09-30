@@ -171,6 +171,20 @@ private slots:
         QCOMPARE(view->tool(), static_cast<CanvasTool *>(w.brushTool()));
     }
 
+    void newWindowShowsTheWholeCanvas()
+    {
+        MainWindow w; // its 2000 x 1500 document is created before the window has a size
+        w.resize(1300, 850);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        CanvasView *view = w.canvasView();
+        const QRectF b = view->canvasViewBounds();
+        QVERIFY2(b.left() >= 0 && b.top() >= 0 && b.right() <= view->width() && b.bottom() <= view->height(),
+                 qPrintable(QStringLiteral("canvas %1,%2 %3x%4 in view %5x%6")
+                                .arg(b.x()).arg(b.y()).arg(b.width()).arg(b.height())
+                                .arg(view->width()).arg(view->height())));
+    }
+
     void spaceDragPansInsteadOfPainting()
     {
         MainWindow w;

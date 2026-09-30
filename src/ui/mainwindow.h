@@ -91,6 +91,8 @@ private:
     QAction *m_brushAct = nullptr;
     QAction *m_eraserAct = nullptr;
     QAction *m_eyedropperAct = nullptr;
+    QAction *m_fitAct = nullptr;
+    QAction *m_actualAct = nullptr;
 
     QLabel *m_posLabel = nullptr;
     QLabel *m_zoomLabel = nullptr;

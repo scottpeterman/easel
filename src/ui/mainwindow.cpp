@@ -29,6 +29,7 @@
 #include <QStatusBar>
 #include <QThreadPool>
 #include <QToolBar>
+#include <QToolButton>
 
 #include <memory>
 
@@ -117,11 +118,15 @@ void MainWindow::createActions()
     auto *zoomOut = m_viewMenu->addAction(tr("Zoom &Out"), m_view, &CanvasView::zoomOut);
     zoomOut->setShortcut(QKeySequence::ZoomOut);
 
-    auto *fit = m_viewMenu->addAction(tr("&Fit to Window"), m_view, &CanvasView::fitToWindow);
-    fit->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    m_fitAct = m_viewMenu->addAction(tr("&Fit to Window"), m_view, &CanvasView::fitToWindow);
+    m_fitAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    m_fitAct->setIconText(tr("Fit"));
+    m_fitAct->setToolTip(tr("Fit the canvas to the window (Ctrl+0)"));
 
-    auto *actual = m_viewMenu->addAction(tr("&Actual Pixels"), m_view, &CanvasView::actualSize);
-    actual->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_actualAct = m_viewMenu->addAction(tr("&Actual Pixels"), m_view, &CanvasView::actualSize);
+    m_actualAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_actualAct->setIconText(tr("1:1"));
+    m_actualAct->setToolTip(tr("Actual pixels, 100% (Ctrl+1)"));
 
     m_viewMenu->addSeparator();
 
@@ -225,6 +230,14 @@ void MainWindow::createStatusBar()
     statusBar()->addWidget(m_posLabel, 1);
     statusBar()->addPermanentWidget(m_memoryLabel);
     statusBar()->addPermanentWidget(m_rotationLabel);
+    for (QAction *a : {m_fitAct, m_actualAct}) {
+        auto *b = new QToolButton(this);
+        b->setDefaultAction(a);
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        b->setAutoRaise(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        statusBar()->addPermanentWidget(b);
+    }
     statusBar()->addPermanentWidget(m_zoomLabel);
 
     connect(m_view, &CanvasView::viewChanged, this, [this](double zoom, double rotation) {

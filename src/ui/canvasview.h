@@ -75,6 +75,7 @@ public:
     double zoom() const { return m_zoom; }
     double rotation() const { return m_rotation; }
     QPointF pan() const { return m_pan; }
+    bool isAutoFit() const { return m_autoFit; }
     void setPan(const QPointF &pan);
 
     QTransform canvasToView() const;
@@ -148,6 +149,7 @@ private:
     easel::TileStore *m_store = nullptr;
     QSize m_canvasSize;
     double m_zoom = 1.0;
+    bool m_autoFit = true; // refit on resize until the user navigates
     double m_rotation = 0.0; // degrees, clockwise
     QPointF m_pan;           // canvas centre offset from view centre, view pixels
 
