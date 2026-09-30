@@ -20,8 +20,8 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(QStringLiteral("Balanced layered image editor"));
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument(QStringLiteral("image"),
-                                 QStringLiteral("Image file to open (optional)."));
+    parser.addPositionalArgument(QStringLiteral("file"),
+                                 QStringLiteral("Easel document or image to open (optional)."));
     parser.process(app);
 
     MainWindow window;
@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
 
     const QStringList args = parser.positionalArguments();
     if (!args.isEmpty())
-        window.openImage(args.first());
+        window.openDocument(args.first());
 
     return app.exec();
 }

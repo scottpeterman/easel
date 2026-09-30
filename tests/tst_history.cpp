@@ -128,6 +128,46 @@ private slots:
         QCOMPARE(h.memoryBytes(), 4 * TileStore::BytesPerTile);
     }
 
+    void stateIdTracksExactPointInHistory()
+    {
+        TileStore s(Qt::white);
+        History h;
+        h.reset(QStringLiteral("New"));
+        const quint64 base = h.stateId();
+        strokeAndRecord(s, h, {10, 10}, {60, 10}, Qt::red);
+        const quint64 saved = h.stateId();
+        QVERIFY(saved != base);
+
+        h.undo(s);
+        QCOMPARE(h.stateId(), base);
+        h.redo(s);
+        QCOMPARE(h.stateId(), saved);
+
+        // Undo past the save and paint something else: same step count,
+        // different state.
+        h.undo(s);
+        strokeAndRecord(s, h, {10, 40}, {60, 40}, Qt::blue);
+        QCOMPARE(h.position(), 1);
+        QVERIFY(h.stateId() != saved);
+
+        h.reset(QStringLiteral("Other"));
+        QVERIFY(h.stateId() != base); // a new document never matches an old state
+    }
+
+    void droppingOldEntriesKeepsCurrentStateId()
+    {
+        TileStore s(QColor(0, 0, 0, 0));
+        s.fillRect(QRect(0, 0, 64, 64), Qt::gray);
+        History h(2 * TileStore::BytesPerTile);
+        strokeAndRecord(s, h, {20, 20}, {30, 20}, Qt::red);
+        strokeAndRecord(s, h, {20, 20}, {30, 20}, Qt::red);
+        const quint64 current = h.stateId();
+        strokeAndRecord(s, h, {20, 20}, {30, 20}, Qt::red); // drops the first
+        QVERIFY(h.droppedCount() >= 1);
+        h.undo(s);
+        QCOMPARE(h.stateId(), current);
+    }
+
     void budgetDropsOldestEntries()
     {
         TileStore s(QColor(0, 0, 0, 0));

@@ -11,12 +11,13 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets ShaderTools)
-# QRhi headers (rhi/qrhi.h) come with Qt::GuiPrivate. Since Qt 6.9 private
-# modules must be requested by name; before that they come with Gui.
+# QRhi headers (rhi/qrhi.h) come with Qt::GuiPrivate, and the zip reader and
+# writer for .easel files with Qt::CorePrivate (Qt::GuiPrivate before 6.9).
+# Since Qt 6.9 private modules must be requested by name.
 if(Qt6_VERSION VERSION_GREATER_EQUAL 6.9)
     # Expected: bundles ship the exact Qt they were built with.
     set(QT_NO_PRIVATE_MODULE_WARNING ON)
-    find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate GuiPrivate)
 endif()
 qt_standard_project_setup()
 

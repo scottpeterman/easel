@@ -50,11 +50,18 @@ public:
     // Entries dropped from the front to stay within budget since reset().
     int droppedCount() const { return m_dropped; }
 
+    // Identifies the current document state. Two states have the same id only
+    // if they're the same point in history, so "saved state == current state"
+    // is exact: undoing past a save and painting something new is a change even
+    // if the step count matches.
+    quint64 stateId() const;
+
 private:
     struct Entry {
         QString label;
         QHash<TileCoord, QImage> tiles;
         qint64 bytes = 0;
+        quint64 id = 0;
     };
 
     static qint64 bytesOf(const QHash<TileCoord, QImage> &tiles);
@@ -67,6 +74,8 @@ private:
     qsizetype m_position = 0;
     qint64 m_bytes = 0;
     int m_dropped = 0;
+    quint64 m_nextId = 1;
+    quint64 m_baseId = 0; // state before the first remaining entry
 };
 
 } // namespace easel

@@ -33,8 +33,15 @@ public:
     ~MainWindow() override;
 
     void newDocument(const QSize &size, const QColor &background);
-    // Loads in the background; documentOpened() reports the outcome.
-    void openImage(const QString &path);
+    // Opens an .easel document or an image in the background; documentOpened()
+    // reports the outcome.
+    void openDocument(const QString &path);
+    // Writes an .easel file. With wait, returns once written (true on success);
+    // otherwise saves in the background and documentSaved() reports the outcome.
+    bool saveDocumentTo(const QString &path, bool wait = false);
+
+    bool isModified() const;
+    QString documentPath() const { return m_path; }
 
     CanvasView *canvasView() const { return m_view; }
     easel::TileStore *layer() const { return m_layer.get(); }
@@ -46,9 +53,13 @@ public:
 public slots:
     void undo();
     void redo();
+    bool save();
+    bool saveAs();
 
 signals:
     void documentOpened(const QString &path, bool ok);
+    void documentSaved(const QString &path, bool ok);
+    void imageExported(const QString &path, bool ok);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -62,10 +73,15 @@ private:
     void selectEyedropper();
     void showNewDialog();
     void showOpenDialog();
+    void showExportDialog();
+    QString askSavePath();
+    // Offers to save unsaved changes. False if the user cancelled.
+    bool maybeSave();
+    void finishSave(const QString &path, quint64 stateId, quint64 docGeneration, const QString &error);
     void showAbout();
     void setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
                      const QString &name, const QString &historyLabel,
-                     easel::TilePyramid pyramid = {});
+                     easel::TilePyramid pyramid = {}, const QString &path = {});
     void finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc);
     void historyChanged();
     void historyItemClicked(QListWidgetItem *item);
@@ -76,6 +92,10 @@ private:
     QSize m_size;
     QString m_name;
     QString m_lastDir;
+    QString m_path;           // the .easel file this document saves to; empty if none
+    quint64 m_cleanId = 0;    // history state last saved (or opened)
+    quint64 m_docGeneration = 0;
+    int m_pendingJobs = 0;    // background saves and exports in flight
     easel::History m_history;
 
     CanvasView *m_view = nullptr;

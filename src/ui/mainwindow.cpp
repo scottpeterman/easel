@@ -18,6 +18,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidget>
@@ -39,12 +40,19 @@ namespace {
 
 constexpr int kSettingsVersion = 2;
 
-QString imageFilter()
+QString openFilter()
 {
-    QStringList patterns;
+    QStringList images;
     for (const QByteArray &fmt : QImageReader::supportedImageFormats())
-        patterns << QStringLiteral("*.") + QString::fromLatin1(fmt);
-    return QObject::tr("Images (%1);;All files (*)").arg(patterns.join(QLatin1Char(' ')));
+        images << QStringLiteral("*.") + QString::fromLatin1(fmt);
+    const QString native = QStringLiteral("*.") + QLatin1String(easel::NativeSuffix);
+    return QObject::tr("All supported (%1 %2);;Easel documents (%1);;Images (%2);;All files (*)")
+        .arg(native, images.join(QLatin1Char(' ')));
+}
+
+QString withSuffix(const QString &path, const QString &suffix)
+{
+    return QFileInfo(path).suffix().isEmpty() ? path + QLatin1Char('.') + suffix : path;
 }
 
 } // namespace
@@ -91,8 +99,16 @@ void MainWindow::createActions()
     auto *newAct = file->addAction(tr("&New..."), this, &MainWindow::showNewDialog);
     newAct->setShortcut(QKeySequence::New);
 
-    auto *openAct = file->addAction(tr("&Open Image..."), this, &MainWindow::showOpenDialog);
+    auto *openAct = file->addAction(tr("&Open..."), this, &MainWindow::showOpenDialog);
     openAct->setShortcut(QKeySequence::Open);
+
+    file->addSeparator();
+    auto *saveAct = file->addAction(tr("&Save"), this, &MainWindow::save);
+    saveAct->setShortcut(QKeySequence::Save);
+    auto *saveAsAct = file->addAction(tr("Save &As..."), this, &MainWindow::saveAs);
+    saveAsAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    auto *exportAct = file->addAction(tr("&Export..."), this, &MainWindow::showExportDialog);
+    exportAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
 
     file->addSeparator();
     auto *quitAct = file->addAction(tr("&Quit"), this, &QWidget::close);
@@ -277,7 +293,7 @@ void MainWindow::newDocument(const QSize &size, const QColor &background)
                 tr("New %1 × %2").arg(size.width()).arg(size.height()));
 }
 
-void MainWindow::openImage(const QString &path)
+void MainWindow::openDocument(const QString &path)
 {
     // Decoding, tile import and the zoom pyramid all run on a worker thread;
     // the window stays responsive. Opening again supersedes an earlier load.
@@ -290,7 +306,7 @@ void MainWindow::openImage(const QString &path)
 
     QPointer<MainWindow> self(this);
     QThreadPool::globalInstance()->start([self, path, generation] {
-        auto doc = std::make_shared<easel::LoadedDocument>(easel::loadImageDocument(path));
+        auto doc = std::make_shared<easel::LoadedDocument>(easel::loadDocument(path));
         QMetaObject::invokeMethod(
             qApp,
             [self, path, generation, doc] {
@@ -312,7 +328,7 @@ void MainWindow::finishOpen(const QString &path, quint64 generation, easel::Load
     statusBar()->clearMessage();
 
     if (!doc.ok()) {
-        QMessageBox::warning(this, tr("Open Image"),
+        QMessageBox::warning(this, tr("Open"),
                              tr("Could not open %1:\n%2")
                                  .arg(QDir::toNativeSeparators(path), doc.error));
         emit documentOpened(path, false);
@@ -321,19 +337,127 @@ void MainWindow::finishOpen(const QString &path, quint64 generation, easel::Load
 
     const QFileInfo info(path);
     m_lastDir = info.absolutePath();
+    // Only an .easel file is saved back to; an opened image gets Save As.
     setDocument(std::move(doc.store), doc.size, info.fileName(), tr("Open %1").arg(info.fileName()),
-                std::move(doc.pyramid));
+                std::move(doc.pyramid), doc.native ? info.absoluteFilePath() : QString());
     emit documentOpened(path, true);
+}
+
+bool MainWindow::isModified() const
+{
+    return m_history.stateId() != m_cleanId;
+}
+
+bool MainWindow::save()
+{
+    if (m_path.isEmpty())
+        return saveAs();
+    return saveDocumentTo(m_path);
+}
+
+bool MainWindow::saveAs()
+{
+    const QString path = askSavePath();
+    return !path.isEmpty() && saveDocumentTo(path);
+}
+
+QString MainWindow::askSavePath()
+{
+    const QString suffix = QLatin1String(easel::NativeSuffix);
+    QString suggested = m_path;
+    if (suggested.isEmpty())
+        suggested = QDir(m_lastDir).filePath(QFileInfo(m_name).completeBaseName() + QLatin1Char('.') + suffix);
+    const QString path = QFileDialog::getSaveFileName(this, tr("Save As"), suggested,
+                                                      tr("Easel documents (*.%1)").arg(suffix));
+    return path.isEmpty() ? QString() : withSuffix(path, suffix);
+}
+
+bool MainWindow::saveDocumentTo(const QString &path, bool wait)
+{
+    if (!m_layer)
+        return false;
+    // The snapshot shares tiles with the live document (copy-on-write), so
+    // painting can go on while it's written out.
+    easel::TileStore snapshot = m_layer->snapshot();
+    const QSize size = m_size;
+    const quint64 stateId = m_history.stateId();
+    const quint64 docGeneration = m_docGeneration;
+    m_lastDir = QFileInfo(path).absolutePath();
+
+    if (wait) {
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        const QString error = easel::saveNativeDocument(path, std::move(snapshot), size);
+        QApplication::restoreOverrideCursor();
+        ++m_pendingJobs; // balanced in finishSave
+        finishSave(path, stateId, docGeneration, error);
+        return error.isEmpty();
+    }
+
+    statusBar()->showMessage(tr("Saving %1…").arg(QFileInfo(path).fileName()));
+    ++m_pendingJobs;
+    QPointer<MainWindow> self(this);
+    auto shared = std::make_shared<easel::TileStore>(std::move(snapshot));
+    QThreadPool::globalInstance()->start([self, path, shared, size, stateId, docGeneration] {
+        const QString error = easel::saveNativeDocument(path, std::move(*shared), size);
+        QMetaObject::invokeMethod(
+            qApp,
+            [self, path, stateId, docGeneration, error] {
+                if (self)
+                    self->finishSave(path, stateId, docGeneration, error);
+            },
+            Qt::QueuedConnection);
+    });
+    return true;
+}
+
+void MainWindow::finishSave(const QString &path, quint64 stateId, quint64 docGeneration, const QString &error)
+{
+    --m_pendingJobs;
+    const QString name = QFileInfo(path).fileName();
+    if (!error.isEmpty()) {
+        statusBar()->clearMessage();
+        QMessageBox::warning(this, tr("Save"),
+                             tr("Could not save %1:\n%2").arg(QDir::toNativeSeparators(path), error));
+        emit documentSaved(path, false);
+        return;
+    }
+    // A different document may be open by now; only mark this one clean.
+    if (docGeneration == m_docGeneration) {
+        m_path = QFileInfo(path).absoluteFilePath();
+        m_name = name;
+        m_cleanId = stateId; // later strokes still count as unsaved
+        updateTitle();
+    }
+    statusBar()->showMessage(tr("Saved %1").arg(name), 4000);
+    emit documentSaved(path, true);
+}
+
+bool MainWindow::maybeSave()
+{
+    if (!isModified())
+        return true;
+    const auto answer = QMessageBox::warning(
+        this, tr("Unsaved Changes"), tr("Save changes to %1 before closing it?").arg(m_name),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    if (answer == QMessageBox::Cancel)
+        return false;
+    if (answer == QMessageBox::Discard)
+        return true;
+    const QString path = m_path.isEmpty() ? askSavePath() : m_path;
+    return !path.isEmpty() && saveDocumentTo(path, true);
 }
 
 void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
                              const QString &name, const QString &historyLabel,
-                             easel::TilePyramid pyramid)
+                             easel::TilePyramid pyramid, const QString &path)
 {
     // Detach everything from the old document before it's freed.
     m_brush->setDocument(nullptr, {}, nullptr);
     m_eyedropper->setDocument(nullptr, {});
     m_history.reset(historyLabel);
+    m_cleanId = m_history.stateId();
+    ++m_docGeneration;
+    m_path = path;
 
     m_layer = std::move(layer);
     m_size = size;
@@ -343,7 +467,7 @@ void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSiz
     m_eyedropper->setDocument(m_layer.get(), QRect(QPoint(0, 0), m_size));
 
     m_layers->clear();
-    m_layers->addItem(m_name == tr("Untitled") ? tr("Background") : m_name);
+    m_layers->addItem(tr("Background"));
     m_layers->setCurrentRow(0);
 
     historyChanged();
@@ -401,12 +525,15 @@ void MainWindow::historyChanged()
     m_undoAct->setText(m_history.canUndo() ? tr("&Undo %1").arg(m_history.undoLabel()) : tr("&Undo"));
     m_redoAct->setEnabled(m_history.canRedo());
     m_redoAct->setText(m_history.canRedo() ? tr("&Redo %1").arg(m_history.redoLabel()) : tr("&Redo"));
+    setWindowModified(isModified());
     updateMemoryLabel();
 }
 
 void MainWindow::updateTitle()
 {
-    setWindowTitle(tr("%1 (%2 × %3) — Easel").arg(m_name).arg(m_size.width()).arg(m_size.height()));
+    // [*] shows as "*" when the document has unsaved changes.
+    setWindowTitle(tr("%1[*] (%2 × %3) — Easel").arg(m_name).arg(m_size.width()).arg(m_size.height()));
+    setWindowModified(isModified());
 }
 
 void MainWindow::updateMemoryLabel()
@@ -425,6 +552,8 @@ void MainWindow::updateMemoryLabel()
 
 void MainWindow::showNewDialog()
 {
+    if (!maybeSave())
+        return;
     NewDocumentDialog dlg(m_size.isEmpty() ? QSize(2000, 1500) : m_size, this);
     if (dlg.exec() == QDialog::Accepted)
         newDocument(dlg.canvasSize(), dlg.background());
@@ -432,10 +561,56 @@ void MainWindow::showNewDialog()
 
 void MainWindow::showOpenDialog()
 {
-    const QString path =
-        QFileDialog::getOpenFileName(this, tr("Open Image"), m_lastDir, imageFilter());
+    if (!maybeSave())
+        return;
+    const QString path = QFileDialog::getOpenFileName(this, tr("Open"), m_lastDir, openFilter());
     if (!path.isEmpty())
-        openImage(path);
+        openDocument(path);
+}
+
+void MainWindow::showExportDialog()
+{
+    if (!m_layer)
+        return;
+    QStringList filters{tr("PNG image (*.png)"), tr("JPEG image (*.jpg *.jpeg)")};
+    if (QImageWriter::supportedImageFormats().contains("webp"))
+        filters << tr("WebP image (*.webp)");
+    const QString suggested = QDir(m_lastDir).filePath(QFileInfo(m_name).completeBaseName() + QStringLiteral(".png"));
+    QString selected;
+    QString path = QFileDialog::getSaveFileName(this, tr("Export"), suggested, filters.join(QStringLiteral(";;")),
+                                                &selected);
+    if (path.isEmpty())
+        return;
+    const QString suffix = selected.contains(QLatin1String("jpg")) ? QStringLiteral("jpg")
+                           : selected.contains(QLatin1String("webp")) ? QStringLiteral("webp")
+                                                                     : QStringLiteral("png");
+    path = withSuffix(path, suffix);
+    m_lastDir = QFileInfo(path).absolutePath();
+
+    statusBar()->showMessage(tr("Exporting %1…").arg(QFileInfo(path).fileName()));
+    ++m_pendingJobs;
+    QPointer<MainWindow> self(this);
+    auto snapshot = std::make_shared<easel::TileStore>(m_layer->snapshot());
+    const QSize size = m_size;
+    QThreadPool::globalInstance()->start([self, path, snapshot, size] {
+        const QString error = easel::exportImage(path, *snapshot, size);
+        QMetaObject::invokeMethod(
+            qApp,
+            [self, path, error] {
+                if (!self)
+                    return;
+                --self->m_pendingJobs;
+                if (error.isEmpty()) {
+                    self->statusBar()->showMessage(tr("Exported %1").arg(QFileInfo(path).fileName()), 4000);
+                } else {
+                    self->statusBar()->clearMessage();
+                    QMessageBox::warning(self, tr("Export"),
+                                         tr("Could not export %1:\n%2").arg(QDir::toNativeSeparators(path), error));
+                }
+                emit self->imageExported(path, error.isEmpty());
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::showAbout()
@@ -447,6 +622,17 @@ void MainWindow::showAbout()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (!maybeSave()) {
+        event->ignore();
+        return;
+    }
+    if (m_pendingJobs > 0) {
+        // Let background saves and exports finish writing their files.
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        QThreadPool::globalInstance()->waitForDone();
+        QApplication::restoreOverrideCursor();
+    }
+
     QSettings settings;
     settings.setValue(QStringLiteral("geometry"), saveGeometry());
     settings.setValue(QStringLiteral("windowState"), saveState(kSettingsVersion));

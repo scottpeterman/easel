@@ -1,11 +1,14 @@
 #include "brushtool.h"
 #include "canvasview.h"
 #include "colorpanel.h"
+#include "documentio.h"
 #include "eyedroppertool.h"
 #include "mainwindow.h"
 
 #include <QPointingDevice>
+#include <QSignalSpy>
 #include <QTabletEvent>
+#include <QTemporaryDir>
 #include <QTest>
 
 using namespace easel;
@@ -183,6 +186,68 @@ private slots:
                  qPrintable(QStringLiteral("canvas %1,%2 %3x%4 in view %5x%6")
                                 .arg(b.x()).arg(b.y()).arg(b.width()).arg(b.height())
                                 .arg(view->width()).arg(view->height())));
+    }
+
+    void saveReopenAndUnsavedState()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("drawing.easel"));
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        QVERIFY(!w.isModified());
+
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 100}));
+        QVERIFY(w.isModified());
+        QVERIFY(w.isWindowModified());
+
+        QVERIFY(w.saveDocumentTo(path, true));
+        QVERIFY(!w.isModified());
+        QCOMPARE(w.documentPath(), QFileInfo(path).absoluteFilePath());
+        QVERIFY(w.windowTitle().startsWith(QStringLiteral("drawing.easel")));
+
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 100}));
+        QVERIFY(w.isModified());
+        w.undo();
+        QVERIFY(!w.isModified()); // back at the saved state
+        w.undo();
+        QVERIFY(w.isModified());
+        w.redo();
+
+        // Reopen in a fresh window: same pixels, saves back to the same file.
+        MainWindow w2;
+        setupWindow(w2);
+        QSignalSpy opened(&w2, &MainWindow::documentOpened);
+        w2.openDocument(path);
+        QVERIFY(opened.wait(10000));
+        QCOMPARE(opened.at(0).at(1).toBool(), true);
+        QCOMPARE(w2.canvasView()->canvasSize(), QSize(400, 300));
+        QCOMPARE(pixel(w2, 100, 100), QColor(Qt::red));
+        QCOMPARE(pixel(w2, 200, 100), QColor(Qt::white));
+        QCOMPARE(w2.documentPath(), QFileInfo(path).absoluteFilePath());
+        QVERIFY(!w2.isModified());
+    }
+
+    void backgroundSaveLetsYouKeepPainting()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("bg.easel"));
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 100}));
+
+        QSignalSpy saved(&w, &MainWindow::documentSaved);
+        QVERIFY(w.saveDocumentTo(path)); // background
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {300, 100})); // meanwhile
+        QVERIFY(saved.wait(10000));
+        QCOMPARE(saved.at(0).at(1).toBool(), true);
+        QVERIFY(w.isModified()); // the second stroke isn't in the file
+
+        const LoadedDocument doc = loadDocument(path);
+        QVERIFY(doc.ok());
+        QCOMPARE(pixelToColor(doc.store->pixel(100, 100)), QColor(Qt::red));
+        QCOMPARE(pixelToColor(doc.store->pixel(300, 100)), QColor(Qt::white));
     }
 
     void spaceDragPansInsteadOfPainting()

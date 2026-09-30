@@ -42,6 +42,8 @@ public:
     explicit TileStore(const QColor &defaultColor = QColor(0, 0, 0, 0));
 
     Pixel defaultPixel() const { return m_default; }
+    // What tiles that don't exist read as (e.g. restored from a saved file).
+    void setDefaultPixel(const Pixel &p) { m_default = p; }
     QColor defaultColor() const { return pixelToColor(m_default); }
 
     bool hasTile(TileCoord c) const { return m_tiles.contains(c); }

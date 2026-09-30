@@ -12,6 +12,9 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 
 | Action | Input |
 | --- | --- |
+| New / Open | Ctrl+N / Ctrl+O (Easel documents and images) |
+| Save / Save As | Ctrl+S / Ctrl+Shift+S |
+| Export PNG, JPEG or WebP | Ctrl+Shift+E |
 | Paint | Left-drag or pen |
 | Brush / Eraser / Eyedropper | B / E / I |
 | Pick a colour from any tool | Hold Alt and click or drag |
@@ -23,6 +26,10 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Reset rotation | Ctrl+Shift+R |
 | Fit to window | Ctrl+0 |
 | Actual pixels | Ctrl+1 |
+
+## Files
+
+Easel saves `.easel` documents: a zip with a `manifest.json`, a flattened `preview.png` (up to 2048 px) you can look at without Easel, and the canvas tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
 
 ## Build
 

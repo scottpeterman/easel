@@ -7,6 +7,7 @@ namespace easel {
 History::History(qint64 budgetBytes)
     : m_budget(std::max<qint64>(budgetBytes, 0))
 {
+    m_baseId = m_nextId++;
 }
 
 void History::reset(const QString &baseLabel)
@@ -16,6 +17,12 @@ void History::reset(const QString &baseLabel)
     m_position = 0;
     m_bytes = 0;
     m_dropped = 0;
+    m_baseId = m_nextId++;
+}
+
+quint64 History::stateId() const
+{
+    return m_position == 0 ? m_baseId : m_entries.at(m_position - 1).id;
 }
 
 qint64 History::bytesOf(const QHash<TileCoord, QImage> &tiles)
@@ -33,7 +40,7 @@ void History::push(const QString &label, QHash<TileCoord, QImage> tiles)
         m_bytes -= m_entries.last().bytes;
         m_entries.removeLast();
     }
-    Entry e{label, std::move(tiles), 0};
+    Entry e{label, std::move(tiles), 0, m_nextId++};
     e.bytes = bytesOf(e.tiles);
     m_bytes += e.bytes;
     m_entries.append(std::move(e));
@@ -89,6 +96,7 @@ void History::enforceBudget()
     // Keep at least the newest entry, whatever its size.
     while (m_bytes > m_budget && m_position > 1) {
         m_bytes -= m_entries.first().bytes;
+        m_baseId = m_entries.first().id; // the base state is now "after" it
         m_entries.removeFirst();
         --m_position;
         ++m_dropped;
