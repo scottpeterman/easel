@@ -5,6 +5,7 @@
 #include "canvasarea.h"
 #include "canvasview.h"
 #include "colorpanel.h"
+#include "colortoalphadialog.h"
 #include "documentio.h"
 #include "eyedroppertool.h"
 #include "newdocumentdialog.h"
@@ -13,13 +14,16 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QImageReader>
+#include <QInputDialog>
 #include <QImageWriter>
 #include <QKeySequence>
 #include <QLabel>
@@ -30,6 +34,8 @@
 #include <QMimeData>
 #include <QPointer>
 #include <QSettings>
+#include <QSlider>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QThreadPool>
 #include <QToolBar>
@@ -75,6 +81,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_rectSelect = new SelectTool(easel::Selection::Shape::Rect, this);
     m_ellipseSelect = new SelectTool(easel::Selection::Shape::Ellipse, this);
     m_move = new MoveTool(this);
+    m_wand = new WandTool(this);
+    connect(m_wand, &WandTool::clicked, this, &MainWindow::wandClicked);
     m_brush->setSelection(&m_selection);
     for (SelectTool *t : {m_rectSelect, m_ellipseSelect}) {
         connect(t, &SelectTool::selectionDragged, this, &MainWindow::setSelection);
@@ -104,6 +112,11 @@ MainWindow::MainWindow(QWidget *parent)
     setGridSettings(grid);
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
+    m_wandOptions->hide(); // shown with the wand
+    m_options->show();
+    m_wand->setTolerance(settings.value(QStringLiteral("wand/tolerance"), m_wand->tolerance()).toDouble());
+    m_wand->setContiguous(settings.value(QStringLiteral("wand/contiguous"), m_wand->contiguous()).toBool());
+    emit wandSettingsLoaded();
     if (!settings.contains(QStringLiteral("geometry")))
         resize(1400, 900);
 
@@ -162,9 +175,36 @@ void MainWindow::createActions()
     m_deselectAct = edit->addAction(tr("D&eselect"), this, &MainWindow::deselect);
     m_deselectAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     edit->addSeparator();
-    m_cropAct = edit->addAction(tr("C&rop to Selection"), this, &MainWindow::cropToSelection);
-    m_cropAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X));
+    m_invertAct = edit->addAction(tr("&Invert Selection"), this, &MainWindow::invertSelection);
+    m_invertAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I));
+    m_growAct = edit->addAction(tr("&Grow Selection..."), this, [this] {
+        bool ok = false;
+        const int n = QInputDialog::getInt(this, tr("Grow Selection"), tr("Grow by (pixels):"), m_growPixels, 1, 100,
+                                           1, &ok);
+        if (ok) {
+            m_growPixels = n;
+            growSelection(n);
+        }
+    });
+    m_shrinkAct = edit->addAction(tr("S&hrink Selection..."), this, [this] {
+        bool ok = false;
+        const int n = QInputDialog::getInt(this, tr("Shrink Selection"), tr("Shrink by (pixels):"), m_growPixels, 1,
+                                           100, 1, &ok);
+        if (ok) {
+            m_growPixels = n;
+            growSelection(-n);
+        }
+    });
     edit->addSeparator();
+
+    QMenu *image = menuBar()->addMenu(tr("&Image"));
+    m_cropAct = image->addAction(tr("C&rop to Selection"), this, &MainWindow::cropToSelection);
+    m_cropAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X));
+    auto *trimAct = image->addAction(tr("&Trim Transparent Edges"), this, &MainWindow::trim);
+    trimAct->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
+    image->addSeparator();
+    auto *c2a = image->addAction(tr("&Color to Alpha..."), this, &MainWindow::showColorToAlphaDialog);
+    c2a->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_A));
     auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
     smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
     auto *larger = edit->addAction(tr("Larger Brush"), this, [this] { m_brush->scaleSize(1.2); });
@@ -243,7 +283,8 @@ void MainWindow::createActions()
     for (QDockWidget *dock : findChildren<QDockWidget *>())
         m_viewMenu->addAction(dock->toggleViewAction());
     for (QToolBar *bar : findChildren<QToolBar *>())
-        m_viewMenu->addAction(bar->toggleViewAction());
+        if (bar != m_wandOptions && bar != m_options) // these follow the tool
+            m_viewMenu->addAction(bar->toggleViewAction());
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
     auto *about = help->addAction(tr("&About Easel"), this, &MainWindow::showAbout);
@@ -278,12 +319,15 @@ void MainWindow::createToolBars()
     m_ellipseSelectAct = tools->addAction(tr("Ellipse"), this, [this] { activateTool(m_ellipseSelect, false); });
     m_ellipseSelectAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M));
     m_ellipseSelectAct->setToolTip(tr("Ellipse select (Shift+M). Shift for a circle."));
+    m_wandAct = tools->addAction(tr("Wand"), this, [this] { activateTool(m_wand, false); });
+    m_wandAct->setShortcut(QKeySequence(Qt::Key_W));
+    m_wandAct->setToolTip(tr("Magic wand (W): select by colour. Shift adds, Ctrl subtracts."));
     m_moveAct = tools->addAction(tr("Move"), this, [this] { activateTool(m_move, false); });
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
     m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
                              "Enter drops, Escape cancels."));
     for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
-                       m_ellipseSelectAct, m_moveAct}) {
+                       m_ellipseSelectAct, m_wandAct, m_moveAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
@@ -298,6 +342,55 @@ void MainWindow::createToolBars()
 
     m_options = new BrushOptionsBar(m_brush, this);
     addToolBar(Qt::TopToolBarArea, m_options);
+
+    // Wand options take the brush options' place while the wand is active.
+    m_wandOptions = new QToolBar(tr("Wand Options"), this);
+    m_wandOptions->setObjectName(QStringLiteral("WandOptionsBar"));
+    m_wandOptions->setMovable(false);
+    {
+        auto *host = new QWidget(m_wandOptions);
+        auto *row = new QHBoxLayout(host);
+        row->setContentsMargins(6, 2, 6, 2);
+        row->setSpacing(6);
+        auto *title = new QLabel(tr("Magic Wand"), host);
+        title->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        row->addWidget(title);
+        row->addSpacing(8);
+        row->addWidget(new QLabel(tr("Tolerance"), host));
+        auto *slider = new QSlider(Qt::Horizontal, host);
+        slider->setRange(0, 100);
+        slider->setFixedWidth(120);
+        auto *spin = new QSpinBox(host);
+        spin->setRange(0, 100);
+        spin->setSuffix(tr("%"));
+        spin->setKeyboardTracking(false);
+        auto *contiguous = new QCheckBox(tr("Contiguous"), host);
+        contiguous->setToolTip(tr("Only pixels connected to the one clicked; off selects the colour everywhere"));
+        auto *hint = new QLabel(tr("Shift+click adds · Ctrl+click subtracts"), host);
+        hint->setEnabled(false);
+        row->addWidget(slider);
+        row->addWidget(spin);
+        row->addWidget(contiguous);
+        row->addSpacing(12);
+        row->addWidget(hint);
+        row->addStretch(1);
+        m_wandOptions->addWidget(host);
+
+        connect(slider, &QSlider::valueChanged, spin, &QSpinBox::setValue);
+        connect(spin, &QSpinBox::valueChanged, this, [this, slider](int v) {
+            const QSignalBlocker block(slider);
+            slider->setValue(v);
+            m_wand->setTolerance(v / 100.0);
+        });
+        connect(contiguous, &QCheckBox::toggled, this, [this](bool on) { m_wand->setContiguous(on); });
+        const auto sync = [this, spin, contiguous] {
+            spin->setValue(int(std::lround(m_wand->tolerance() * 100.0)));
+            contiguous->setChecked(m_wand->contiguous());
+        };
+        connect(this, &MainWindow::wandSettingsLoaded, this, sync);
+        sync();
+    }
+    addToolBar(Qt::TopToolBarArea, m_wandOptions);
 
     // The cursor circle follows size changes immediately.
     connect(m_brush, &BrushTool::settingsChanged, m_view, qOverload<>(&QWidget::update));
@@ -395,9 +488,12 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
         commitFloating();
     m_view->setTool(tool);
     m_options->setEnabled(brushOptions);
+    m_options->setVisible(tool != m_wand);
+    m_wandOptions->setVisible(tool == m_wand);
     QAction *act = tool == m_rectSelect      ? m_rectSelectAct
                    : tool == m_ellipseSelect ? m_ellipseSelectAct
                    : tool == m_move          ? m_moveAct
+                   : tool == m_wand          ? m_wandAct
                    : tool == m_eyedropper    ? m_eyedropperAct
                                              : nullptr;
     if (act)
@@ -410,14 +506,15 @@ void MainWindow::setSelection(const easel::Selection &selection)
 {
     const easel::Selection clipped = selection.isEmpty() ? easel::Selection() : selection;
     m_selection = clipped;
-    m_view->setSelectionOutline(clipped.isEmpty() ? QPolygonF() : clipped.outline());
+    m_view->setSelectionOutline(clipped.outlines());
     updateSelectionActions();
 }
 
 void MainWindow::updateSelectionActions()
 {
     const bool any = !m_selection.isEmpty();
-    for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct, m_cropAct, m_exportSelectionAct})
+    for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct, m_cropAct, m_exportSelectionAct,
+                       m_growAct, m_shrinkAct})
         if (a)
             a->setEnabled(any);
     if (m_selectionLabel) {
@@ -644,16 +741,103 @@ void MainWindow::cropToSelection()
     if (!m_layer || m_view->isStroking())
         return;
     commitFloating();
+    if (m_selection.isEmpty())
+        return;
     const QRect rect = m_selection.bounds() & canvasRect();
-    if (m_selection.isEmpty() || rect.isEmpty() || rect == canvasRect())
+    cropCanvasTo(rect, tr("Crop to %1 × %2").arg(rect.width()).arg(rect.height()));
+}
+
+void MainWindow::trim()
+{
+    if (!m_layer || m_view->isStroking())
+        return;
+    commitFloating();
+    const QRect rect = easel::opaqueBounds(*m_layer, canvasRect());
+    if (rect.isEmpty()) {
+        statusBar()->showMessage(tr("Nothing to trim to: the canvas is fully transparent"), 4000);
+        return;
+    }
+    if (rect == canvasRect()) {
+        statusBar()->showMessage(tr("No transparent edges to trim"), 4000);
+        return;
+    }
+    cropCanvasTo(rect, tr("Trim to %1 × %2").arg(rect.width()).arg(rect.height()));
+}
+
+void MainWindow::cropCanvasTo(const QRect &rect, const QString &label)
+{
+    if (rect.isEmpty() || rect == canvasRect())
         return;
     const QSize before = m_size;
     auto tiles = easel::cropStore(*m_layer, rect);
     m_size = rect.size();
-    m_history.push(tr("Crop to %1 × %2").arg(m_size.width()).arg(m_size.height()), std::move(tiles), before);
+    m_history.push(label, std::move(tiles), before);
     setSelection({});
     applyCanvasSize();
     historyChanged();
+}
+
+void MainWindow::invertSelection()
+{
+    commitFloating();
+    setSelection(m_selection.inverted(canvasRect()));
+}
+
+void MainWindow::growSelection(int pixels)
+{
+    if (m_selection.isEmpty())
+        return;
+    commitFloating();
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    const easel::Selection s = m_selection.grown(pixels, canvasRect());
+    QApplication::restoreOverrideCursor();
+    setSelection(s);
+}
+
+void MainWindow::wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers)
+{
+    if (!m_layer)
+        return;
+    const QPoint seed(int(std::floor(pos.x())), int(std::floor(pos.y())));
+    if (!canvasRect().contains(seed))
+        return;
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    const easel::Selection picked =
+        easel::magicWand(*m_layer, canvasRect(), seed, m_wand->tolerance(), m_wand->contiguous());
+    QApplication::restoreOverrideCursor();
+    if (modifiers & Qt::ShiftModifier)
+        setSelection(m_selection.united(picked));
+    else if (modifiers & Qt::ControlModifier)
+        setSelection(m_selection.subtracted(picked));
+    else
+        setSelection(picked);
+}
+
+void MainWindow::colorToAlpha(const QColor &color, double threshold)
+{
+    if (!m_layer || m_view->isStroking())
+        return;
+    commitFloating();
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    auto before = easel::colorToAlpha(*m_layer, m_selection, canvasRect(), color, threshold);
+    QApplication::restoreOverrideCursor();
+    if (before.isEmpty())
+        return;
+    m_history.push(tr("Color to Alpha"), std::move(before));
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::showColorToAlphaDialog()
+{
+    if (!m_layer)
+        return;
+    const QColor corner = easel::pixelToColor(m_layer->pixel(0, 0));
+    ColorToAlphaDialog dlg(m_brush->color(), corner.alpha() > 0 ? corner : QColor(), m_colorToAlphaThreshold, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    m_colorToAlphaThreshold = dlg.threshold();
+    colorToAlpha(dlg.color(), dlg.threshold());
 }
 
 void MainWindow::applyCanvasSize()
@@ -1090,5 +1274,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_color->saveSettings(settings);
     m_brush->saveSettings(settings);
     m_grid.save(settings);
+    settings.setValue(QStringLiteral("wand/tolerance"), m_wand->tolerance());
+    settings.setValue(QStringLiteral("wand/contiguous"), m_wand->contiguous());
     event->accept();
 }

@@ -533,53 +533,57 @@ void CanvasView::render(QRhiCommandBuffer *cb)
             grid(m_cellOffset.x(), m_cellSize.width(), m_cellOffset.y(), m_cellSize.height(),
                  0.2f, 0.75f, 1.0f, 0.85f);
     }
-    if (m_selectionOutline.size() >= 2) {
+    if (!m_selectionOutline.isEmpty()) {
         // Marching ants: 4-pixel black and white dashes along the selection
         // outline, only where it's on screen, shifted each timer tick.
         const double dash = 4.0 / m_zoom;
         const double phase = (m_antsPhase % 8) * (1.0 / m_zoom);
         const QRectF vis = xf.inverted().mapRect(QRectF(rect())).adjusted(-dash, -dash, dash, dash);
         constexpr size_t kMaxSegments = kMaxLineSegments * 2;
-        double along = 0.0;
-        for (qsizetype i = 0; i + 1 < m_selectionOutline.size() && ants.size() < 2 * kMaxSegments; ++i) {
-            const QPointF p0 = m_selectionOutline.at(i), p1 = m_selectionOutline.at(i + 1);
-            const QPointF d = p1 - p0;
-            const double len = std::hypot(d.x(), d.y());
-            if (len <= 0.0)
-                continue;
-            // Clip the edge to the visible area (Liang-Barsky).
-            double t0 = 0.0, t1 = 1.0;
-            const double pc[4] = {-d.x(), d.x(), -d.y(), d.y()};
-            const double qc[4] = {p0.x() - vis.left(), vis.right() - p0.x(), p0.y() - vis.top(), vis.bottom() - p0.y()};
-            bool visible = true;
-            for (int k = 0; k < 4 && visible; ++k) {
-                if (pc[k] == 0.0) {
-                    visible = qc[k] >= 0.0;
-                } else {
-                    const double t = qc[k] / pc[k];
-                    if (pc[k] < 0.0)
-                        t0 = std::max(t0, t);
-                    else
-                        t1 = std::min(t1, t);
-                    visible = t0 <= t1;
+        for (const QPolygonF &line : std::as_const(m_selectionOutline)) {
+            // Dashes are anchored at x + y of each line's start, so separate
+            // edge runs (a wand selection) line up with each other.
+            double along = line.isEmpty() ? 0.0 : line.first().x() + line.first().y();
+            for (qsizetype i = 0; i + 1 < line.size() && ants.size() < 2 * kMaxSegments; ++i) {
+                const QPointF p0 = line.at(i), p1 = line.at(i + 1);
+                const QPointF d = p1 - p0;
+                const double len = std::hypot(d.x(), d.y());
+                if (len <= 0.0)
+                    continue;
+                // Clip the edge to the visible area (Liang-Barsky).
+                double t0 = 0.0, t1 = 1.0;
+                const double pc[4] = {-d.x(), d.x(), -d.y(), d.y()};
+                const double qc[4] = {p0.x() - vis.left(), vis.right() - p0.x(), p0.y() - vis.top(), vis.bottom() - p0.y()};
+                bool visible = true;
+                for (int k = 0; k < 4 && visible; ++k) {
+                    if (pc[k] == 0.0) {
+                        visible = qc[k] >= 0.0;
+                    } else {
+                        const double t = qc[k] / pc[k];
+                        if (pc[k] < 0.0)
+                            t0 = std::max(t0, t);
+                        else
+                            t1 = std::min(t1, t);
+                        visible = t0 <= t1;
+                    }
                 }
-            }
-            if (visible) {
-                double u = t0 * len;
-                const double end = t1 * len;
-                while (u < end && ants.size() < 2 * kMaxSegments) {
-                    const double k = std::floor((along + u + phase) / dash);
-                    double next = std::min(end, (k + 1.0) * dash - phase - along);
-                    if (next <= u) // rounding at a dash boundary
-                        next = std::min(end, u + dash);
-                    const float shade = (static_cast<long long>(k) & 1) ? 1.0f : 0.0f;
-                    const QPointF a = p0 + d * (u / len), b = p0 + d * (next / len);
-                    ants.push_back({float(a.x()), float(a.y()), shade, shade, shade, 1.0f});
-                    ants.push_back({float(b.x()), float(b.y()), shade, shade, shade, 1.0f});
-                    u = next;
+                if (visible) {
+                    double u = t0 * len;
+                    const double end = t1 * len;
+                    while (u < end && ants.size() < 2 * kMaxSegments) {
+                        const double k = std::floor((along + u + phase) / dash);
+                        double next = std::min(end, (k + 1.0) * dash - phase - along);
+                        if (next <= u) // rounding at a dash boundary
+                            next = std::min(end, u + dash);
+                        const float shade = (static_cast<long long>(k) & 1) ? 1.0f : 0.0f;
+                        const QPointF a = p0 + d * (u / len), b = p0 + d * (next / len);
+                        ants.push_back({float(a.x()), float(a.y()), shade, shade, shade, 1.0f});
+                        ants.push_back({float(b.x()), float(b.y()), shade, shade, shade, 1.0f});
+                        u = next;
+                    }
                 }
+                along += len;
             }
-            along += len;
         }
     }
     {
@@ -1016,7 +1020,7 @@ void CanvasView::keyPressEvent(QKeyEvent *event)
     QRhiWidget::keyPressEvent(event);
 }
 
-void CanvasView::setSelectionOutline(const QPolygonF &outline)
+void CanvasView::setSelectionOutline(const QList<QPolygonF> &outline)
 {
     m_selectionOutline = outline;
     if (outline.isEmpty())

@@ -68,3 +68,30 @@ signals:
     void dragEnded(const QPointF &canvasPos);
     void nudged(const QPoint &delta);
 };
+
+// Magic wand: a click selects pixels of similar colour. Shift adds to the
+// selection, Ctrl takes away from it. The window does the selecting.
+class WandTool : public QObject, public CanvasTool
+{
+    Q_OBJECT
+
+public:
+    using QObject::QObject;
+
+    double tolerance() const { return m_tolerance; }
+    void setTolerance(double t) { m_tolerance = t; }
+    bool contiguous() const { return m_contiguous; }
+    void setContiguous(bool on) { m_contiguous = on; }
+
+    void press(const easel::StrokeSample &s) override;
+    void move(const easel::StrokeSample &) override {}
+    void release(const easel::StrokeSample &) override {}
+    double cursorDiameter() const override { return 0.0; }
+
+signals:
+    void clicked(const QPointF &canvasPos, Qt::KeyboardModifiers modifiers);
+
+private:
+    double m_tolerance = 0.12;
+    bool m_contiguous = true;
+};

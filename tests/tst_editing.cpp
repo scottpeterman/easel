@@ -9,6 +9,7 @@
 #include <QMimeData>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QToolBar>
 
 using namespace easel;
 
@@ -321,6 +322,95 @@ private slots:
         w.setSelection(Selection::rect(QRect(390, 290, 30, 30)));
         QVERIFY(w.exportSelectionTo(path));
         QCOMPARE(QImage(path).size(), QSize(10, 10));
+    }
+
+    void wandSelectsAndCombines()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.layer()->fillRect(QRect(200, 90, 10, 10), QColor(Qt::red));
+        w.canvasView()->refresh();
+        key(w, Qt::Key_W);
+        QCOMPARE(w.canvasView()->tool(), w.wandTool());
+        QVERIFY(w.findChild<QToolBar *>(QStringLiteral("WandOptionsBar"))->isVisible());
+
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {60, 100}));
+        QCOMPARE(w.selection().shape(), Selection::Shape::Mask);
+        QCOMPARE(w.selection().bounds(), QRect(50, 90, 20, 20));
+        QVERIFY(!w.canvasView()->selectionOutline().isEmpty());
+
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {205, 95}));
+        QCOMPARE(w.selection().bounds(), QRect(50, 90, 160, 20));
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::ControlModifier, viewPos(w, {60, 100}));
+        QCOMPARE(w.selection().bounds(), QRect(200, 90, 10, 10));
+
+        // Wand the background, invert: the two squares.
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {5, 5}));
+        key(w, Qt::Key_I, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(w.selection().contains(60, 100));
+        QVERIFY(w.selection().contains(205, 95));
+        QVERIFY(!w.selection().contains(5, 5));
+
+        // Brush clipped to a wand selection.
+        key(w, Qt::Key_B);
+        QVERIFY(!w.findChild<QToolBar *>(QStringLiteral("WandOptionsBar"))->isVisible());
+    }
+
+    void backgroundToAlphaThenTrim()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorToAlpha(Qt::white, 0.02);
+        QCOMPARE(pixel(w, 5, 5).alpha(), 0);
+        QCOMPARE(pixel(w, 60, 100), QColor(Qt::red));
+        QCOMPARE(w.history().label(0), QStringLiteral("Color to Alpha"));
+
+        key(w, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier);
+        QCOMPARE(w.canvasSize(), QSize(20, 20));
+        QCOMPARE(pixel(w, 0, 0), QColor(Qt::red));
+        QVERIFY(w.history().label(1).startsWith(QStringLiteral("Trim")));
+
+        w.undo();
+        w.undo();
+        QCOMPARE(w.canvasSize(), QSize(400, 300));
+        QCOMPARE(pixel(w, 5, 5), QColor(Qt::white));
+    }
+
+    void spriteCleanupWorkflow()
+    {
+        // Wand the background, grow into the fringe, Color to Alpha there only,
+        // then Trim: the sprite keeps its colour, the fringe is unmixed.
+        MainWindow w;
+        setupWindow(w);
+        w.layer()->fillRect(QRect(0, 0, 400, 300), QColor(Qt::black));
+        w.layer()->fillRect(QRect(100, 100, 20, 20), QColor(120, 30, 30)); // dark sprite
+        w.layer()->fillRect(QRect(99, 100, 1, 20), QColor(60, 15, 15));    // soft left edge
+        w.canvasView()->refresh();
+        key(w, Qt::Key_W);
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {5, 5}));
+        QVERIFY(w.selection().contains(99, 100) == false); // fringe outside a tight wand
+        w.growSelection(1);
+        QVERIFY(w.selection().contains(99, 100));
+        QVERIFY(!w.selection().contains(110, 110));
+        w.colorToAlpha(Qt::black, 0.04);
+        w.deselect();
+        w.trim();
+        QCOMPARE(w.canvasSize(), QSize(21, 20));
+        QCOMPARE(pixel(w, 11, 10), QColor(120, 30, 30)); // body untouched
+        const QColor edge = pixel(w, 0, 10);
+        QVERIFY2(edge.alpha() > 0 && edge.alpha() < 255 && edge.red() > 200, qPrintable(edge.name(QColor::HexArgb)));
+    }
+
+    void wandDeleteMakesBackgroundTransparent()
+    {
+        MainWindow w;
+        setupWindow(w);
+        key(w, Qt::Key_W);
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {5, 5}));
+        key(w, Qt::Key_Delete);
+        QCOMPARE(pixel(w, 5, 5).alpha(), 0);
+        QCOMPARE(pixel(w, 399, 299).alpha(), 0);
+        QCOMPARE(pixel(w, 60, 100), QColor(Qt::red));
     }
 
     void smudgeToolDragsColour()

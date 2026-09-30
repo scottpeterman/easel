@@ -23,7 +23,12 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Cut / copy / paste / delete | Ctrl+X / Ctrl+C / Ctrl+V / Delete |
 | Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
 | Drop / cancel floating pixels | Enter / Escape |
+| Magic wand | W; click selects similar colour, Shift+click adds, Ctrl+click subtracts |
+| Invert selection | Ctrl+Shift+I |
+| Grow / shrink selection | Edit > Grow Selection, Shrink Selection |
 | Crop to selection | Ctrl+Shift+X |
+| Trim transparent edges | Ctrl+Alt+T |
+| Color to Alpha | Ctrl+Alt+A (in the selection, or the whole canvas) |
 | Export selection as PNG | Ctrl+Alt+E |
 | Pixel grid (from 600%) | Ctrl+' |
 | Sprite grid on / off | Ctrl+Shift+' (cell size, offset and snapping under View > Sprite Grid Settings) |

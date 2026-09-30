@@ -146,6 +146,112 @@ private slots:
         f.commit();
     }
 
+    void maskSelectionTrimsAndCombines()
+    {
+        QImage m(10, 10, QImage::Format_Grayscale8);
+        m.fill(0);
+        for (int y = 2; y < 6; ++y)
+            for (int x = 3; x < 5; ++x)
+                m.scanLine(y)[x] = 255;
+        const Selection s = Selection::mask(QRect(100, 100, 10, 10), m);
+        QCOMPARE(s.shape(), Selection::Shape::Mask);
+        QCOMPARE(s.bounds(), QRect(103, 102, 2, 4));
+        QVERIFY(s.contains(104, 105));
+        QVERIFY(!s.contains(105, 105));
+        QCOMPARE(s.outlines().size(), 4); // top, bottom, left, right runs
+        QCOMPARE(s.translated(QPoint(-100, -100)).bounds(), QRect(3, 2, 2, 4));
+
+        const Selection r = Selection::rect(QRect(104, 102, 4, 1));
+        const Selection u = s.united(r);
+        QCOMPARE(u.bounds(), QRect(103, 102, 5, 4));
+        QVERIFY(u.contains(107, 102));
+        QVERIFY(!u.contains(107, 103));
+        const Selection d = s.subtracted(r);
+        QVERIFY(!d.contains(104, 102));
+        QVERIFY(d.contains(103, 102));
+
+        const Selection inv = Selection::rect(QRect(2, 2, 4, 4)).inverted(QRect(0, 0, 8, 8));
+        QVERIFY(inv.contains(0, 0));
+        QVERIFY(!inv.contains(3, 3));
+        QCOMPARE(inv.bounds(), QRect(0, 0, 8, 8));
+        QVERIFY(Selection().inverted(QRect(0, 0, 8, 8)) == Selection::rect(QRect(0, 0, 8, 8)));
+        QImage empty(3, 3, QImage::Format_Grayscale8);
+        empty.fill(0);
+        QVERIFY(Selection::mask(QRect(0, 0, 3, 3), empty).isEmpty());
+    }
+
+    void growAndShrink()
+    {
+        const Selection r = Selection::rect(QRect(10, 10, 10, 10));
+        const Selection g = r.grown(2, QRect(0, 0, 100, 100));
+        QCOMPARE(g.bounds(), QRect(8, 8, 14, 14));
+        QVERIFY(g.contains(8, 15));
+        QVERIFY(!g.contains(8, 8)); // corners are rounded off
+        QCOMPARE(r.grown(2, QRect(0, 0, 21, 21)).bounds(), QRect(8, 8, 13, 13)); // clipped
+        const Selection sh = r.grown(-3, QRect(0, 0, 100, 100));
+        QCOMPARE(sh.bounds(), QRect(13, 13, 4, 4));
+        QVERIFY(r.grown(-5, QRect(0, 0, 100, 100)).isEmpty());
+    }
+
+    void magicWandContiguousAndGlobal()
+    {
+        TileStore s(Qt::black);
+        s.fillRect(QRect(10, 10, 20, 20), QColor(200, 40, 40));
+        s.fillRect(QRect(60, 10, 5, 5), QColor(205, 45, 38)); // close colour, not connected
+        s.fillRect(QRect(15, 15, 2, 2), QColor(20, 20, 20));  // dark specks inside
+
+        const Selection c = magicWand(s, kCanvas, QPoint(12, 12), 0.05, true);
+        QCOMPARE(c.bounds(), QRect(10, 10, 20, 20));
+        QVERIFY(!c.contains(15, 15)); // the speck is a hole
+        QVERIFY(!c.contains(60, 10));
+
+        const Selection g = magicWand(s, kCanvas, QPoint(12, 12), 0.05, false);
+        QVERIFY(g.contains(62, 12));
+        const Selection exact = magicWand(s, kCanvas, QPoint(12, 12), 0.0, false);
+        QVERIFY(!exact.contains(62, 12));
+
+        // Background with dark noise: tolerance takes the specks too.
+        const Selection bg = magicWand(s, kCanvas, QPoint(0, 0), 0.1, true);
+        QVERIFY(bg.contains(0, 0));
+        QVERIFY(!bg.contains(12, 12));
+        QVERIFY(!bg.contains(15, 15)); // inside the red: not connected to the outside
+    }
+
+    void colorToAlphaUnmixesAndThresholds()
+    {
+        TileStore s(Qt::black);
+        s.fillRect(QRect(0, 0, 1, 1), QColor(128, 0, 0));  // dim red on black: half-transparent red
+        s.fillRect(QRect(1, 0, 1, 1), QColor(255, 255, 255));
+        s.fillRect(QRect(2, 0, 1, 1), QColor(6, 6, 6));   // noise
+        const auto before = colorToAlpha(s, {}, QRect(0, 0, 8, 8), Qt::black, 0.04);
+        QVERIFY(!before.isEmpty());
+
+        QCOMPARE(at(s, 5, 5).alpha(), 0);              // the background
+        const QColor red = at(s, 0, 0);
+        QCOMPARE(red.red(), 255);
+        QCOMPARE(red.green(), 0);
+        QVERIFY(qAbs(red.alpha() - 124) <= 3);        // (128/255 - 0.04) / 0.96
+        QCOMPARE(at(s, 1, 0), QColor(255, 255, 255)); // far from black: untouched
+        QCOMPARE(at(s, 2, 0).alpha(), 0);              // under the threshold
+
+        // Inside a selection only.
+        TileStore t(Qt::black);
+        colorToAlpha(t, Selection::rect(QRect(0, 0, 4, 4)), QRect(0, 0, 8, 8), Qt::black, 0.0);
+        QCOMPARE(at(t, 1, 1).alpha(), 0);
+        QCOMPARE(at(t, 5, 5), QColor(Qt::black));
+    }
+
+    void opaqueBoundsFindsContent()
+    {
+        TileStore s;
+        QVERIFY(opaqueBounds(s, kCanvas).isEmpty());
+        s.fillRect(QRect(70, 130, 3, 9), QColor(Qt::green));
+        s.fillRect(QRect(200, 10, 1, 1), QColor(0, 0, 0, 1));
+        QCOMPARE(opaqueBounds(s, kCanvas), QRect(QPoint(70, 10), QPoint(200, 138)));
+        TileStore white(Qt::white);
+        QCOMPARE(opaqueBounds(white, kCanvas), kCanvas);
+    }
+
     void cropShiftsPixelsAndDropsTheRest()
     {
         TileStore s(Qt::white);

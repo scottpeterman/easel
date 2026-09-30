@@ -96,3 +96,8 @@ bool MoveTool::keyPress(QKeyEvent *event)
         return false;
     }
 }
+
+void WandTool::press(const easel::StrokeSample &s)
+{
+    emit clicked(s.pos, QGuiApplication::keyboardModifiers());
+}

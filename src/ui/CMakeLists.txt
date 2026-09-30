@@ -15,6 +15,8 @@ add_library(easel_ui STATIC
     eyedroppertool.cpp
     selecttools.h
     selecttools.cpp
+    colortoalphadialog.h
+    colortoalphadialog.cpp
     griddialog.h
     griddialog.cpp
     newdocumentdialog.h

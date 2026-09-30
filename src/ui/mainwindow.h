@@ -23,6 +23,8 @@ class CanvasView;
 class EyedropperTool;
 class MoveTool;
 class SelectTool;
+class WandTool;
+class QToolBar;
 class ColorPanel;
 class QAction;
 class QLabel;
@@ -58,6 +60,7 @@ public:
     SelectTool *rectSelectTool() const { return m_rectSelect; }
     SelectTool *ellipseSelectTool() const { return m_ellipseSelect; }
     MoveTool *moveTool() const { return m_move; }
+    WandTool *wandTool() const { return m_wand; }
 
     const easel::Selection &selection() const { return m_selection; }
     void setSelection(const easel::Selection &selection);
@@ -88,11 +91,19 @@ public slots:
     void cancelFloating();
     // Crops the canvas to the selection's bounds (undoable).
     void cropToSelection();
+    // Crops away fully transparent edges.
+    void trim();
+    void invertSelection();
+    // Grows (pixels > 0) or shrinks (< 0) the selection.
+    void growSelection(int pixels);
+    // Color to Alpha in the selection, or everywhere without one.
+    void colorToAlpha(const QColor &color, double threshold);
 
 signals:
     void documentOpened(const QString &path, bool ok);
     void documentSaved(const QString &path, bool ok);
     void imageExported(const QString &path, bool ok);
+    void wandSettingsLoaded();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -122,6 +133,9 @@ private:
     void showExportDialog();
     void showExportSelectionDialog();
     void showGridDialog();
+    void showColorToAlphaDialog();
+    void wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers);
+    void cropCanvasTo(const QRect &rect, const QString &label);
     // After undo / redo, which may have changed the canvas size.
     void afterHistoryMove(const QSize &sizeBefore);
     // Points the view and tools at the document again after a size change.
@@ -160,6 +174,9 @@ private:
     SelectTool *m_rectSelect = nullptr;
     SelectTool *m_ellipseSelect = nullptr;
     MoveTool *m_move = nullptr;
+    WandTool *m_wand = nullptr;
+    QToolBar *m_wandOptions = nullptr;
+    double m_colorToAlphaThreshold = 0.04;
 
     easel::Selection m_selection;
     easel::FloatingContent m_floating;
@@ -193,6 +210,11 @@ private:
     QAction *m_deleteAct = nullptr;
     QAction *m_deselectAct = nullptr;
     QAction *m_cropAct = nullptr;
+    QAction *m_wandAct = nullptr;
+    QAction *m_invertAct = nullptr;
+    QAction *m_growAct = nullptr;
+    QAction *m_shrinkAct = nullptr;
+    int m_growPixels = 2;
     QAction *m_exportSelectionAct = nullptr;
     QAction *m_pixelGridAct = nullptr;
     QAction *m_cellGridAct = nullptr;

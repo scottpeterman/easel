@@ -24,6 +24,25 @@ QHash<TileCoord, QImage> clearSelection(TileStore &store, const Selection &selec
 // content of every tile it touched, for History.
 QHash<TileCoord, QImage> cropStore(TileStore &store, const QRect &rect);
 
+// Magic wand: pixels whose colour is within tolerance (0..1, the largest
+// difference in any 8-bit sRGB channel or alpha) of the pixel at seed.
+// contiguous: only those connected to the seed (4-way); otherwise all over canvas.
+Selection magicWand(const TileStore &store, const QRect &canvas, const QPoint &seed, double tolerance,
+                    bool contiguous);
+
+// Makes a colour transparent, the way GIMP's Color to Alpha does: each pixel
+// becomes the most transparent version of itself that, over that colour, looks
+// the same, so soft edges and glows against it keep their shape. Alpha left
+// at or below threshold (0..1) becomes fully transparent, and the rest is
+// stretched to keep full opacity. Works inside the selection, or everywhere
+// on the canvas when it's empty. Returns the pre-change tiles, for History.
+QHash<TileCoord, QImage> colorToAlpha(TileStore &store, const Selection &selection, const QRect &canvas,
+                                      const QColor &color, double threshold);
+
+// The smallest rectangle holding every pixel that isn't fully transparent
+// (empty if there are none).
+QRect opaqueBounds(const TileStore &store, const QRect &canvas);
+
 // Conversions for the system clipboard: 8-bit sRGB with straight alpha.
 QImage toClipboardImage(const QImage &content);
 QImage fromClipboardImage(const QImage &image);

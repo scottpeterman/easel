@@ -1,7 +1,10 @@
 #include "regionops.h"
 
 #include <algorithm>
+#include <climits>
+#include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace easel {
 
@@ -131,6 +134,216 @@ QHash<TileCoord, QImage> cropStore(TileStore &store, const QRect &rect)
     for (auto it = before.cbegin(); it != before.cend(); ++it)
         store.setTile(it.key(), fresh.value(it.key()));
     return before;
+}
+
+namespace {
+
+// The canvas area as premultiplied 8-bit sRGB (what you see).
+QImage displayImage(const TileStore &store, const QRect &area)
+{
+    QImage out(area.size(), QImage::Format_ARGB32_Premultiplied);
+    out.fill(pixelToDisplay(store.defaultPixel()));
+    for (const TileCoord c : TileStore::tilesIntersecting(area)) {
+        const QImage tile = store.tile(c);
+        if (tile.isNull())
+            continue;
+        const QRect tr = TileStore::tileRect(c);
+        const QRect part = tr & area;
+        const Pixel *src = tilePixels(tile);
+        for (int y = part.top(); y <= part.bottom(); ++y) {
+            auto *d = reinterpret_cast<QRgb *>(out.scanLine(y - area.top()));
+            const Pixel *s = src + (y - tr.top()) * N;
+            for (int x = part.left(); x <= part.right(); ++x)
+                d[x - area.left()] = pixelToDisplay(s[x - tr.left()]);
+        }
+    }
+    return out;
+}
+
+// Transfer curves through interpolated tables: Color to Alpha converts every
+// pixel both ways, and pow() made that the slow part.
+class Curve
+{
+public:
+    explicit Curve(float (*f)(float))
+    {
+        for (int i = 0; i <= kSteps; ++i)
+            m_table[i] = f(float(i) / kSteps);
+    }
+    float operator()(float v) const
+    {
+        const float x = std::clamp(v, 0.0f, 1.0f) * kSteps;
+        const int i = std::min(int(x), kSteps - 1);
+        const float t = x - float(i);
+        return m_table[i] + (m_table[i + 1] - m_table[i]) * t;
+    }
+
+private:
+    static constexpr int kSteps = 4096;
+    float m_table[kSteps + 1];
+};
+
+const Curve &toSrgb()
+{
+    static const Curve c(linearToSrgb);
+    return c;
+}
+
+const Curve &toLinear()
+{
+    static const Curve c(srgbToLinear);
+    return c;
+}
+
+} // namespace
+
+Selection magicWand(const TileStore &store, const QRect &canvas, const QPoint &seed, double tolerance,
+                    bool contiguous)
+{
+    if (!canvas.contains(seed))
+        return {};
+    const QImage img = displayImage(store, canvas);
+    const int w = img.width(), h = img.height();
+    const int tol = int(std::lround(std::clamp(tolerance, 0.0, 1.0) * 255.0));
+    const QRgb ref = reinterpret_cast<const QRgb *>(img.constScanLine(seed.y() - canvas.top()))[seed.x() - canvas.left()];
+    const auto near = [&](QRgb p) {
+        return std::abs(qRed(p) - qRed(ref)) <= tol && std::abs(qGreen(p) - qGreen(ref)) <= tol
+               && std::abs(qBlue(p) - qBlue(ref)) <= tol && std::abs(qAlpha(p) - qAlpha(ref)) <= tol;
+    };
+    const auto px = [&](int x, int y) { return reinterpret_cast<const QRgb *>(img.constScanLine(y))[x]; };
+
+    QImage mask(w, h, QImage::Format_Grayscale8);
+    mask.fill(0);
+    if (!contiguous) {
+        for (int y = 0; y < h; ++y) {
+            uchar *m = mask.scanLine(y);
+            for (int x = 0; x < w; ++x)
+                m[x] = near(px(x, y)) ? 255 : 0;
+        }
+        return Selection::mask(canvas, mask);
+    }
+
+    // Scanline flood fill.
+    std::vector<QPoint> stack{seed - canvas.topLeft()};
+    while (!stack.empty()) {
+        const QPoint p = stack.back();
+        stack.pop_back();
+        uchar *m = mask.scanLine(p.y());
+        if (m[p.x()] || !near(px(p.x(), p.y())))
+            continue;
+        int x0 = p.x(), x1 = p.x();
+        while (x0 > 0 && !m[x0 - 1] && near(px(x0 - 1, p.y())))
+            --x0;
+        while (x1 < w - 1 && !m[x1 + 1] && near(px(x1 + 1, p.y())))
+            ++x1;
+        std::fill(m + x0, m + x1 + 1, uchar(255));
+        for (const int ny : {p.y() - 1, p.y() + 1}) {
+            if (ny < 0 || ny >= h)
+                continue;
+            const uchar *nm = mask.constScanLine(ny);
+            bool inRun = false;
+            for (int x = x0; x <= x1; ++x) {
+                const bool open = !nm[x] && near(px(x, ny));
+                if (open && !inRun)
+                    stack.push_back(QPoint(x, ny));
+                inRun = open;
+            }
+        }
+    }
+    return Selection::mask(canvas, mask);
+}
+
+QHash<TileCoord, QImage> colorToAlpha(TileStore &store, const Selection &selection, const QRect &canvas,
+                                      const QColor &color, double threshold)
+{
+    QHash<TileCoord, QImage> before;
+    const QRect area = selection.isEmpty() ? canvas : (selection.bounds() & canvas);
+    if (area.isEmpty())
+        return before;
+    const QColor c = color.toRgb();
+    const float ref[3] = {float(c.redF()), float(c.greenF()), float(c.blueF())};
+    const float t = float(std::clamp(threshold, 0.0, 0.999));
+    const Curve &enc = toSrgb();
+    const Curve &dec = toLinear();
+
+    for (const TileCoord tc : TileStore::tilesIntersecting(area)) {
+        const QImage old = store.tile(tc);
+        QImage tile = old.isNull() ? filledTile(store.defaultPixel()) : old.copy();
+        Pixel *d = tilePixels(tile);
+        const QRect tr = TileStore::tileRect(tc);
+        const QRect part = tr & area;
+        bool changed = false;
+        for (int y = part.top(); y <= part.bottom(); ++y) {
+            for (int x = part.left(); x <= part.right(); ++x) {
+                if (!selection.isEmpty() && !selection.contains(x, y))
+                    continue;
+                Pixel &p = d[(y - tr.top()) * N + (x - tr.left())];
+                const float a0 = float(p.a);
+                if (a0 <= 0.0f)
+                    continue;
+                // Straight sRGB, 0..1.
+                const float s[3] = {enc(float(p.r) / a0), enc(float(p.g) / a0), enc(float(p.b) / a0)};
+                float alpha = 0.0f;
+                for (int i = 0; i < 3; ++i) {
+                    float ai = 0.0f;
+                    if (s[i] > ref[i] + 1e-6f)
+                        ai = (s[i] - ref[i]) / (1.0f - ref[i]);
+                    else if (s[i] < ref[i] - 1e-6f)
+                        ai = (ref[i] - s[i]) / ref[i];
+                    alpha = std::max(alpha, std::clamp(ai, 0.0f, 1.0f));
+                }
+                float out[3] = {ref[0], ref[1], ref[2]};
+                if (alpha > 0.0f)
+                    for (int i = 0; i < 3; ++i)
+                        out[i] = std::clamp((s[i] - ref[i]) / alpha + ref[i], 0.0f, 1.0f);
+                // Below the threshold: gone; above it, stretched back to full.
+                const float kept = alpha <= t ? 0.0f : (alpha - t) / (1.0f - t);
+                const float a = kept * a0;
+                p = makePixel(dec(out[0]) * a, dec(out[1]) * a, dec(out[2]) * a, a);
+                changed = true;
+            }
+        }
+        if (!changed)
+            continue;
+        before.insert(tc, old);
+        store.setTile(tc, tile);
+    }
+    return before;
+}
+
+QRect opaqueBounds(const TileStore &store, const QRect &canvas)
+{
+    // Half an 8-bit step: anything that would export as alpha 0 doesn't count.
+    constexpr float kMin = 0.5f / 255.0f;
+    int x0 = INT_MAX, y0 = INT_MAX, x1 = INT_MIN, y1 = INT_MIN;
+    const bool defaultOpaque = float(store.defaultPixel().a) >= kMin;
+    for (const TileCoord c : TileStore::tilesIntersecting(canvas)) {
+        const QRect tr = TileStore::tileRect(c);
+        const QRect part = tr & canvas;
+        const QImage tile = store.tile(c);
+        if (tile.isNull()) {
+            if (defaultOpaque) {
+                x0 = std::min(x0, part.left());
+                y0 = std::min(y0, part.top());
+                x1 = std::max(x1, part.right());
+                y1 = std::max(y1, part.bottom());
+            }
+            continue;
+        }
+        const Pixel *src = tilePixels(tile);
+        for (int y = part.top(); y <= part.bottom(); ++y) {
+            const Pixel *s = src + (y - tr.top()) * N;
+            for (int x = part.left(); x <= part.right(); ++x) {
+                if (float(s[x - tr.left()].a) < kMin)
+                    continue;
+                x0 = std::min(x0, x);
+                y0 = std::min(y0, y);
+                x1 = std::max(x1, x);
+                y1 = std::max(y1, y);
+            }
+        }
+    }
+    return x1 < x0 ? QRect() : QRect(QPoint(x0, y0), QPoint(x1, y1));
 }
 
 QImage toClipboardImage(const QImage &content)

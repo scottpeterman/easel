@@ -103,7 +103,7 @@ public:
     void setAltTool(CanvasTool *tool) { m_altTool = tool; }
 
     // Marching ants around this outline (canvas coordinates); empty for none.
-    void setSelectionOutline(const QPolygonF &outline);
+    void setSelectionOutline(const QList<QPolygonF> &outline);
     // A line between every pixel, from 600% zoom up.
     void setPixelGridVisible(bool visible);
     bool pixelGridVisible() const { return m_pixelGrid; }
@@ -112,7 +112,7 @@ public:
     bool cellGridVisible() const { return m_cellGrid; }
     // The next zoom in (direction > 0) or out: whole-pixel steps above 100%.
     double steppedZoom(double zoom, int direction) const;
-    QPolygonF selectionOutline() const { return m_selectionOutline; }
+    QList<QPolygonF> selectionOutline() const { return m_selectionOutline; }
     bool isStroking() const { return m_stroking; }
 
     void setUploadBudget(int tilesPerFrame) { m_uploadBudget = qMax(1, tilesPerFrame); }
@@ -214,7 +214,7 @@ private:
     bool m_hovering = false;
     QPointF m_cursorCanvas;
 
-    QPolygonF m_selectionOutline;
+    QList<QPolygonF> m_selectionOutline;
     bool m_pixelGrid = true;
     bool m_cellGrid = false;
     QSize m_cellSize{32, 32};
