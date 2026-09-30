@@ -34,13 +34,13 @@ qint64 History::bytesOf(const QHash<TileCoord, QImage> &tiles)
     return n;
 }
 
-void History::push(const QString &label, QHash<TileCoord, QImage> tiles)
+void History::push(const QString &label, QHash<TileCoord, QImage> tiles, const QSize &sizeBefore)
 {
     while (m_entries.size() > m_position) {
         m_bytes -= m_entries.last().bytes;
         m_entries.removeLast();
     }
-    Entry e{label, std::move(tiles), 0, m_nextId++};
+    Entry e{label, std::move(tiles), sizeBefore, 0, m_nextId++};
     e.bytes = bytesOf(e.tiles);
     m_bytes += e.bytes;
     m_entries.append(std::move(e));
@@ -48,8 +48,10 @@ void History::push(const QString &label, QHash<TileCoord, QImage> tiles)
     enforceBudget();
 }
 
-void History::swap(Entry &e, TileStore &store)
+void History::swap(Entry &e, TileStore &store, QSize *canvasSize)
 {
+    if (e.size.isValid() && canvasSize)
+        std::swap(*canvasSize, e.size);
     for (auto it = e.tiles.begin(); it != e.tiles.end(); ++it) {
         const QImage current = store.tile(it.key());
         store.setTile(it.key(), it.value());
@@ -60,29 +62,29 @@ void History::swap(Entry &e, TileStore &store)
     m_bytes += e.bytes;
 }
 
-void History::undo(TileStore &store)
+void History::undo(TileStore &store, QSize *canvasSize)
 {
     if (!canUndo())
         return;
     --m_position;
-    swap(m_entries[m_position], store);
+    swap(m_entries[m_position], store, canvasSize);
 }
 
-void History::redo(TileStore &store)
+void History::redo(TileStore &store, QSize *canvasSize)
 {
     if (!canRedo())
         return;
-    swap(m_entries[m_position], store);
+    swap(m_entries[m_position], store, canvasSize);
     ++m_position;
 }
 
-void History::jumpTo(qsizetype position, TileStore &store)
+void History::jumpTo(qsizetype position, TileStore &store, QSize *canvasSize)
 {
     position = std::clamp<qsizetype>(position, 0, m_entries.size());
     while (m_position > position)
-        undo(store);
+        undo(store, canvasSize);
     while (m_position < position)
-        redo(store);
+        redo(store, canvasSize);
 }
 
 void History::setBudget(qint64 bytes)

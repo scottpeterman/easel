@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <iterator>
 
 using easel::AtlasSlot;
 using easel::FramePlan;
@@ -26,6 +27,11 @@ namespace {
 
 const QColor kBackdrop(0x3a, 0x3a, 0x3a);
 constexpr double kZoomStep = 1.25;
+// Above 100%, zoom goes through whole numbers of screen pixels per image
+// pixel, so pixel art stays even.
+constexpr double kPixelZooms[] = {1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64};
+constexpr double kPixelGridFrom = 6.0; // screen pixels per image pixel where the grid starts
+constexpr size_t kMaxLineSegments = 40000;
 constexpr double kRotateStep = 15.0;
 constexpr int kCheckerCell = 8;              // logical pixels
 constexpr float kCheckerDark = 0.603827f;    // sRGB 0xCC in linear light
@@ -274,6 +280,15 @@ void CanvasView::createPipelines()
     });
     m_linesPipeline->setVertexInputLayout(outlineLayout);
     m_linesPipeline->setShaderResourceBindings(m_outlineBindings.get());
+    {
+        QRhiGraphicsPipeline::TargetBlend blend; // grid lines are translucent
+        blend.enable = true;
+        blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
+        blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        blend.srcAlpha = QRhiGraphicsPipeline::One;
+        blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
+        m_linesPipeline->setTargetBlends({blend});
+    }
     m_linesPipeline->setRenderPassDescriptor(renderTarget()->renderPassDescriptor());
     m_linesPipeline->create();
 
@@ -491,14 +506,40 @@ void CanvasView::render(QRhiCommandBuffer *cb)
                                           : kCanvasOutlineVertices;
     u->updateDynamicBuffer(m_outline.get(), 0, quint32(overlayCount * sizeof(OverlayVertex)), overlay);
 
-    // Marching ants: 4-pixel black and white dashes along the selection
-    // outline, only where it's on screen, shifted each timer tick.
+    // Line overlays, in drawing order: grids, then the marching ants.
     std::vector<OverlayVertex> ants;
+    {
+        const QRectF area = xf.inverted().mapRect(QRectF(rect())) & QRectF(QPointF(0, 0), QSizeF(m_canvasSize));
+        const auto grid = [&](double x0, double stepX, double y0, double stepY, float r, float g, float b, float a) {
+            if (area.isEmpty())
+                return;
+            for (double x = x0 + std::ceil((area.left() - x0) / stepX) * stepX;
+                 x <= area.right() && ants.size() < 2 * kMaxLineSegments; x += stepX) {
+                ants.push_back({float(x), float(area.top()), r, g, b, a});
+                ants.push_back({float(x), float(area.bottom()), r, g, b, a});
+            }
+            for (double y = y0 + std::ceil((area.top() - y0) / stepY) * stepY;
+                 y <= area.bottom() && ants.size() < 2 * kMaxLineSegments; y += stepY) {
+                ants.push_back({float(area.left()), float(y), r, g, b, a});
+                ants.push_back({float(area.right()), float(y), r, g, b, a});
+            }
+        };
+        if (m_pixelGrid && m_zoom >= kPixelGridFrom) {
+            // Fades in over the first few zoom steps.
+            const float a = float(std::clamp((m_zoom - kPixelGridFrom + 1.0) / 4.0, 0.25, 1.0)) * 0.35f;
+            grid(0.0, 1.0, 0.0, 1.0, 0.5f, 0.5f, 0.5f, a);
+        }
+        if (m_cellGrid && m_cellSize.width() * m_zoom >= 4.0 && m_cellSize.height() * m_zoom >= 4.0)
+            grid(m_cellOffset.x(), m_cellSize.width(), m_cellOffset.y(), m_cellSize.height(),
+                 0.2f, 0.75f, 1.0f, 0.85f);
+    }
     if (m_selectionOutline.size() >= 2) {
+        // Marching ants: 4-pixel black and white dashes along the selection
+        // outline, only where it's on screen, shifted each timer tick.
         const double dash = 4.0 / m_zoom;
         const double phase = (m_antsPhase % 8) * (1.0 / m_zoom);
         const QRectF vis = xf.inverted().mapRect(QRectF(rect())).adjusted(-dash, -dash, dash, dash);
-        constexpr size_t kMaxSegments = 40000;
+        constexpr size_t kMaxSegments = kMaxLineSegments * 2;
         double along = 0.0;
         for (qsizetype i = 0; i + 1 < m_selectionOutline.size() && ants.size() < 2 * kMaxSegments; ++i) {
             const QPointF p0 = m_selectionOutline.at(i), p1 = m_selectionOutline.at(i + 1);
@@ -540,6 +581,8 @@ void CanvasView::render(QRhiCommandBuffer *cb)
             }
             along += len;
         }
+    }
+    {
         const quint32 bytes = quint32(ants.size() * sizeof(OverlayVertex));
         if (bytes > m_antsCapacity) {
             m_antsCapacity = std::max<quint32>(bytes, std::max<quint32>(m_antsCapacity * 2, 16 * 1024));
@@ -627,14 +670,59 @@ void CanvasView::zoomBy(double factor, const QPointF &anchor)
     emitViewChanged();
 }
 
+double CanvasView::steppedZoom(double zoom, int direction) const
+{
+    // Work in device pixels, so "whole pixels" holds on a scaled display too.
+    const double dpr = devicePixelRatioF();
+    const double z = zoom * dpr;
+    constexpr double eps = 1e-6;
+    double next;
+    if (direction > 0) {
+        if (z < 1.0 - eps) {
+            next = std::min(z * kZoomStep, 1.0);
+        } else {
+            next = kPixelZooms[std::size(kPixelZooms) - 1];
+            for (double s : kPixelZooms)
+                if (s > z + eps) {
+                    next = s;
+                    break;
+                }
+        }
+    } else {
+        if (z <= 1.0 + eps) {
+            next = z / kZoomStep;
+        } else {
+            next = 1.0;
+            for (double s : kPixelZooms)
+                if (s < z - eps)
+                    next = s;
+        }
+    }
+    return std::clamp(next / dpr, MinZoom, MaxZoom);
+}
+
 void CanvasView::zoomIn()
 {
-    zoomBy(kZoomStep, QPointF(width() / 2.0, height() / 2.0));
+    zoomBy(steppedZoom(m_zoom, 1) / m_zoom, QPointF(width() / 2.0, height() / 2.0));
 }
 
 void CanvasView::zoomOut()
 {
-    zoomBy(1.0 / kZoomStep, QPointF(width() / 2.0, height() / 2.0));
+    zoomBy(steppedZoom(m_zoom, -1) / m_zoom, QPointF(width() / 2.0, height() / 2.0));
+}
+
+void CanvasView::setPixelGridVisible(bool visible)
+{
+    m_pixelGrid = visible;
+    update();
+}
+
+void CanvasView::setCellGrid(bool visible, const QSize &cell, const QPoint &offset)
+{
+    m_cellGrid = visible && cell.width() > 0 && cell.height() > 0;
+    m_cellSize = cell;
+    m_cellOffset = offset;
+    update();
 }
 
 void CanvasView::setZoomCentered(double zoom)
@@ -660,6 +748,15 @@ void CanvasView::fitToWindow()
     const double margin = 0.92;
     m_zoom = std::clamp(std::min(width() / bounds.width(), height() / bounds.height()) * margin,
                         MinZoom, MaxZoom);
+    // A small canvas blown up to fit: use the whole-pixel zoom just below.
+    const double dpr = devicePixelRatioF();
+    if (m_zoom * dpr > 1.0) {
+        double z = 1.0;
+        for (double s : kPixelZooms)
+            if (s <= m_zoom * dpr + 1e-6)
+                z = s;
+        m_zoom = z / dpr;
+    }
     m_autoFit = true;
     emitViewChanged();
 }
@@ -696,10 +793,23 @@ void CanvasView::wheelEvent(QWheelEvent *event)
         event->ignore();
         return;
     }
-    if (event->modifiers() & Qt::ShiftModifier)
+    if (event->modifiers() & Qt::ShiftModifier) {
         rotateBy(notches * kRotateStep);
-    else
-        zoomBy(std::pow(kZoomStep, notches), event->position());
+    } else {
+        // Whole steps; touchpads send fractions, which add up.
+        m_wheelNotches += notches;
+        double zoom = m_zoom;
+        while (m_wheelNotches >= 1.0) {
+            zoom = steppedZoom(zoom, 1);
+            m_wheelNotches -= 1.0;
+        }
+        while (m_wheelNotches <= -1.0) {
+            zoom = steppedZoom(zoom, -1);
+            m_wheelNotches += 1.0;
+        }
+        if (zoom != m_zoom)
+            zoomBy(zoom / m_zoom, event->position());
+    }
     event->accept();
 }
 

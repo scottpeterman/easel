@@ -84,6 +84,55 @@ QHash<TileCoord, QImage> clearSelection(TileStore &store, const Selection &selec
     return before;
 }
 
+QHash<TileCoord, QImage> cropStore(TileStore &store, const QRect &rect)
+{
+    QHash<TileCoord, QImage> before;
+    if (rect.isEmpty())
+        return before;
+    const TileStore old = store.snapshot();
+    const Pixel def = old.defaultPixel();
+    const QRect canvas(QPoint(0, 0), rect.size());
+    const QPoint shift = rect.topLeft();
+
+    QHash<TileCoord, QImage> fresh;
+    for (const TileCoord c : TileStore::tilesIntersecting(canvas)) {
+        const QRect dst = TileStore::tileRect(c) & canvas;
+        const QRect src = dst.translated(shift);
+        const QList<TileCoord> sources = TileStore::tilesIntersecting(src);
+        const bool any = std::any_of(sources.cbegin(), sources.cend(),
+                                     [&](TileCoord s) { return old.hasTile(s); });
+        if (!any)
+            continue; // all default: leave the tile absent
+        QImage tile = filledTile(def);
+        Pixel *d = tilePixels(tile);
+        const QRect tr = TileStore::tileRect(c);
+        for (const TileCoord sc : sources) {
+            const QImage s = old.tile(sc);
+            if (s.isNull())
+                continue; // default, already filled
+            const QRect str = TileStore::tileRect(sc);
+            const QRect part = str & src; // in old canvas coordinates
+            const Pixel *sp = tilePixels(s);
+            for (int y = part.top(); y <= part.bottom(); ++y) {
+                const int dy = y - shift.y() - tr.top();
+                const int dx = part.left() - shift.x() - tr.left();
+                std::memcpy(d + dy * N + dx, sp + (y - str.top()) * N + (part.left() - str.left()),
+                            size_t(part.width()) * sizeof(Pixel));
+            }
+        }
+        fresh.insert(c, tile);
+    }
+
+    for (const TileCoord c : old.tileCoords())
+        before.insert(c, old.tile(c));
+    for (auto it = fresh.cbegin(); it != fresh.cend(); ++it)
+        if (!before.contains(it.key()))
+            before.insert(it.key(), QImage());
+    for (auto it = before.cbegin(); it != before.cend(); ++it)
+        store.setTile(it.key(), fresh.value(it.key()));
+    return before;
+}
+
 QImage toClipboardImage(const QImage &content)
 {
     QImage out(content.size(), QImage::Format_ARGB32_Premultiplied);

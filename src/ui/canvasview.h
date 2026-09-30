@@ -104,6 +104,14 @@ public:
 
     // Marching ants around this outline (canvas coordinates); empty for none.
     void setSelectionOutline(const QPolygonF &outline);
+    // A line between every pixel, from 600% zoom up.
+    void setPixelGridVisible(bool visible);
+    bool pixelGridVisible() const { return m_pixelGrid; }
+    // A grid of sprite cells: cell size, and where the first cell starts.
+    void setCellGrid(bool visible, const QSize &cell, const QPoint &offset);
+    bool cellGridVisible() const { return m_cellGrid; }
+    // The next zoom in (direction > 0) or out: whole-pixel steps above 100%.
+    double steppedZoom(double zoom, int direction) const;
     QPolygonF selectionOutline() const { return m_selectionOutline; }
     bool isStroking() const { return m_stroking; }
 
@@ -207,6 +215,11 @@ private:
     QPointF m_cursorCanvas;
 
     QPolygonF m_selectionOutline;
+    bool m_pixelGrid = true;
+    bool m_cellGrid = false;
+    QSize m_cellSize{32, 32};
+    QPoint m_cellOffset;
+    double m_wheelNotches = 0.0;
     QTimer *m_antsTimer = nullptr;
     int m_antsPhase = 0;
 };

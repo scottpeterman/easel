@@ -1,5 +1,6 @@
 #pragma once
 
+#include "griddialog.h"
 #include "history.h"
 #include "regionops.h"
 #include "selection.h"
@@ -63,6 +64,12 @@ public:
     // Pasted or lifted pixels not yet committed.
     bool isFloating() const { return m_floating.isActive(); }
     QPoint floatingPosition() const { return m_floating.position(); }
+    QSize canvasSize() const { return m_size; }
+
+    const GridSettings &gridSettings() const { return m_grid; }
+    void setGridSettings(const GridSettings &grid);
+    // Writes the selected pixels (transparent outside the shape) as an image.
+    bool exportSelectionTo(const QString &path);
 
 public slots:
     void undo();
@@ -79,6 +86,8 @@ public slots:
     // Drops floating pixels where they are (one undo step) / puts them back.
     void commitFloating();
     void cancelFloating();
+    // Crops the canvas to the selection's bounds (undoable).
+    void cropToSelection();
 
 signals:
     void documentOpened(const QString &path, bool ok);
@@ -111,6 +120,12 @@ private:
     void showNewDialog();
     void showOpenDialog();
     void showExportDialog();
+    void showExportSelectionDialog();
+    void showGridDialog();
+    // After undo / redo, which may have changed the canvas size.
+    void afterHistoryMove(const QSize &sizeBefore);
+    // Points the view and tools at the document again after a size change.
+    void applyCanvasSize();
     QString askSavePath();
     // Offers to save unsaved changes. False if the user cancelled.
     bool maybeSave();
@@ -177,6 +192,11 @@ private:
     QAction *m_copyAct = nullptr;
     QAction *m_deleteAct = nullptr;
     QAction *m_deselectAct = nullptr;
+    QAction *m_cropAct = nullptr;
+    QAction *m_exportSelectionAct = nullptr;
+    QAction *m_pixelGridAct = nullptr;
+    QAction *m_cellGridAct = nullptr;
+    GridSettings m_grid;
     QAction *m_fitAct = nullptr;
     QAction *m_actualAct = nullptr;
 

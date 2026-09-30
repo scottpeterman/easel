@@ -322,8 +322,11 @@ QImage flattenImage(const TileStore &store, const QSize &size, int level)
 
 QString exportImage(const QString &path, const TileStore &store, const QSize &size, int quality)
 {
-    QImage image = flattenImage(store, size, 0);
+    return writeImageFile(path, flattenImage(store, size, 0), quality);
+}
 
+QString writeImageFile(const QString &path, QImage image, int quality)
+{
     const QByteArray format = QFileInfo(path).suffix().toLower().toLatin1();
     const bool hasAlpha = format == "png" || format == "webp" || format == "tif" || format == "tiff";
     if (!hasAlpha) {

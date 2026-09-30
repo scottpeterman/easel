@@ -5,9 +5,11 @@
 
 #include <QObject>
 #include <QPoint>
+#include <QSize>
 
 // Drag out a rectangle or ellipse selection. Shift keeps it square / circular.
-// A click without dragging clears the selection.
+// A click without dragging clears the selection. With a snap grid set, the
+// selection covers whole cells: a click selects the cell under it.
 class SelectTool : public QObject, public CanvasTool
 {
     Q_OBJECT
@@ -16,6 +18,12 @@ public:
     explicit SelectTool(easel::Selection::Shape shape, QObject *parent = nullptr);
 
     easel::Selection::Shape shape() const { return m_shape; }
+    // An empty cell size turns snapping off.
+    void setSnapGrid(const QSize &cell, const QPoint &offset)
+    {
+        m_cell = cell;
+        m_cellOffset = offset;
+    }
 
     void press(const easel::StrokeSample &s) override;
     void move(const easel::StrokeSample &s) override;
@@ -32,6 +40,9 @@ private:
 
     easel::Selection::Shape m_shape;
     QPoint m_anchor;
+    QPointF m_anchorPos;
+    QSize m_cell;
+    QPoint m_cellOffset;
     bool m_active = false;
 };
 

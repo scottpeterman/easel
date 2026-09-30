@@ -23,11 +23,15 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Cut / copy / paste / delete | Ctrl+X / Ctrl+C / Ctrl+V / Delete |
 | Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
 | Drop / cancel floating pixels | Enter / Escape |
+| Crop to selection | Ctrl+Shift+X |
+| Export selection as PNG | Ctrl+Alt+E |
+| Pixel grid (from 600%) | Ctrl+' |
+| Sprite grid on / off | Ctrl+Shift+' (cell size, offset and snapping under View > Sprite Grid Settings) |
 | Pick a colour from any tool | Hold Alt and click or drag |
 | Smaller / larger brush | [ / ] |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
 | Pan | Middle-drag, or hold Space and drag |
-| Zoom at cursor | Mouse wheel |
+| Zoom at cursor | Mouse wheel (whole-pixel steps above 100%: 200%, 300%, 400%...) |
 | Rotate view | Shift + wheel, or Ctrl+[ and Ctrl+] |
 | Reset rotation | Ctrl+Shift+R |
 | Fit to window | Ctrl+0 |

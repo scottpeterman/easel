@@ -2,6 +2,8 @@
 
 #include <QTest>
 
+#include <cmath>
+
 using namespace easel;
 
 namespace {
@@ -40,6 +42,33 @@ class TestCanvasView : public QObject
 
 private slots:
     // --- View math: no GPU needed. ---
+
+    void zoomStepsAreWholePixelsAbove100()
+    {
+        TileStore store;
+        CanvasView view;
+        view.resize(800, 600);
+        view.setDocument(&store, QSize(1000, 1000));
+        const double dpr = view.devicePixelRatioF();
+        QCOMPARE(view.steppedZoom(2.6 / dpr, 1) * dpr, 3.0);
+        QCOMPARE(view.steppedZoom(2.6 / dpr, -1) * dpr, 2.0);
+        QCOMPARE(view.steppedZoom(1.0 / dpr, 1) * dpr, 2.0);
+        QCOMPARE(view.steppedZoom(8.0 / dpr, 1) * dpr, 10.0);
+        QCOMPARE(view.steppedZoom(0.9 / dpr, 1) * dpr, 1.0); // lands on 100%
+        QVERIFY(qAbs(view.steppedZoom(0.5 / dpr, -1) * dpr - 0.4) < 1e-9);
+        QCOMPARE(view.steppedZoom(64.0 / dpr, 1) * dpr, 64.0);
+    }
+
+    void fitSmallCanvasUsesWholePixelZoom()
+    {
+        TileStore store;
+        CanvasView view;
+        view.resize(800, 600);
+        view.setDocument(&store, QSize(64, 48));
+        const double z = view.zoom() * view.devicePixelRatioF();
+        QCOMPARE(z, std::floor(z));
+        QVERIFY(z >= 8.0);
+    }
 
     void fitCentersCanvas()
     {

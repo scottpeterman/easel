@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QImage>
 #include <QList>
+#include <QSize>
 #include <QString>
 
 namespace easel {
@@ -28,14 +29,17 @@ public:
     // Records an action that has already been applied to the store.
     // tiles: the pre-action content of each changed tile (null = didn't exist).
     // Anything that was undone is discarded.
-    void push(const QString &label, QHash<TileCoord, QImage> tiles);
+    // sizeBefore: the canvas size before the action, for actions that change
+    // it (crop); invalid when the size didn't change.
+    void push(const QString &label, QHash<TileCoord, QImage> tiles, const QSize &sizeBefore = {});
 
     bool canUndo() const { return m_position > 0; }
     bool canRedo() const { return m_position < m_entries.size(); }
-    void undo(TileStore &store);
-    void redo(TileStore &store);
+    // canvasSize, when given, is updated by entries that changed the size.
+    void undo(TileStore &store, QSize *canvasSize = nullptr);
+    void redo(TileStore &store, QSize *canvasSize = nullptr);
     // Undoes or redoes until `position` entries are applied.
-    void jumpTo(qsizetype position, TileStore &store);
+    void jumpTo(qsizetype position, TileStore &store, QSize *canvasSize = nullptr);
 
     QString baseLabel() const { return m_baseLabel; }
     qsizetype count() const { return m_entries.size(); }
@@ -60,12 +64,13 @@ private:
     struct Entry {
         QString label;
         QHash<TileCoord, QImage> tiles;
+        QSize size; // the other state's canvas size, if it differs
         qint64 bytes = 0;
         quint64 id = 0;
     };
 
     static qint64 bytesOf(const QHash<TileCoord, QImage> &tiles);
-    void swap(Entry &e, TileStore &store);
+    void swap(Entry &e, TileStore &store, QSize *canvasSize);
     void enforceBudget();
 
     qint64 m_budget;

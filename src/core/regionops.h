@@ -19,6 +19,11 @@ QImage extractSelection(const TileStore &store, const Selection &selection);
 // pre-change content of every tile it touched, for History.
 QHash<TileCoord, QImage> clearSelection(TileStore &store, const Selection &selection, const QRect &canvas);
 
+// Crops the canvas to rect (which must lie inside it): the rect's top-left
+// becomes the origin and nothing outside it is kept. Returns the pre-crop
+// content of every tile it touched, for History.
+QHash<TileCoord, QImage> cropStore(TileStore &store, const QRect &rect);
+
 // Conversions for the system clipboard: 8-bit sRGB with straight alpha.
 QImage toClipboardImage(const QImage &content);
 QImage fromClipboardImage(const QImage &image);

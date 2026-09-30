@@ -7,6 +7,7 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QMimeData>
+#include <QTemporaryDir>
 #include <QTest>
 
 using namespace easel;
@@ -247,6 +248,79 @@ private slots:
         QCOMPARE(pixel(w, 250, 150), QColor(Qt::green));
         QCOMPARE(pixel(w, 190, 150), QColor(Qt::white));
         QCOMPARE(pixel(w, 310, 150), QColor(Qt::white));
+    }
+
+    void spriteGridSnapsSelections()
+    {
+        MainWindow w;
+        setupWindow(w);
+        GridSettings g;
+        g.cells = true;
+        g.cell = QSize(32, 24);
+        g.offset = QPoint(4, 2);
+        g.snap = true;
+        w.setGridSettings(g);
+        QVERIFY(w.canvasView()->cellGridVisible());
+
+        key(w, Qt::Key_M);
+        // A click selects the cell under it.
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {50, 40}));
+        QCOMPARE(w.selection().bounds(), QRect(36, 26, 32, 24));
+        // A drag covers every cell it touches.
+        drag(w, {50, 40}, {110, 70});
+        QCOMPARE(w.selection().bounds(), QRect(36, 26, 96, 48));
+
+        g.cells = false; // hidden grid: no snapping
+        w.setGridSettings(g);
+        drag(w, {50, 40}, {110, 70});
+        QCOMPARE(w.selection().bounds(), QRect(50, 40, 60, 30));
+    }
+
+    void cropToSelectionAndUndo()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.setSelection(Selection::rect(QRect(45, 85, 30, 30)));
+        key(w, Qt::Key_X, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(w.canvasSize(), QSize(30, 30));
+        QCOMPARE(w.canvasView()->canvasSize(), QSize(30, 30));
+        QVERIFY(w.selection().isEmpty());
+        QCOMPARE(pixel(w, 5, 5), QColor(Qt::red));
+        QCOMPARE(pixel(w, 4, 5), QColor(Qt::white));
+        QVERIFY(w.windowTitle().contains(QStringLiteral("30 × 30")));
+
+        // Painting is bounded by the new canvas.
+        w.brushTool()->setColor(Qt::green);
+        drag(w, {-10, 2}, {40, 2});
+        QCOMPARE(pixel(w, 29, 2), QColor(Qt::green));
+
+        w.undo(); // the stroke
+        w.undo(); // the crop
+        QCOMPARE(w.canvasSize(), QSize(400, 300));
+        QCOMPARE(w.canvasView()->canvasSize(), QSize(400, 300));
+        QCOMPARE(pixel(w, 50, 90), QColor(Qt::red));
+        QCOMPARE(pixel(w, 5, 5), QColor(Qt::white));
+        w.redo();
+        QCOMPARE(w.canvasSize(), QSize(30, 30));
+    }
+
+    void exportSelectionWritesJustThosePixels()
+    {
+        MainWindow w;
+        setupWindow(w);
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("frame.png"));
+        w.setSelection(Selection::ellipse(QRect(50, 90, 20, 20)));
+        QVERIFY(w.exportSelectionTo(path));
+        const QImage img(path);
+        QCOMPARE(img.size(), QSize(20, 20));
+        QCOMPARE(img.pixelColor(10, 10), QColor(Qt::red));
+        QCOMPARE(img.pixelColor(0, 0).alpha(), 0); // outside the ellipse
+
+        // Partly off the canvas: only the part on it.
+        w.setSelection(Selection::rect(QRect(390, 290, 30, 30)));
+        QVERIFY(w.exportSelectionTo(path));
+        QCOMPARE(QImage(path).size(), QSize(10, 10));
     }
 
     void smudgeToolDragsColour()

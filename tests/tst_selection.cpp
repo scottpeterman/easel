@@ -1,3 +1,4 @@
+#include "history.h"
 #include "regionops.h"
 
 #include <QTest>
@@ -143,6 +144,37 @@ private slots:
         f.moveTo(QPoint(300, 10));                   // brought back in: all there
         QCOMPARE(at(s, 309, 15), QColor(Qt::green));
         f.commit();
+    }
+
+    void cropShiftsPixelsAndDropsTheRest()
+    {
+        TileStore s(Qt::white);
+        s.fillRect(QRect(100, 70, 10, 10), QColor(Qt::red));  // inside the crop, off the tile grid
+        s.fillRect(QRect(300, 250, 20, 20), QColor(Qt::blue)); // outside it
+        const TileStore before = s.snapshot();
+
+        History h;
+        h.reset(QStringLiteral("base"));
+        QSize size(400, 300);
+        const QRect crop(90, 65, 50, 40);
+        h.push(QStringLiteral("Crop"), cropStore(s, crop), size);
+        size = crop.size();
+
+        QCOMPARE(at(s, 10, 5), QColor(Qt::red));   // (100, 70) moved to (10, 5)
+        QCOMPARE(at(s, 9, 5), QColor(Qt::white));
+        QCOMPARE(at(s, 19, 14), QColor(Qt::red));
+        QCOMPARE(at(s, 20, 15), QColor(Qt::white));
+        for (const TileCoord c : s.tileCoords())
+            QVERIFY(TileStore::tileRect(c).intersects(QRect(QPoint(0, 0), size)));
+        // Beyond the new edge, inside an edge tile: default, not old content.
+        QCOMPARE(at(s, 55, 5), QColor(Qt::white));
+
+        h.undo(s, &size);
+        QCOMPARE(size, QSize(400, 300));
+        QVERIFY(same(s, before));
+        h.redo(s, &size);
+        QCOMPARE(size, crop.size());
+        QCOMPARE(at(s, 10, 5), QColor(Qt::red));
     }
 };
 

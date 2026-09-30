@@ -63,5 +63,7 @@ QImage flattenImage(const TileStore &store, const QSize &size, int level = 0);
 // Writes a flattened image in the format the suffix names (png, jpg, webp, ...).
 // Formats without alpha are composited over white.
 QString exportImage(const QString &path, const TileStore &store, const QSize &size, int quality = 92);
+// Writes an 8-bit image the same way (e.g. an exported selection).
+QString writeImageFile(const QString &path, QImage image, int quality = 92);
 
 } // namespace easel

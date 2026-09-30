@@ -25,6 +25,19 @@ SelectTool::SelectTool(easel::Selection::Shape shape, QObject *parent)
 
 easel::Selection SelectTool::selectionTo(const QPointF &pos) const
 {
+    if (!m_cell.isEmpty()) {
+        const auto cellOf = [this](const QPointF &p) {
+            return QPoint(int(std::floor((p.x() - m_cellOffset.x()) / m_cell.width())),
+                          int(std::floor((p.y() - m_cellOffset.y()) / m_cell.height())));
+        };
+        const QPoint a = cellOf(m_anchorPos), b = cellOf(pos);
+        const QRect cells(QPoint(std::min(a.x(), b.x()), std::min(a.y(), b.y())),
+                          QPoint(std::max(a.x(), b.x()), std::max(a.y(), b.y())));
+        const QRect r(m_cellOffset.x() + cells.x() * m_cell.width(), m_cellOffset.y() + cells.y() * m_cell.height(),
+                      cells.width() * m_cell.width(), cells.height() * m_cell.height());
+        return m_shape == easel::Selection::Shape::Ellipse ? easel::Selection::ellipse(r)
+                                                           : easel::Selection::rect(r);
+    }
     QPoint end = corner(pos);
     if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) {
         // Square / circle: the larger side, in the direction dragged.
@@ -44,8 +57,9 @@ easel::Selection SelectTool::selectionTo(const QPointF &pos) const
 void SelectTool::press(const easel::StrokeSample &s)
 {
     m_anchor = corner(s.pos);
+    m_anchorPos = s.pos;
     m_active = true;
-    emit selectionDragged({});
+    emit selectionDragged(m_cell.isEmpty() ? easel::Selection() : selectionTo(s.pos));
 }
 
 void SelectTool::move(const easel::StrokeSample &s)

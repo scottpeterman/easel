@@ -99,6 +99,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_lastDir = settings.value(QStringLiteral("lastDir")).toString();
     m_brush->loadSettings(settings);
     m_color->loadSettings(settings);
+    GridSettings grid;
+    grid.load(settings);
+    setGridSettings(grid);
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
     if (!settings.contains(QStringLiteral("geometry")))
@@ -131,6 +134,8 @@ void MainWindow::createActions()
     saveAsAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     auto *exportAct = file->addAction(tr("&Export..."), this, &MainWindow::showExportDialog);
     exportAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+    m_exportSelectionAct = file->addAction(tr("Export Se&lection..."), this, &MainWindow::showExportSelectionDialog);
+    m_exportSelectionAct->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_E));
 
     file->addSeparator();
     auto *quitAct = file->addAction(tr("&Quit"), this, &QWidget::close);
@@ -156,6 +161,9 @@ void MainWindow::createActions()
     selectAllAct->setShortcut(QKeySequence::SelectAll);
     m_deselectAct = edit->addAction(tr("D&eselect"), this, &MainWindow::deselect);
     m_deselectAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    edit->addSeparator();
+    m_cropAct = edit->addAction(tr("C&rop to Selection"), this, &MainWindow::cropToSelection);
+    m_cropAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X));
     edit->addSeparator();
     auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
     smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
@@ -198,6 +206,27 @@ void MainWindow::createActions()
     m_actualAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
     m_actualAct->setIconText(tr("1:1"));
     m_actualAct->setToolTip(tr("Actual pixels, 100% (Ctrl+1)"));
+
+    m_viewMenu->addSeparator();
+
+    m_pixelGridAct = m_viewMenu->addAction(tr("&Pixel Grid"));
+    m_pixelGridAct->setCheckable(true);
+    m_pixelGridAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Apostrophe));
+    m_pixelGridAct->setToolTip(tr("Lines between pixels from 600% zoom (Ctrl+')"));
+    connect(m_pixelGridAct, &QAction::toggled, this, [this](bool on) {
+        GridSettings g = m_grid;
+        g.pixel = on;
+        setGridSettings(g);
+    });
+    m_cellGridAct = m_viewMenu->addAction(tr("&Sprite Grid"));
+    m_cellGridAct->setCheckable(true);
+    m_cellGridAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Apostrophe));
+    connect(m_cellGridAct, &QAction::toggled, this, [this](bool on) {
+        GridSettings g = m_grid;
+        g.cells = on;
+        setGridSettings(g);
+    });
+    m_viewMenu->addAction(tr("Sprite &Grid Settings..."), this, &MainWindow::showGridDialog);
 
     m_viewMenu->addSeparator();
 
@@ -388,7 +417,7 @@ void MainWindow::setSelection(const easel::Selection &selection)
 void MainWindow::updateSelectionActions()
 {
     const bool any = !m_selection.isEmpty();
-    for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct})
+    for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct, m_cropAct, m_exportSelectionAct})
         if (a)
             a->setEnabled(any);
     if (m_selectionLabel) {
@@ -580,6 +609,108 @@ void MainWindow::commitFloating()
     setSelection(placed);
     m_view->refresh();
     historyChanged();
+}
+
+void MainWindow::setGridSettings(const GridSettings &grid)
+{
+    m_grid = grid;
+    m_view->setPixelGridVisible(grid.pixel);
+    m_view->setCellGrid(grid.cells, grid.cell, grid.offset);
+    const bool snap = grid.cells && grid.snap;
+    for (SelectTool *t : {m_rectSelect, m_ellipseSelect})
+        t->setSnapGrid(snap ? grid.cell : QSize(), grid.offset);
+    for (auto [act, on] : {std::pair{m_pixelGridAct, grid.pixel}, std::pair{m_cellGridAct, grid.cells}}) {
+        if (act) {
+            const QSignalBlocker block(act);
+            act->setChecked(on);
+        }
+    }
+}
+
+void MainWindow::showGridDialog()
+{
+    const GridSettings before = m_grid;
+    GridDialog dlg(m_grid, this);
+    connect(&dlg, &GridDialog::settingsChanged, this, &MainWindow::setGridSettings);
+    setGridSettings(dlg.settings()); // opening the settings shows the grid
+    if (dlg.exec() == QDialog::Accepted)
+        setGridSettings(dlg.settings());
+    else
+        setGridSettings(before);
+}
+
+void MainWindow::cropToSelection()
+{
+    if (!m_layer || m_view->isStroking())
+        return;
+    commitFloating();
+    const QRect rect = m_selection.bounds() & canvasRect();
+    if (m_selection.isEmpty() || rect.isEmpty() || rect == canvasRect())
+        return;
+    const QSize before = m_size;
+    auto tiles = easel::cropStore(*m_layer, rect);
+    m_size = rect.size();
+    m_history.push(tr("Crop to %1 × %2").arg(m_size.width()).arg(m_size.height()), std::move(tiles), before);
+    setSelection({});
+    applyCanvasSize();
+    historyChanged();
+}
+
+void MainWindow::applyCanvasSize()
+{
+    const QRect bounds = canvasRect();
+    m_view->setDocument(m_layer.get(), m_size);
+    m_brush->setDocument(m_layer.get(), bounds, &m_history);
+    m_eyedropper->setDocument(m_layer.get(), bounds);
+    if (!m_selection.isEmpty() && !m_selection.bounds().intersects(bounds))
+        setSelection({});
+    updateTitle();
+}
+
+void MainWindow::afterHistoryMove(const QSize &sizeBefore)
+{
+    if (m_size != sizeBefore)
+        applyCanvasSize();
+    else
+        m_view->refresh();
+    historyChanged();
+}
+
+bool MainWindow::exportSelectionTo(const QString &path)
+{
+    if (!m_layer || m_selection.isEmpty())
+        return false;
+    const easel::Selection sel = m_floating.isActive() ? m_floating.selection() : m_selection;
+    const QRect b = sel.bounds();
+    const QRect keep = b & canvasRect();
+    if (keep.isEmpty())
+        return false;
+    const QImage image = easel::toClipboardImage(easel::extractSelection(*m_layer, sel))
+                             .copy(keep.translated(-b.topLeft()));
+    const QString error = easel::writeImageFile(path, image);
+    if (!error.isEmpty()) {
+        QMessageBox::warning(this, tr("Export Selection"),
+                             tr("Could not export %1:\n%2").arg(QDir::toNativeSeparators(path), error));
+        return false;
+    }
+    statusBar()->showMessage(tr("Exported %1").arg(QFileInfo(path).fileName()), 4000);
+    return true;
+}
+
+void MainWindow::showExportSelectionDialog()
+{
+    if (!m_layer || m_selection.isEmpty())
+        return;
+    const QRect b = m_selection.bounds();
+    const QString suggested = QDir(m_lastDir).filePath(
+        QStringLiteral("%1_%2_%3.png").arg(QFileInfo(m_name).completeBaseName()).arg(b.x()).arg(b.y()));
+    QString path = QFileDialog::getSaveFileName(this, tr("Export Selection"), suggested,
+                                                tr("PNG image (*.png);;WebP image (*.webp)"));
+    if (path.isEmpty())
+        return;
+    path = withSuffix(path, QStringLiteral("png"));
+    m_lastDir = QFileInfo(path).absolutePath();
+    exportSelectionTo(path);
 }
 
 void MainWindow::cancelFloating()
@@ -796,18 +927,18 @@ void MainWindow::undo()
     }
     if (!m_history.canUndo())
         return;
-    m_history.undo(*m_layer);
-    m_view->refresh();
-    historyChanged();
+    const QSize before = m_size;
+    m_history.undo(*m_layer, &m_size);
+    afterHistoryMove(before);
 }
 
 void MainWindow::redo()
 {
     if (!m_layer || m_view->isStroking() || m_floating.isActive() || !m_history.canRedo())
         return;
-    m_history.redo(*m_layer);
-    m_view->refresh();
-    historyChanged();
+    const QSize before = m_size;
+    m_history.redo(*m_layer, &m_size);
+    afterHistoryMove(before);
 }
 
 void MainWindow::historyItemClicked(QListWidgetItem *item)
@@ -815,9 +946,9 @@ void MainWindow::historyItemClicked(QListWidgetItem *item)
     if (!m_layer || m_view->isStroking())
         return;
     cancelFloating(); // like undo: jumping in history drops an uncommitted move
-    m_history.jumpTo(m_historyList->row(item), *m_layer);
-    m_view->refresh();
-    historyChanged();
+    const QSize before = m_size;
+    m_history.jumpTo(m_historyList->row(item), *m_layer, &m_size);
+    afterHistoryMove(before);
 }
 
 void MainWindow::historyChanged()
@@ -958,5 +1089,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue(QStringLiteral("lastDir"), m_lastDir);
     m_color->saveSettings(settings);
     m_brush->saveSettings(settings);
+    m_grid.save(settings);
     event->accept();
 }
