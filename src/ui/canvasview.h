@@ -47,6 +47,8 @@ public:
     ~CanvasView() override;
 
     void setDocument(easel::TileStore *store, const QSize &canvasSize);
+    // With a pyramid already built over store (e.g. on a loader thread).
+    void setDocument(easel::TileStore *store, const QSize &canvasSize, easel::TilePyramid pyramid);
     QSize canvasSize() const { return m_canvasSize; }
 
     double zoom() const { return m_zoom; }

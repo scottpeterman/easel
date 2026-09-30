@@ -1,11 +1,16 @@
 #pragma once
 
+#include "tilepyramid.h"
 #include "tilestore.h"
 
 #include <QMainWindow>
 #include <QSize>
 
 #include <memory>
+
+namespace easel {
+struct LoadedDocument;
+}
 
 class CanvasView;
 class ColorPanel;
@@ -22,9 +27,13 @@ public:
     ~MainWindow() override;
 
     void newDocument(const QSize &size, const QColor &background);
-    bool openImage(const QString &path);
+    // Loads in the background; documentOpened() reports the outcome.
+    void openImage(const QString &path);
 
     CanvasView *canvasView() const { return m_view; }
+
+signals:
+    void documentOpened(const QString &path, bool ok);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -37,7 +46,8 @@ private:
     void showOpenDialog();
     void showAbout();
     void setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
-                     const QString &name);
+                     const QString &name, easel::TilePyramid pyramid = {});
+    void finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc);
     void logHistory(const QString &entry);
     void updateTitle();
     void updateMemoryLabel();
@@ -58,4 +68,6 @@ private:
     QLabel *m_rotationLabel = nullptr;
     QLabel *m_memoryLabel = nullptr;
     bool m_reportedRenderFailure = false;
+    quint64 m_openGeneration = 0;
+    bool m_busy = false;
 };

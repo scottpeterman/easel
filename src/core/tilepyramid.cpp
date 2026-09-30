@@ -166,6 +166,16 @@ void TilePyramid::clearCache()
     m_exists.clear();
 }
 
+void TilePyramid::buildAll()
+{
+    if (!m_base || m_topLevel == 0)
+        return;
+    // Asking for the top level recursively computes every level beneath it.
+    const QRect canvas(QPoint(0, 0), m_canvasSize);
+    for (const TileCoord c : tilesIntersecting(m_topLevel, canvas))
+        tile({m_topLevel, c});
+}
+
 qsizetype TilePyramid::cachedTileCount() const
 {
     qsizetype n = 0;

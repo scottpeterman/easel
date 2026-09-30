@@ -2,6 +2,7 @@
 
 #include "canvasview.h"
 #include "colorpanel.h"
+#include "documentio.h"
 #include "newdocumentdialog.h"
 
 #include <QAction>
@@ -18,8 +19,12 @@
 #include <QLocale>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPointer>
 #include <QSettings>
 #include <QStatusBar>
+#include <QThreadPool>
+
+#include <memory>
 
 namespace {
 
@@ -165,34 +170,62 @@ void MainWindow::newDocument(const QSize &size, const QColor &background)
     logHistory(tr("New %1 × %2").arg(size.width()).arg(size.height()));
 }
 
-bool MainWindow::openImage(const QString &path)
+void MainWindow::openImage(const QString &path)
 {
-    QImageReader reader(path);
-    reader.setAutoTransform(true);
-    const QImage image = reader.read();
-    if (image.isNull()) {
-        QMessageBox::warning(this, tr("Open Image"),
-                             tr("Could not open %1:\n%2")
-                                 .arg(QDir::toNativeSeparators(path), reader.errorString()));
-        return false;
+    // Decoding, tile import and the zoom pyramid all run on a worker thread;
+    // the window stays responsive. Opening again supersedes an earlier load.
+    const quint64 generation = ++m_openGeneration;
+    statusBar()->showMessage(tr("Opening %1…").arg(QFileInfo(path).fileName()));
+    if (!m_busy) {
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        m_busy = true;
     }
 
-    auto layer = std::make_unique<easel::TileStore>(QColor(0, 0, 0, 0));
-    layer->writeImage(image);
+    QPointer<MainWindow> self(this);
+    QThreadPool::globalInstance()->start([self, path, generation] {
+        auto doc = std::make_shared<easel::LoadedDocument>(easel::loadImageDocument(path));
+        QMetaObject::invokeMethod(
+            qApp,
+            [self, path, generation, doc] {
+                if (self)
+                    self->finishOpen(path, generation, std::move(*doc));
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void MainWindow::finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc)
+{
+    if (generation != m_openGeneration)
+        return; // superseded by a later open
+    if (m_busy) {
+        QApplication::restoreOverrideCursor();
+        m_busy = false;
+    }
+    statusBar()->clearMessage();
+
+    if (!doc.ok()) {
+        QMessageBox::warning(this, tr("Open Image"),
+                             tr("Could not open %1:\n%2")
+                                 .arg(QDir::toNativeSeparators(path), doc.error));
+        emit documentOpened(path, false);
+        return;
+    }
+
     const QFileInfo info(path);
     m_lastDir = info.absolutePath();
-    setDocument(std::move(layer), image.size(), info.fileName());
+    setDocument(std::move(doc.store), doc.size, info.fileName(), std::move(doc.pyramid));
     logHistory(tr("Open %1").arg(info.fileName()));
-    return true;
+    emit documentOpened(path, true);
 }
 
 void MainWindow::setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
-                             const QString &name)
+                             const QString &name, easel::TilePyramid pyramid)
 {
     m_layer = std::move(layer);
     m_size = size;
     m_name = name;
-    m_view->setDocument(m_layer.get(), m_size);
+    m_view->setDocument(m_layer.get(), m_size, std::move(pyramid));
 
     m_layers->clear();
     m_layers->addItem(m_name == tr("Untitled") ? tr("Background") : m_name);

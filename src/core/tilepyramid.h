@@ -67,6 +67,10 @@ public:
     QList<LevelTile> invalidate(const QSet<TileCoord> &changedBaseTiles);
     void clearCache();
 
+    // Computes every level up front. For a freshly opened image, so the first
+    // zoomed-out frame doesn't build the whole pyramid on the UI thread.
+    void buildAll();
+
     qsizetype cachedTileCount() const;
 
 private:

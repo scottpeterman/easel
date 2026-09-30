@@ -57,6 +57,12 @@ public:
     void writeImage(const QImage &image, const QPoint &offset = QPoint());
     void clear();
 
+    // Tile for writing: created from the default pixel if absent, detached from
+    // any snapshot sharing it, and marked dirty. Its 64 rows are contiguous.
+    QImage &writableTile(TileCoord c);
+    // Replaces a whole tile; a null image removes it (reads as default again).
+    void setTile(TileCoord c, const QImage &tile);
+
     QSet<TileCoord> takeDirty();
     bool hasDirty() const { return !m_dirty.isEmpty(); }
 
@@ -70,8 +76,6 @@ public:
     static QImage toDisplay(const QImage &tile);
 
 private:
-    QImage &writableTile(TileCoord c);
-
     Pixel m_default;
     QHash<TileCoord, QImage> m_tiles;
     QSet<TileCoord> m_dirty;

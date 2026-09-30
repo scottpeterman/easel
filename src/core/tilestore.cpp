@@ -76,6 +76,18 @@ QImage &TileStore::writableTile(TileCoord c)
     return it.value();
 }
 
+void TileStore::setTile(TileCoord c, const QImage &tile)
+{
+    if (tile.isNull()) {
+        if (m_tiles.remove(c) > 0)
+            m_dirty.insert(c);
+        return;
+    }
+    Q_ASSERT(tile.size() == QSize(TileSize, TileSize) && tile.format() == TileFormat);
+    m_tiles.insert(c, tile);
+    m_dirty.insert(c);
+}
+
 Pixel TileStore::pixel(int x, int y) const
 {
     const TileCoord c = tileAt(x, y);

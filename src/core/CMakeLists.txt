@@ -7,6 +7,8 @@ add_library(easel_core STATIC
     tilepyramid.cpp
     tileatlas.h
     tileatlas.cpp
+    documentio.h
+    documentio.cpp
 )
 
 target_include_directories(easel_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

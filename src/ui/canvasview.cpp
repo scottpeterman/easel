@@ -70,11 +70,20 @@ CanvasView::~CanvasView() = default;
 
 void CanvasView::setDocument(TileStore *store, const QSize &canvasSize)
 {
+    TilePyramid pyramid;
+    pyramid.setBase(store, canvasSize);
+    setDocument(store, canvasSize, std::move(pyramid));
+}
+
+void CanvasView::setDocument(TileStore *store, const QSize &canvasSize, TilePyramid pyramid)
+{
     m_store = store;
     m_canvasSize = canvasSize;
     if (m_store)
         m_store->takeDirty();
-    m_pyramid.setBase(m_store, m_canvasSize);
+    if (pyramid.base() != store)
+        pyramid.setBase(store, canvasSize);
+    m_pyramid = std::move(pyramid);
     resetResidency();
     fitToWindow();
 }
