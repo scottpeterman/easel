@@ -12,6 +12,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTemporaryFile>
+#include <QThread>
 #include <QtEndian>
 
 #include <private/qzipreader_p.h>
@@ -112,6 +113,28 @@ QImage tileFromData(const char *data)
             dst[i] = getLE<quint16>(data + 2 * i);
     }
     return tile;
+}
+
+// Windows: a virus scanner or the search indexer opens a file the moment it is
+// closed, without sharing delete access, so a rename right after writing can
+// fail for a moment. These are the errors that clear up on their own.
+bool isTransientRenameError(const std::error_code &ec)
+{
+#ifdef Q_OS_WIN
+    if (ec.category() == std::system_category()) {
+        switch (ec.value()) {
+        case 5:  // ERROR_ACCESS_DENIED
+        case 32: // ERROR_SHARING_VIOLATION
+        case 33: // ERROR_LOCK_VIOLATION
+            return true;
+        default:
+            break;
+        }
+    }
+#else
+    Q_UNUSED(ec)
+#endif
+    return false;
 }
 
 } // namespace
@@ -287,9 +310,20 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
                                          : (QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther);
     QFile::setPermissions(file.fileName(), perms);
 
+    // QZipWriter closes the device; make sure of it, since an open handle can't
+    // be renamed on Windows.
+    file.close();
+
+    const std::filesystem::path from(file.fileName().toStdU16String());
+    const std::filesystem::path to(path.toStdU16String());
     std::error_code ec;
-    std::filesystem::rename(std::filesystem::path(file.fileName().toStdU16String()),
-                            std::filesystem::path(path.toStdU16String()), ec);
+    // Up to about two seconds of retries, as git for Windows and MSBuild do.
+    for (int attempt = 0;; ++attempt) {
+        std::filesystem::rename(from, to, ec);
+        if (!ec || attempt >= 100 || !isTransientRenameError(ec))
+            break;
+        QThread::msleep(20);
+    }
     if (ec)
         return QString::fromStdString(ec.message());
     file.setAutoRemove(false); // it's the saved document now
