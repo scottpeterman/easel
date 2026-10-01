@@ -50,7 +50,7 @@ Easel saves `.easel` documents: a zip with a `manifest.json`, a flattened `previ
 
 Requires CMake 3.21+, Ninja, a C++20 compiler and Qt 6.7+ with the Qt Shader Tools module. CI and releases use Qt 6.10.3.
 
-On Linux and macOS, `scripts/build.sh` configures, builds and runs the tests. It finds Qt at `~/Qt/6.10.3/gcc_64` (Linux) or `~/Qt/6.10.3/macos` by default, and wipes a build directory that was configured from another source tree, another Qt or another generator.
+On Linux and macOS, `scripts/build.sh` configures, builds and runs the tests. On Windows, `scripts\build-windows.bat` does the same (see below). It finds Qt at `~/Qt/6.10.3/gcc_64` (Linux) or `~/Qt/6.10.3/macos` by default, and wipes a build directory that was configured from another source tree, another Qt or another generator.
 
 ```
 scripts/build.sh
@@ -67,6 +67,21 @@ If Qt reports no Shader Tools module, add it:
 
 ```
 aqt install-qt linux desktop 6.10.3 linux_gcc_64 --noarchives -m qtshadertools -O ~/Qt
+```
+
+On Windows, `scripts\build-windows.bat` takes the same options, with `--zip` (writes `dist\Easel-windows-x64.zip`) in place of `--appimage`/`--dmg`. It runs from a plain cmd prompt: it loads the x64 MSVC environment itself through vswhere, finds Qt at `C:\Qt\6.10.3\msvc2022_64` (or the newest `C:\Qt\6.*\msvc*_64`), and takes Ninja and CMake from PATH, Visual Studio or `C:\Qt\Tools`. Needs Visual Studio 2022 or its Build Tools with "Desktop development with C++".
+
+```
+scripts\build-windows.bat
+scripts\build-windows.bat --run
+scripts\build-windows.bat --qt C:\Qt\6.10.3\msvc2022_64
+scripts\build-windows.bat --zip
+```
+
+If your Qt came over from another project without Shader Tools, add it with the Qt Maintenance Tool (Additional Libraries > Qt Shader Tools) or:
+
+```
+aqt install-qt windows desktop 6.10.3 win64_msvc2022_64 --noarchives -m qtshadertools -O C:\Qt
 ```
 
 Manual build, any platform:
@@ -104,6 +119,6 @@ xattr -dr com.apple.quarantine /Applications/Easel.app
 src/core   tile store and color math, no widgets (easel_core)
 src/ui     canvas view, main window, panels (easel_ui)
 src/app    executable, icon, install and deploy rules
-scripts    build.sh: build, test and package on Linux and macOS
+scripts    build.sh (Linux, macOS) and build-windows.bat: build, test and package
 tests      Qt Test suites; CPU tests run offscreen, GPU tests need a display
 ```
