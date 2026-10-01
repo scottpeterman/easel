@@ -7,6 +7,7 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
@@ -41,13 +42,26 @@ void setupWindow(MainWindow &w)
     w.canvasView()->setFocus();
 }
 
-void drag(MainWindow &w, QPointF from, QPointF to, Qt::KeyboardModifiers mods = Qt::NoModifier)
+// Sends the exact (fractional) view position. QTest only takes integer points,
+// and when the view has an odd width or height the canvas origin sits on a
+// half pixel, so a rounded point lands half a pixel off and selection corners
+// (which round to the nearest pixel corner) come out one pixel off.
+void sendMouse(QWidget *target, QEvent::Type type, const QPointF &pos, Qt::MouseButton button,
+               Qt::MouseButtons buttons)
+{
+    QMouseEvent e(type, pos, target->mapToGlobal(pos), button, buttons, Qt::NoModifier);
+    QCoreApplication::sendEvent(target, &e);
+}
+
+void drag(MainWindow &w, QPointF from, QPointF to)
 {
     CanvasView *view = w.canvasView();
-    QTest::mousePress(view, Qt::LeftButton, mods, viewPos(w, from));
+    const QTransform xf = view->canvasToView();
+    sendMouse(view, QEvent::MouseButtonPress, xf.map(from), Qt::LeftButton, Qt::LeftButton);
     for (int i = 1; i <= 8; ++i)
-        QTest::mouseMove(view, viewPos(w, from + (to - from) * (i / 8.0)));
-    QTest::mouseRelease(view, Qt::LeftButton, mods, viewPos(w, to));
+        sendMouse(view, QEvent::MouseMove, xf.map(from + (to - from) * (i / 8.0)), Qt::NoButton,
+                  Qt::LeftButton);
+    sendMouse(view, QEvent::MouseButtonRelease, xf.map(to), Qt::LeftButton, Qt::NoButton);
 }
 
 void key(MainWindow &w, int k, Qt::KeyboardModifiers mods = Qt::NoModifier)

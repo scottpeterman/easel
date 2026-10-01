@@ -48,8 +48,8 @@ done
 
 os="$(uname -s)"
 case "$os" in
-    Linux) qt_arch="gcc_64"; qt_os="linux" ;;
-    Darwin) qt_arch="macos"; qt_os="mac" ;;
+    Linux) qt_arch="gcc_64"; aqt_arch="linux_gcc_64"; qt_os="linux" ;;
+    Darwin) qt_arch="macos"; aqt_arch="clang_64"; qt_os="mac" ;;
     *) echo "Unsupported OS: $os (use scripts/build-windows.bat on Windows)" >&2; exit 1 ;;
 esac
 
@@ -79,7 +79,7 @@ if [[ ! -f "$qt_dir/lib/cmake/Qt6/Qt6Config.cmake" ]]; then
 fi
 if [[ ! -d "$qt_dir/lib/cmake/Qt6ShaderTools" ]]; then
     echo "Qt at $qt_dir has no Shader Tools module. Add it with:" >&2
-    echo "  aqt install-qt $qt_os desktop <version> $qt_arch --noarchives -m qtshadertools -O ~/Qt" >&2
+    echo "  aqt install-qt $qt_os desktop <version> $aqt_arch --noarchives -m qtshadertools -O ~/Qt" >&2
     exit 1
 fi
 

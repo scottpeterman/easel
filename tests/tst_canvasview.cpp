@@ -228,7 +228,8 @@ private slots:
         view.show();
         QVERIFY(QTest::qWaitForWindowExposed(&view));
         view.setDocument(&store, QSize(512, 512));
-        view.setZoomCentered(0.25);
+        // Mip level follows device pixels: 0.25 device scale is level 2 at any DPR.
+        view.setZoomCentered(0.25 / view.devicePixelRatioF());
 
         const QImage shot = settledFrame(view);
         if (shot.isNull())
