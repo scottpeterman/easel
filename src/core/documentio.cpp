@@ -11,7 +11,7 @@
 #include <QPainter>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QTemporaryFile>
+#include <QRandomGenerator>
 #include <QThread>
 #include <QtEndian>
 
@@ -114,6 +114,41 @@ QImage tileFromData(const char *data)
     }
     return tile;
 }
+
+// The .part file a save writes before renaming it over the target. Plain QFile,
+// not QTemporaryFile: on Windows QTemporaryFile::close() keeps the OS handle
+// open (it only rewinds, so the file can be reopened), and an open handle
+// blocks the rename until the object is destroyed.
+struct PartFile
+{
+    QFile file;
+    bool created = false;
+    bool keep = false;
+
+    ~PartFile()
+    {
+        if (created && !keep)
+            file.remove(); // closes first
+    }
+
+    // Creates ".<name>.<random>.part" next to target; empty on success.
+    QString create(const QFileInfo &target)
+    {
+        const QDir dir = target.absoluteDir();
+        for (int attempt = 0;; ++attempt) {
+            const QString suffix = QString::number(QRandomGenerator::global()->generate(), 16);
+            file.setFileName(dir.filePath(QStringLiteral(".%1.%2.part").arg(target.fileName(), suffix)));
+            if (file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+                created = true;
+                return {};
+            }
+            // A name collision is retried; anything else (no such folder, no
+            // permission) fails the same way every time.
+            if (!file.exists() || attempt >= 10)
+                return file.errorString();
+        }
+    }
+};
 
 // Windows: a virus scanner or the search indexer opens a file the moment it is
 // closed, without sharing delete access, so a rename right after writing can
@@ -230,9 +265,10 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
     // in one step, or not at all. (QSaveFile would do this, but QZipWriter
     // closes its device when done, which QSaveFile doesn't allow.)
     const QFileInfo target(path);
-    QTemporaryFile file(target.absoluteDir().filePath(QStringLiteral(".%1.XXXXXX.part").arg(target.fileName())));
-    if (!file.open())
-        return file.errorString();
+    PartFile part;
+    if (const QString error = part.create(target); !error.isEmpty())
+        return error;
+    QFile &file = part.file;
 
     {
         QZipWriter zip(&file);
@@ -303,16 +339,13 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
             return QObject::tr("Writing the document failed.");
     }
 
-    // Temporary files are owner-only; keep the old file's permissions, or the
-    // usual ones for a new file.
-    const QFile::Permissions perms = target.exists()
-                                         ? QFile(path).permissions()
-                                         : (QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther);
-    QFile::setPermissions(file.fileName(), perms);
-
     // QZipWriter closes the device; make sure of it, since an open handle can't
     // be renamed on Windows.
     file.close();
+
+    // A new file gets the usual permissions; a replaced one keeps its own.
+    if (target.exists())
+        QFile::setPermissions(file.fileName(), QFile(path).permissions());
 
     const std::filesystem::path from(file.fileName().toStdU16String());
     const std::filesystem::path to(path.toStdU16String());
@@ -326,7 +359,7 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
     }
     if (ec)
         return QString::fromStdString(ec.message());
-    file.setAutoRemove(false); // it's the saved document now
+    part.keep = true; // it's the saved document now
     return {};
 }
 
