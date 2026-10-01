@@ -1,0 +1,14 @@
+2026-10-01 09:03:53,437 - aqt.main - INFO - installer 20576 aqtinstall(aqt) v3.3.0 on Python 3.12.4 [CPython MSC v.1940 64 bit (AMD64)]
+2026-10-01 09:03:53,438 - aqt.helper - DEBUG - helper 20576 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/Updates.xml.sha256
+2026-10-01 09:03:55,490 - aqt.helper - DEBUG - helper 20576 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/extensions/qtwebengine/6103/msvc2022_64/Updates.xml.sha256
+2026-10-01 09:03:57,333 - aqt.archives - INFO - archives 20576 Found extension qtwebengine
+2026-10-01 09:03:57,336 - aqt.helper - DEBUG - helper 20576 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/extensions/qtpdf/6103/msvc2022_64/Updates.xml.sha256
+2026-10-01 09:03:59,266 - aqt.archives - INFO - archives 20576 Found extension qtpdf
+2026-10-01 09:04:00,095 - aqt.helper - DEBUG - helper 7924 Attempt to download checksum at https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.addons.qtshadertools.win64_msvc2022_64/6.10.3-0-202603310407qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z.sha256
+2026-10-01 09:04:01,136 - aqt.helper - INFO - helper 7924 Downloading qtshadertools...
+2026-10-01 09:04:01,136 - aqt.installer - DEBUG - installer 7924 Download URL: https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.addons.qtshadertools.win64_msvc2022_64/6.10.3-0-202603310407qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-01 09:04:02,030 - aqt.helper - DEBUG - helper 7924 Asked to redirect(302) to: https://qt.mirror.constant.com/online/qtsdkrepository/windows_x86/desktop/qt6_6103/qt6_6103/qt.qt6.6103.addons.qtshadertools.win64_msvc2022_64/6.10.3-0-202603310407qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z
+2026-10-01 09:04:02,030 - aqt.helper - INFO - helper 7924 Redirected: qt.mirror.constant.com
+2026-10-01 09:04:03,520 - aqt.installer - INFO - installer 7924 Finished installation of qtshadertools-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z in 3.42619620
+2026-10-01 09:04:03,650 - aqt.main - INFO - installer 20576 Finished installation
+2026-10-01 09:04:03,651 - aqt.main - INFO - installer 20576 Time elapsed: 10.21281300 second
