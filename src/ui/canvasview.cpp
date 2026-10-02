@@ -606,6 +606,26 @@ void CanvasView::render(QRhiCommandBuffer *cb)
             }
         }
     }
+    for (const QPolygonF &quad : std::as_const(m_handles)) {
+        if (quad.size() < 4)
+            continue;
+        // Filled with lines half a device pixel apart (the overlay only draws
+        // lines), then edged.
+        const QPointF p0 = quad.at(0), p1 = quad.at(1), p2 = quad.at(2), p3 = quad.at(3);
+        const double side = std::hypot(p3.x() - p0.x(), p3.y() - p0.y()) * m_zoom * devicePixelRatioF();
+        const int rows = std::clamp(int(std::ceil(side * 2.0)), 1, 64);
+        for (int i = 0; i <= rows; ++i) {
+            const double t = double(i) / rows;
+            const QPointF a = p0 + (p3 - p0) * t, b = p1 + (p2 - p1) * t;
+            ants.push_back({float(a.x()), float(a.y()), 1.0f, 1.0f, 1.0f, 1.0f});
+            ants.push_back({float(b.x()), float(b.y()), 1.0f, 1.0f, 1.0f, 1.0f});
+        }
+        for (int i = 0; i < 4; ++i) {
+            const QPointF a = quad.at(i), b = quad.at((i + 1) % 4);
+            ants.push_back({float(a.x()), float(a.y()), 0.1f, 0.1f, 0.1f, 1.0f});
+            ants.push_back({float(b.x()), float(b.y()), 0.1f, 0.1f, 0.1f, 1.0f});
+        }
+    }
     {
         const quint32 bytes = quint32(ants.size() * sizeof(OverlayVertex));
         if (bytes > m_antsCapacity) {
@@ -1047,6 +1067,12 @@ void CanvasView::setSelectionOutline(const QList<QPolygonF> &outline)
         m_antsTimer->stop();
     else if (!m_antsTimer->isActive())
         m_antsTimer->start();
+    update();
+}
+
+void CanvasView::setHandles(const QList<QPolygonF> &handles)
+{
+    m_handles = handles;
     update();
 }
 

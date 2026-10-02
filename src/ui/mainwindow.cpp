@@ -7,6 +7,7 @@
 #include "colorpanel.h"
 #include "colortoalphadialog.h"
 #include "documentio.h"
+#include "edittools.h"
 #include "eyedroppertool.h"
 #include "layerpanel.h"
 #include "newdocumentdialog.h"
@@ -97,6 +98,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_textPanel, &TextPanel::changed, this, &MainWindow::updateText);
     connect(m_textPanel, &QDialog::accepted, this, &MainWindow::commitText);
     connect(m_textPanel, &QDialog::rejected, this, &MainWindow::cancelText);
+    m_transformTool = new TransformTool(this);
+    connect(m_transformTool, &TransformTool::pressed, this, &MainWindow::transformPressed);
+    connect(m_transformTool, &TransformTool::dragged, this, &MainWindow::transformDragged);
+    connect(m_transformTool, &TransformTool::released, this, &MainWindow::transformReleased);
+    connect(m_transformTool, &TransformTool::nudged, this, [this](const QPoint &delta) {
+        if (!m_xf.active || m_xf.dragging)
+            return;
+        m_xf.box.center += QPointF(delta);
+        applyTransform(true);
+    });
     m_lasso = new LassoTool(this);
     connect(m_lasso, &LassoTool::finished, this, &MainWindow::lassoFinished);
     // While it's being drawn, the path shows in place of the selection outline.
@@ -143,6 +154,8 @@ MainWindow::MainWindow(QWidget *parent)
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
     m_wandOptions->hide(); // shown with the wand
+    m_transformOptions->hide(); // ... and with a transform
+    setTransformSmooth(settings.value(QStringLiteral("transform/smooth"), true).toBool());
     m_options->show();
     m_wand->setTolerance(settings.value(QStringLiteral("wand/tolerance"), m_wand->tolerance()).toDouble());
     m_wand->setContiguous(settings.value(QStringLiteral("wand/contiguous"), m_wand->contiguous()).toBool());
@@ -262,6 +275,14 @@ void MainWindow::createActions()
     mergeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
     layer->addAction(tr("&Flatten Image"), this, &MainWindow::flattenImage);
     layer->addSeparator();
+    // The selected pixels, or everything on the layer when nothing is selected.
+    layer->addAction(m_transformAct);
+    layer->addAction(tr("Flip &Horizontal"), this, &MainWindow::flipHorizontal);
+    layer->addAction(tr("Flip &Vertical"), this, &MainWindow::flipVertical);
+    layer->addAction(tr("Rotate 90° &Right"), this, [this] { rotateQuarter(1); });
+    layer->addAction(tr("Rotate 90° &Left"), this, [this] { rotateQuarter(-1); });
+    layer->addAction(tr("Rotate &180°"), this, [this] { rotateQuarter(2); });
+    layer->addSeparator();
     layer->addAction(tr("Add Layer Mas&k"), this, &MainWindow::addLayerMask);
     m_editMaskAct = layer->addAction(tr("&Paint on Mask"));
     m_editMaskAct->setCheckable(true);
@@ -355,7 +376,7 @@ void MainWindow::createActions()
     for (QDockWidget *dock : findChildren<QDockWidget *>())
         m_viewMenu->addAction(dock->toggleViewAction());
     for (QToolBar *bar : findChildren<QToolBar *>())
-        if (bar != m_wandOptions && bar != m_options) // these follow the tool
+        if (bar != m_wandOptions && bar != m_options && bar != m_transformOptions) // these follow the tool
             m_viewMenu->addAction(bar->toggleViewAction());
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
@@ -409,8 +430,17 @@ void MainWindow::createToolBars()
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
     m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
                              "Enter drops, Escape cancels."));
+    m_transformAct = tools->addAction(tr("Transform"), this, [this] {
+        // Nothing to transform: the button of the tool still in use stays down.
+        if (!beginTransform())
+            if (QAction *a = actionFor(m_view->tool()))
+                a->setChecked(true);
+    });
+    m_transformAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
+    m_transformAct->setToolTip(tr("Free transform (Ctrl+T): scale, rotate and move the selection, or the whole layer. "
+                                  "Enter applies, Escape cancels."));
     for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
-                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct}) {
+                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct, m_transformAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
@@ -474,6 +504,7 @@ void MainWindow::createToolBars()
         sync();
     }
     addToolBar(Qt::TopToolBarArea, m_wandOptions);
+    createTransformOptions();
 
     // The cursor circle follows size changes immediately.
     connect(m_brush, &BrushTool::settingsChanged, m_view, qOverload<>(&QWidget::update));
@@ -558,6 +589,8 @@ void MainWindow::createStatusBar()
 
     connect(m_view, &CanvasView::viewChanged, this, [this](double zoom, double rotation) {
         m_lasso->setCloseDistance(8.0 / qMax(zoom, 0.01)); // eight screen pixels
+        if (m_xf.active && m_view->tool() == m_transformTool)
+            updateTransformOutline(); // handles keep their size on screen
         m_zoomLabel->setText(tr("%1%").arg(zoom * 100.0, 0, 'f', zoom < 0.1 ? 1 : 0));
         m_rotationLabel->setText(tr("%1°").arg(rotation, 0, 'f', 0));
     });
@@ -586,26 +619,51 @@ void MainWindow::selectEyedropper()
     activateTool(m_eyedropper, false); // brush options don't apply
 }
 
+QAction *MainWindow::actionFor(CanvasTool *tool) const
+{
+    if (tool == m_brush)
+        return m_brush->mode() == BrushMode::Erase    ? m_eraserAct
+               : m_brush->mode() == BrushMode::Smudge ? m_smudgeAct
+                                                      : m_brushAct;
+    return tool == m_rectSelect      ? m_rectSelectAct
+           : tool == m_ellipseSelect ? m_ellipseSelectAct
+           : tool == m_move          ? m_moveAct
+           : tool == m_wand          ? m_wandAct
+           : tool == m_lasso         ? m_lassoAct
+           : tool == m_textTool      ? m_textAct
+           : tool == m_eyedropper    ? m_eyedropperAct
+           : tool == m_transformTool ? m_transformAct
+                                     : nullptr;
+}
+
 void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
 {
-    // Text being typed is placed, unless the tool is one that can move it.
-    if (tool != m_move && !(tool == m_textTool && m_text.active))
+    // Floating pixels are dropped where they are, unless the tool is one that
+    // works on them: Move, Transform for a transform under way, or Text for
+    // text being typed.
+    const bool keepsFloating = m_xf.active ? tool == m_transformTool
+                                           : (tool == m_move || (tool == m_textTool && m_text.active));
+    if (!keepsFloating)
         commitFloating();
     if (tool != m_lasso)
         m_lasso->cancel();
     m_view->setTool(tool);
     m_options->setEnabled(brushOptions);
-    m_options->setVisible(tool != m_wand);
-    m_wandOptions->setVisible(tool == m_wand);
-    QAction *act = tool == m_rectSelect      ? m_rectSelectAct
-                   : tool == m_ellipseSelect ? m_ellipseSelectAct
-                   : tool == m_move          ? m_moveAct
-                   : tool == m_wand          ? m_wandAct
-                   : tool == m_lasso         ? m_lassoAct
-                   : tool == m_textTool      ? m_textAct
-                   : tool == m_eyedropper    ? m_eyedropperAct
-                                             : nullptr;
-    if (act)
+    // One options bar at a time. The old one is hidden before the new one is
+    // shown: with two in the row, even for a moment, the window widens to
+    // fit both and stays that wide.
+    const std::pair<QToolBar *, bool> bars[] = {
+        {m_options, tool != m_wand && tool != m_transformTool},
+        {m_wandOptions, tool == m_wand},
+        {m_transformOptions, tool == m_transformTool},
+    };
+    for (const auto &[bar, on] : bars)
+        if (!on)
+            bar->hide();
+    for (const auto &[bar, on] : bars)
+        if (on)
+            bar->show();
+    if (QAction *act = actionFor(tool))
         act->setChecked(true);
 }
 
@@ -712,6 +770,7 @@ void MainWindow::clearSelected(const QString &label)
         const bool lifted = m_floating.wasLifted();
         const easeletch::Selection origin = m_selectionBeforeFloat;
         m_floating.cancel();
+        endTransform();
         layerId = m_floatLayer;
         onMask = m_floatMask;
         easeletch::Layer *l = m_stack->layer(layerId);
@@ -863,10 +922,17 @@ void MainWindow::commitFloating()
         cancelFloating();
         return;
     }
+    if (m_xf.active && m_xf.dragging) {
+        m_xf.dragging = false;
+        applyTransform(true); // a drag may have left a quick preview
+    }
+    // A transform of the whole layer leaves nothing selected.
+    const bool keepSelection = !m_xf.active || m_xf.hadSelection;
     const easeletch::Selection placed = m_floating.selection();
     m_history.push(m_floatLabel, m_floatLayer, m_floating.commit(), m_floatMask);
     m_moveDragging = false;
-    setSelection(placed);
+    endTransform();
+    setSelection(keepSelection ? placed : easeletch::Selection());
     m_view->refresh();
     historyChanged();
 }
@@ -1326,6 +1392,7 @@ void MainWindow::cancelFloating()
         return;
     m_floating.cancel();
     m_moveDragging = false;
+    endTransform();
     setSelection(m_selectionBeforeFloat);
     m_view->refresh();
 }
@@ -1898,6 +1965,7 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
 {
     // Detach everything from the old document before it's freed.
     m_floating.cancel();
+    endTransform();
     m_lasso->cancel();
     if (m_text.active) {
         // The document it belonged to is going away.
@@ -2106,6 +2174,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_brush->saveSettings(settings);
     m_textPanel->saveSettings(settings);
     m_grid.save(settings);
+    settings.setValue(QStringLiteral("transform/smooth"), m_transformSmooth);
     settings.setValue(QStringLiteral("wand/tolerance"), m_wand->tolerance());
     settings.setValue(QStringLiteral("wand/contiguous"), m_wand->contiguous());
     event->accept();

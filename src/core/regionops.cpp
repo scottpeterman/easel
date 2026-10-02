@@ -438,6 +438,16 @@ void FloatingContent::moveTo(const QPoint &position)
     place();
 }
 
+void FloatingContent::replace(const QImage &content, const Selection &shape, const QPoint &position)
+{
+    if (!isActive() || content.isNull() || content.format() != TileStore::TileFormat)
+        return;
+    m_content = content;
+    m_shape = shape.isEmpty() ? Selection::rect(QRect(QPoint(0, 0), content.size())) : shape;
+    m_position = position;
+    place();
+}
+
 void FloatingContent::place()
 {
     const QRect now = QRect(m_position, m_content.size()) & m_canvas;

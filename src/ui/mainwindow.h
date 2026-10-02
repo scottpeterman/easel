@@ -7,6 +7,7 @@
 #include "selection.h"
 #include "tilepyramid.h"
 #include "tilestore.h"
+#include "transform.h"
 
 #include <QMainWindow>
 #include <QSize>
@@ -29,6 +30,9 @@ class WandTool;
 class LassoTool;
 class TextTool;
 class TextPanel;
+class TransformTool;
+class QCheckBox;
+class QDoubleSpinBox;
 class QToolBar;
 class ColorPanel;
 class QAction;
@@ -80,6 +84,10 @@ public:
     // Places the text on its new layer (one undo step) / drops it.
     void commitText();
     void cancelText();
+    TransformTool *transformTool() const { return m_transformTool; }
+    // A free transform is under way: the pixels float with a box round them.
+    bool isTransforming() const { return m_xf.active; }
+    const easeletch::FreeTransform &transformBox() const { return m_xf.box; }
     // Painting and editing go to the active layer's mask, not its pixels.
     bool isEditingMask() const { return m_editMask; }
 
@@ -121,6 +129,23 @@ public slots:
     void featherSelection(int pixels);
     // Color to Alpha in the selection, or everywhere without one.
     void colorToAlpha(const QColor &color, double threshold);
+
+    // Free transform of the selected pixels, or of everything on the layer
+    // when nothing is selected. Enter (commitFloating) applies it as one undo
+    // step, Escape (cancelFloating) drops it. False if there's nothing to
+    // transform.
+    bool beginTransform();
+    // Sets the scale (1 = unchanged, negative flips) and rotation (degrees,
+    // clockwise) of the transform under way; the centre stays where it is.
+    void setTransform(double scaleX, double scaleY, double angle);
+    // Smooth resampling, or hard pixels (nearest neighbour) for sprites.
+    void setTransformSmooth(bool smooth);
+    bool transformSmooth() const { return m_transformSmooth; }
+    // Each acts on the transform under way, or is one undo step of its own.
+    void flipHorizontal();
+    void flipVertical();
+    // Quarter turns clockwise; negative for counter-clockwise.
+    void rotateQuarter(int turns);
 
     // Layers. Each is one undo step and returns false if it couldn't be done.
     // New layers go above the active one and become active.
@@ -164,6 +189,21 @@ private:
     void createToolBars();
     void createDocks();
     void createStatusBar();
+    void createTransformOptions();
+    QAction *actionFor(CanvasTool *tool) const;
+    // interactive: switches to the Transform tool and shows the box.
+    bool startTransform(bool interactive);
+    // Redraws the floating pixels from the box. final: at full quality (a
+    // drag on a large block previews with hard pixels).
+    void applyTransform(bool final);
+    void updateTransformOutline();
+    void syncTransformOptions();
+    // Forgets the transform session and goes back to the tool used before it.
+    void endTransform();
+    void quickTransform(const QString &label, void (easeletch::FreeTransform::*change)());
+    void transformPressed(const QPointF &pos);
+    void transformDragged(const QPointF &pos);
+    void transformReleased(const QPointF &pos);
     void selectBrushMode(int mode);
     void selectEyedropper();
     // Switches the canvas tool, committing floating pixels unless it's Move.
@@ -268,6 +308,31 @@ private:
         bool movingLayer = false; // ... or it became a drag, and is moving the layer
         easeletch::Selection selectionBeforeMove;
     } m_text;
+    TransformTool *m_transformTool = nullptr;
+    QAction *m_transformAct = nullptr;
+    QToolBar *m_transformOptions = nullptr;
+    QDoubleSpinBox *m_xfWidth = nullptr;
+    QDoubleSpinBox *m_xfHeight = nullptr;
+    QDoubleSpinBox *m_xfAngle = nullptr;
+    QCheckBox *m_xfSmooth = nullptr;
+    bool m_transformSmooth = true;
+    qint64 m_lastSmoothMs = 0; // how long the last smooth redraw took
+    // A free transform under way. The pixels float (m_floating); source is
+    // what they were when it began, and every change redraws them from it, so
+    // scaling down and back up loses nothing.
+    struct TransformSession {
+        bool active = false;
+        QImage source;
+        easeletch::Selection shape; // relative to the source's top-left
+        easeletch::FreeTransform box;
+        easeletch::FreeTransform start; // when the drag under way began
+        easeletch::TransformHandle handle = easeletch::TransformHandle::None;
+        QPointF dragFrom;
+        bool dragging = false;
+        bool hadSelection = false; // otherwise it's the whole layer, and nothing stays selected
+        bool changed = false;
+        CanvasTool *previousTool = nullptr;
+    } m_xf;
     bool m_editMask = false;
     bool m_floatMask = false; // the floating pixels are on a mask
     QToolBar *m_wandOptions = nullptr;

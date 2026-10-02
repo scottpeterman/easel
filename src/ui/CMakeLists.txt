@@ -15,6 +15,8 @@ add_library(easeletch_ui STATIC
     eyedroppertool.cpp
     selecttools.h
     selecttools.cpp
+    edittools.h
+    edittools.cpp
     colortoalphadialog.h
     colortoalphadialog.cpp
     griddialog.h
@@ -27,6 +29,7 @@ add_library(easeletch_ui STATIC
     textpanel.cpp
     mainwindow.h
     mainwindow.cpp
+    mainwindow_tools.cpp
 )
 
 target_include_directories(easeletch_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

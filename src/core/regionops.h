@@ -65,6 +65,9 @@ public:
 
     void moveTo(const QPoint &position);
     void moveBy(const QPoint &delta) { moveTo(m_position + delta); }
+    // Swaps the floating pixels for others (the same ones scaled or turned),
+    // at a new position. shape: their outline, relative to their top-left.
+    void replace(const QImage &content, const Selection &shape, const QPoint &position);
 
     QPoint position() const { return m_position; }
     QImage content() const { return m_content; }

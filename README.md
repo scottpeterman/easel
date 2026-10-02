@@ -4,17 +4,19 @@ A balanced layered image editor: Paint.NET approachability with Photoshop's laye
 
 ## Status
 
-M3. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
+M4 under way. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
 
 Layers: raster layers and groups, each with visibility, lock, opacity and one of 12 blend modes (Normal, Multiply, Screen, Overlay, Soft Light, Darken, Lighten, Color Dodge, Color Burn, Difference, Hue, Color). Painting, erasing, smudging, cut, paste, move and Color to Alpha act on the active layer; the eyedropper, Trim and Export use the whole picture; Crop cuts every layer. Every layer change is an undo step. Normal blending and opacity mix in linear light; the other modes compare colours as sRGB values, so they give the results other editors do.
 
 Selections: rectangle, ellipse, lasso (freehand or point by point) and magic wand, with add and subtract, invert, grow, shrink and feather. A feathered selection fades at its edge, and everything done through it (paint, delete, cut, copy, move, Color to Alpha) fades the same way.
 
+Transform: Free Transform scales, rotates and moves the selected pixels, or everything on the layer when nothing is selected. Drag a corner to scale in proportion (Shift for any shape), a side to stretch, outside the box to rotate (Shift for 15° steps), inside it to move; or type a size and angle in the options bar. Flip and 90° turns are one click and exact. Smooth blends pixels and softens rotated edges; unticked, pixels stay hard, for sprites. Everything is redrawn from the original pixels until you apply, so trying sizes costs no quality, and the whole transform is one undo step.
+
 Text: the Text tool types with any font installed on the machine, in any size, bold or italic, left, centred or right, smooth or hard-edged for pixel art. The canvas shows it as you type and you can drag it into place. Placed text lands on a new layer of its own as ordinary pixels: it can be moved, faded, masked or erased like anything else, but not retyped.
 
 Layer masks: any layer or group can have a mask that hides part of it without erasing anything. Paint on the mask with the ordinary brush: black hides, white shows, and brush opacity gives the in-between. A mask added while something is selected shows only the selection. Masks can be switched off, applied (erasing what they hide) or removed.
 
-The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Transforms, adjustments and the rest arrive by milestone.
+The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Fill, gradient, adjustments and the rest arrive by milestone.
 
 ## Controls
 
@@ -37,6 +39,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Cut / copy / paste / delete | Ctrl+X / Ctrl+C / Ctrl+V / Delete |
 | Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
 | Drop / cancel floating pixels | Enter / Escape |
+| Free transform | Ctrl+T (the selection, or the whole layer). Drag a corner to scale, Shift for any shape; a side to stretch; outside the box to rotate, Shift for 15° steps; inside to move; arrows nudge. Enter applies, Escape cancels |
+| Flip, rotate 90° or 180° | Layer menu, or the buttons in the transform options |
 | Lasso | L; drag around something and let go, or click point by point and press Enter (or click the first point). Escape gives up. Shift adds, Ctrl subtracts |
 | Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
 | Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |

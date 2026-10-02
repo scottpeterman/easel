@@ -19,6 +19,8 @@ add_library(easeletch_core STATIC
     selection.cpp
     regionops.h
     regionops.cpp
+    transform.h
+    transform.cpp
     textrender.h
     textrender.cpp
 )

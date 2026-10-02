@@ -111,6 +111,10 @@ public:
 
     // Marching ants around this outline (canvas coordinates); empty for none.
     void setSelectionOutline(const QList<QPolygonF> &outline);
+    // Grab handles (a transform's): four-cornered shapes in canvas
+    // coordinates, drawn solid white with a dark edge over everything else.
+    void setHandles(const QList<QPolygonF> &handles);
+    QList<QPolygonF> handles() const { return m_handles; }
     // A line between every pixel, from 600% zoom up.
     void setPixelGridVisible(bool visible);
     bool pixelGridVisible() const { return m_pixelGrid; }
@@ -224,6 +228,7 @@ private:
     QPointF m_cursorCanvas;
 
     QList<QPolygonF> m_selectionOutline;
+    QList<QPolygonF> m_handles;
     bool m_pixelGrid = true;
     bool m_cellGrid = false;
     QSize m_cellSize{32, 32};
