@@ -153,7 +153,7 @@ LayerPanel::LayerPanel(QWidget *parent)
     m_merge = button(tr("Merge"), tr("Merge into the layer below, or merge a group into one layer (Ctrl+E)"),
                      &LayerPanel::mergeRequested);
     buttons->addStretch(1);
-    m_delete = button(tr("Delete"), tr("Delete this layer (the Delete key, with the layer list clicked)"),
+    m_delete = button(tr("Delete"), tr("Delete this layer (the Delete key, when nothing is selected on the canvas)"),
                       &LayerPanel::deleteRequested);
     column->addLayout(buttons);
 

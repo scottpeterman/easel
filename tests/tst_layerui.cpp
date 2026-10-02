@@ -887,10 +887,23 @@ private slots:
         QCOMPARE(w.layers().count(), 3);
         QTreeWidget *tree = w.layerPanel()->tree();
 
-        // With the canvas focused and nothing selected, Delete does nothing.
+        // With nothing selected, Delete removes the highlighted layer, even
+        // with the canvas focused, and says so.
+        w.addLayer();
+        QCOMPARE(w.layers().count(), 4);
         w.canvasView()->setFocus();
         QTest::keyClick(w.canvasView(), Qt::Key_Delete);
         QCOMPARE(w.layers().count(), 3);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Delete Layer"));
+        QVERIFY(w.statusBar()->currentMessage().contains(QStringLiteral("Deleted layer")));
+        // With a selection it clears pixels and leaves the layers alone.
+        w.layer()->fillRect(QRect(0, 0, 400, 300), QColor(Qt::blue));
+        w.setSelection(Selection::rect(QRect(10, 10, 50, 50)));
+        QTest::keyClick(w.canvasView(), Qt::Key_Delete);
+        QCOMPARE(w.layers().count(), 3);
+        QCOMPARE(at(*w.layer(), 20, 20).alpha(), 0);
+        QCOMPARE(at(*w.layer(), 100, 100), QColor(Qt::blue));
+        w.deselect();
 
         // With the layer list focused, it deletes the active layer. That holds
         // with a selection too, when Delete would otherwise clear pixels.
@@ -905,15 +918,16 @@ private slots:
         QCOMPARE(w.history().undoLabel(), QStringLiteral("Delete Layer"));
         QCOMPARE(at(w.layers().layer(painted)->store, 150, 100), QColor(Qt::red)); // no pixels were cleared
         w.deselect();
-        // Backspace doesn't: it stays the pixel-clearing key.
-        QTest::keyClick(tree, Qt::Key_Backspace);
-        QCOMPARE(w.layers().count(), 2);
-        // The last layer stays.
+        // The last layer stays, whichever way it's asked for.
         tree->setFocus();
         QTest::keyClick(tree, Qt::Key_Delete);
         QCOMPARE(w.layers().count(), 1);
         QTest::keyClick(tree, Qt::Key_Delete);
         QCOMPARE(w.layers().count(), 1);
+        w.canvasView()->setFocus();
+        QTest::keyClick(w.canvasView(), Qt::Key_Delete);
+        QCOMPARE(w.layers().count(), 1);
+        QVERIFY(w.statusBar()->currentMessage().contains(QStringLiteral("at least one layer")));
         w.undo();
         QCOMPARE(w.layers().count(), 2);
     }

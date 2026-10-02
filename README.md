@@ -29,7 +29,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Merge down (or merge a group) | Ctrl+E |
 | Show, lock, rename, reorder a layer | Layers panel: tick the box, tick Lock, double-click the name, drag the row (onto a group to put it inside) |
 | Layer blend mode and opacity | Top of the Layers panel |
-| Delete layer | Delete key with the layer list clicked, the panel's Delete button, or the Layer menu |
+| Delete layer | Delete key when nothing is selected on the canvas (with a selection, Delete clears the selected pixels), the panel's Delete button, or the Layer menu |
 | Move layer up / down, flatten | Layers panel buttons, or the Layer menu |
 | Hard 1 px pixels (sprites) | Tick **Pixel** in the tool options |
 | Rectangle / ellipse select | M / Shift+M; drag, Shift for square or circle, click to deselect |

@@ -622,7 +622,8 @@ void MainWindow::setSelection(const easeletch::Selection &selection)
 void MainWindow::updateSelectionActions()
 {
     const bool any = !m_selection.isEmpty();
-    for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct, m_cropAct, m_exportSelectionAct,
+    // Delete stays on without a selection: then it deletes the layer.
+    for (QAction *a : {m_cutAct, m_copyAct, m_deselectAct, m_cropAct, m_exportSelectionAct,
                        m_growAct, m_shrinkAct, m_featherAct})
         if (a)
             a->setEnabled(any);
@@ -686,7 +687,15 @@ void MainWindow::cut()
 
 void MainWindow::deleteSelection()
 {
-    if (!m_stack || m_selection.isEmpty() || m_view->isStroking())
+    if (!m_stack || m_view->isStroking())
+        return;
+    // With something selected, Delete clears those pixels. With nothing
+    // selected it means the highlighted layer, wherever the keyboard focus is.
+    if (m_selection.isEmpty() && !m_floating.isActive() && !m_text.active) {
+        deleteLayer();
+        return;
+    }
+    if (m_selection.isEmpty())
         return;
     clearSelected(tr("Delete"));
 }
@@ -1137,9 +1146,16 @@ void MainWindow::hideTextPanel()
 {
     if (m_textPanel->isVisible())
         m_textPanelPos = m_textPanel->pos();
+    const bool wasTyping = m_textPanel->isVisible();
     const QSignalBlocker block(m_textPanel);
     m_textPanel->setText(QString());
     m_textPanel->hide();
+    // The keyboard goes back to the canvas, so the next key (Delete, Ctrl+Z,
+    // a tool letter) acts on the picture and not on a window that's gone.
+    if (wasTyping) {
+        activateWindow();
+        m_view->setFocus();
+    }
 }
 
 void MainWindow::cancelText()
@@ -1463,7 +1479,9 @@ bool MainWindow::deleteLayer()
         return false;
     }
     easeletch::LayerStack before = m_stack->snapshot();
+    const QString name = m_stack->active()->name;
     m_stack->remove(id);
+    statusBar()->showMessage(tr("Deleted layer \"%1\". Ctrl+Z brings it back.").arg(name), 5000);
     finishLayerChange(tr("Delete Layer"), std::move(before));
     return true;
 }
