@@ -314,6 +314,9 @@ void MainWindow::createActions()
     QMenu *help = menuBar()->addMenu(tr("&Help"));
     auto *about = help->addAction(tr("&About Easel"), this, &MainWindow::showAbout);
     about->setMenuRole(QAction::AboutRole);
+    // Easel links Qt under the LGPL, which asks for Qt's own notice to be shown.
+    auto *aboutQt = help->addAction(tr("About &Qt"), qApp, &QApplication::aboutQt);
+    aboutQt->setMenuRole(QAction::AboutQtRole);
 }
 
 void MainWindow::createToolBars()
@@ -1621,8 +1624,13 @@ void MainWindow::showExportDialog()
 void MainWindow::showAbout()
 {
     QMessageBox::about(this, tr("About Easel"),
-                       tr("<b>Easel</b> %1<br>A balanced layered image editor.<br>Qt %2")
-                           .arg(QStringLiteral(EASEL_VERSION), QString::fromLatin1(qVersion())));
+                       tr("<h3>Easel %1</h3>"
+                          "<p>A balanced layered image editor.</p>"
+                          "<p>Free software under the GNU General Public License, version 3.</p>"
+                          "<p>Built with Qt %2, running on Qt %3.</p>"
+                          "<p><a href=\"https://github.com/scottpeterman/easel\">github.com/scottpeterman/easel</a></p>")
+                           .arg(QStringLiteral(EASEL_VERSION), QStringLiteral(QT_VERSION_STR),
+                                QString::fromLatin1(qVersion())));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
