@@ -119,8 +119,21 @@ void CanvasView::setDocument(TileStore *store, const QSize &canvasSize, TilePyra
     if (pyramid.base() != store)
         pyramid.setBase(store, canvasSize);
     m_pyramid = std::move(pyramid);
+    if (m_store)
+        m_shownDefault = m_store->defaultPixel();
     resetResidency();
     fitToWindow();
+}
+
+void CanvasView::reloadDocument()
+{
+    if (!m_store)
+        return;
+    m_store->takeDirty();
+    m_shownDefault = m_store->defaultPixel();
+    m_pyramid.clearCache();
+    resetResidency();
+    update();
 }
 
 void CanvasView::resetResidency()
@@ -176,6 +189,13 @@ void CanvasView::refresh()
 {
     if (!m_store)
         return;
+    if (m_beforeRefresh)
+        m_beforeRefresh();
+    // A new default pixel changes every tile that doesn't exist, at every level.
+    if (!easel::samePixel(m_store->defaultPixel(), m_shownDefault)) {
+        reloadDocument();
+        return;
+    }
     const auto dirty = m_store->takeDirty();
     if (dirty.isEmpty())
         return;

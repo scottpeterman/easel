@@ -13,6 +13,7 @@
 #include <QTransform>
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -50,7 +51,7 @@ public:
     }
 };
 
-// GPU canvas: draws one TileStore with pan, zoom and rotate through QRhi
+// GPU canvas: draws one TileStore (the layers' composite) with pan, zoom and rotate through QRhi
 // (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux).
 //
 // Tiles live in RGBA16F atlas pages on the GPU. When zoomed out, tiles come
@@ -95,6 +96,12 @@ public:
 
     // Pulls dirty tiles from the store and schedules a redraw.
     void refresh();
+    // Called at the start of every refresh(), so whatever feeds the store (the
+    // layer compositor) can bring it up to date first.
+    void setBeforeRefresh(std::function<void()> hook) { m_beforeRefresh = std::move(hook); }
+    // The same store and size, but anything may have changed: redraws
+    // everything and keeps the view where it is.
+    void reloadDocument();
 
     // Left-button / pen strokes go to the tool; null means view-only.
     void setTool(CanvasTool *tool);
@@ -169,6 +176,8 @@ private:
     void setAltHeld(bool held);
 
     easel::TileStore *m_store = nullptr;
+    std::function<void()> m_beforeRefresh;
+    easel::Pixel m_shownDefault; // the store's default pixel as last drawn
     QSize m_canvasSize;
     double m_zoom = 1.0;
     bool m_autoFit = true; // refit on resize until the user navigates

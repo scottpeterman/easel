@@ -8,7 +8,7 @@
 #include <QRect>
 
 // Picks the painting colour from the canvas. Samples what's on screen (the
-// single layer today; the composite once layers exist). Transparent pixels are
+// composite of the layers, not just the active one). Transparent pixels are
 // skipped, and picked colours are opaque. Picking never touches history.
 class EyedropperTool : public QObject, public CanvasTool
 {

@@ -2,6 +2,7 @@
 #include "documentio.h"
 
 #include <QImageReader>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -64,12 +65,12 @@ private slots:
         const LoadedDocument doc = loadImageDocument(path);
         QVERIFY(doc.ok());
         QCOMPARE(doc.size, QSize(300, 200));
-        QCOMPARE(doc.store->tileCount(), 5 * 4);
-        QVERIFY(!doc.store->hasDirty());
-        QCOMPARE(pixelToColor(doc.store->pixel(299, 199)), QColor(255, 0, 0));
+        QCOMPARE(doc.stack->layers().first().store.tileCount(), 5 * 4);
+        QVERIFY(!doc.stack->layers().first().store.hasDirty());
+        QCOMPARE(pixelToColor(doc.stack->layers().first().store.pixel(299, 199)), QColor(255, 0, 0));
 
         // Every level above the base is already computed.
-        QCOMPARE(doc.pyramid.base(), doc.store.get());
+        QCOMPARE(doc.pyramid.base(), &doc.stack->composite());
         QCOMPARE(doc.pyramid.topLevel(), 3);
         QCOMPARE(doc.pyramid.cachedTileCount(), 3 * 2 + 2 * 1 + 1); // levels 1, 2, 3
     }
@@ -89,8 +90,8 @@ private slots:
         QVERIFY2(doc.ok(), qPrintable(doc.error));
         QVERIFY(doc.native);
         QCOMPARE(doc.size, size);
-        QVERIFY(sameTiles(s, *doc.store));
-        QCOMPARE(doc.pyramid.base(), doc.store.get());
+        QVERIFY(sameTiles(s, doc.stack->layers().first().store));
+        QCOMPARE(doc.pyramid.base(), &doc.stack->composite());
         QVERIFY(doc.pyramid.cachedTileCount() > 0);
     }
 
@@ -102,8 +103,8 @@ private slots:
         QCOMPARE(saveNativeDocument(path, s, QSize(300, 200)), QString());
         const LoadedDocument doc = loadDocument(path);
         QVERIFY(doc.ok());
-        QCOMPARE(doc.store->tileCount(), 0);
-        QVERIFY(sameTiles(s, *doc.store));
+        QCOMPARE(doc.stack->layers().first().store.tileCount(), 0);
+        QVERIFY(sameTiles(s, doc.stack->layers().first().store));
     }
 
     void tilesOutsideTheCanvasAreNotSaved()
@@ -115,7 +116,7 @@ private slots:
         s.fillRect(QRect(900, 900, 10, 10), Qt::red); // outside a 200 x 200 canvas
         QCOMPARE(saveNativeDocument(path, s, QSize(200, 200)), QString());
         const LoadedDocument doc = loadDocument(path);
-        QCOMPARE(doc.store->tileCount(), 1);
+        QCOMPARE(doc.stack->layers().first().store.tileCount(), 1);
     }
 
     void previewIsFlattenedAndCapped()
@@ -134,6 +135,107 @@ private slots:
         QVERIFY(qAbs(preview.height() - 410) <= 1);
         QCOMPARE(preview.pixelColor(100, 10), QColor(Qt::red));
         QCOMPARE(preview.pixelColor(100, 300), QColor(Qt::white));
+    }
+
+    void layersRoundTrip()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("layers.easel"));
+        const QSize size(500, 300);
+
+        LayerStack stack;
+        stack.setSize(size);
+        Layer bg;
+        bg.name = QStringLiteral("Background");
+        bg.store = TileStore(Qt::white);
+        const int bgId = stack.insert(std::move(bg), 0, 0);
+        Layer g;
+        g.name = QStringLiteral("Figures");
+        g.group = true;
+        g.opacity = 0.75;
+        const int groupId = stack.insert(std::move(g), 0, 1);
+        Layer ink;
+        ink.name = QStringLiteral("Ink");
+        ink.blend = BlendMode::Multiply;
+        ink.locked = true;
+        paintSomething(ink.store, QRect(QPoint(0, 0), size));
+        const int inkId = stack.insert(std::move(ink), groupId, 0);
+        Layer hidden;
+        hidden.name = QStringLiteral("Sketch");
+        hidden.visible = false;
+        hidden.opacity = 0.4;
+        hidden.store.fillRect(QRect(10, 10, 100, 100), QColor(Qt::green));
+        const int hiddenId = stack.insert(std::move(hidden), groupId, 1);
+        stack.setActive(inkId);
+        stack.recompositeAll();
+        QCOMPARE(saveNativeDocument(path, stack), QString());
+
+        const LoadedDocument doc = loadDocument(path);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QCOMPARE(doc.size, size);
+        const LayerStack &in = *doc.stack;
+        QCOMPARE(in.count(), 4);
+        QCOMPARE(in.activeId(), inkId);
+        QCOMPARE(in.children(0), (QList<int>{bgId, groupId}));
+        QCOMPARE(in.children(groupId), (QList<int>{inkId, hiddenId}));
+        QVERIFY(in.layer(groupId)->group);
+        QCOMPARE(in.layer(groupId)->opacity, 0.75);
+        QCOMPARE(in.layer(inkId)->name, QStringLiteral("Ink"));
+        QCOMPARE(in.layer(inkId)->blend, BlendMode::Multiply);
+        QVERIFY(in.layer(inkId)->locked);
+        QVERIFY(!in.layer(hiddenId)->visible);
+        QCOMPARE(in.layer(hiddenId)->opacity, 0.4);
+        for (int id : {bgId, inkId, hiddenId})
+            QVERIFY(sameTiles(stack.layer(id)->store, in.layer(id)->store));
+        // The composite is rebuilt and matches, and the pyramid sits on it.
+        QVERIFY(sameTiles(stack.composite(), in.composite()));
+        QCOMPARE(doc.pyramid.base(), &in.composite());
+        QVERIFY(!in.composite().hasDirty());
+
+        // The preview shows the flattened picture, not one layer.
+        QZipReader zip(path);
+        QImage preview;
+        QVERIFY(preview.loadFromData(zip.fileData(QStringLiteral("preview.png")), "PNG"));
+        QCOMPARE(preview.size(), size);
+        QCOMPARE(preview.pixelColor(50, 50), flattenImage(stack.composite(), size).pixelColor(50, 50));
+        QVERIFY(preview.pixelColor(450, 10) == QColor(Qt::white));
+    }
+
+    void opensVersion1Files()
+    {
+        // As written before layers: one unnamed-id layer, version 1.
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("old.easel"));
+        const QString v1 = dir.filePath(QStringLiteral("v1.easel"));
+        TileStore s(Qt::white);
+        s.fillRect(QRect(10, 10, 50, 50), Qt::red);
+        QCOMPARE(saveNativeDocument(path, s, QSize(200, 100)), QString());
+        {
+            QZipReader in(path);
+            QZipWriter out(v1);
+            for (const QZipReader::FileInfo &info : in.fileInfoList()) {
+                QByteArray data = in.fileData(info.filePath);
+                if (info.filePath == QLatin1String("manifest.json")) {
+                    QJsonObject m = QJsonDocument::fromJson(data).object();
+                    m.insert(QStringLiteral("version"), 1);
+                    m.remove(QStringLiteral("activeLayer"));
+                    QJsonObject layer = m.value(QStringLiteral("layers")).toArray().at(0).toObject();
+                    for (const char *key : {"id", "type", "parent", "locked"})
+                        layer.remove(QLatin1String(key));
+                    m.insert(QStringLiteral("layers"), QJsonArray{layer});
+                    data = QJsonDocument(m).toJson();
+                }
+                out.addFile(info.filePath, data);
+            }
+            out.close();
+        }
+        const LoadedDocument doc = loadDocument(v1);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QCOMPARE(doc.stack->count(), 1);
+        QVERIFY(doc.stack->active() != nullptr);
+        QVERIFY(!doc.stack->active()->group);
+        QVERIFY(sameTiles(s, doc.stack->layers().first().store));
+        QCOMPARE(pixelToColor(doc.stack->composite().pixel(20, 20)), QColor(Qt::red));
     }
 
     void rejectsNewerAndForeignFiles()

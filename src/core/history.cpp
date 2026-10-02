@@ -34,18 +34,88 @@ qint64 History::bytesOf(const QHash<TileCoord, QImage> &tiles)
     return n;
 }
 
-void History::push(const QString &label, QHash<TileCoord, QImage> tiles, const QSize &sizeBefore)
+void History::append(Entry e)
 {
     while (m_entries.size() > m_position) {
         m_bytes -= m_entries.last().bytes;
         m_entries.removeLast();
     }
-    Entry e{label, std::move(tiles), sizeBefore, 0, m_nextId++};
-    e.bytes = bytesOf(e.tiles);
+    e.id = m_nextId++;
     m_bytes += e.bytes;
     m_entries.append(std::move(e));
     m_position = m_entries.size();
     enforceBudget();
+}
+
+void History::push(const QString &label, QHash<TileCoord, QImage> tiles, const QSize &sizeBefore)
+{
+    Entry e;
+    e.label = label;
+    e.tiles = std::move(tiles);
+    e.size = sizeBefore;
+    e.bytes = bytesOf(e.tiles);
+    append(std::move(e));
+}
+
+void History::push(const QString &label, int layerId, QHash<TileCoord, QImage> tiles)
+{
+    Entry e;
+    e.label = label;
+    e.layerId = layerId;
+    e.tiles = std::move(tiles);
+    e.bytes = bytesOf(e.tiles);
+    append(std::move(e));
+}
+
+void History::pushState(const QString &label, LayerStack before, const LayerStack &now)
+{
+    Entry e;
+    e.label = label;
+    e.state = std::make_shared<LayerStack>(std::move(before));
+    e.bytes = e.state->bytesNotSharedWith(now);
+    append(std::move(e));
+}
+
+bool History::swap(Entry &e, LayerStack &stack)
+{
+    if (e.state) {
+        stack.swapState(*e.state);
+        m_bytes -= e.bytes;
+        e.bytes = e.state->bytesNotSharedWith(stack);
+        m_bytes += e.bytes;
+        return true;
+    }
+    if (Layer *l = stack.layer(e.layerId))
+        swap(e, l->store, nullptr);
+    return false;
+}
+
+bool History::undo(LayerStack &stack)
+{
+    if (!canUndo())
+        return false;
+    --m_position;
+    return swap(m_entries[m_position], stack);
+}
+
+bool History::redo(LayerStack &stack)
+{
+    if (!canRedo())
+        return false;
+    const bool changed = swap(m_entries[m_position], stack);
+    ++m_position;
+    return changed;
+}
+
+bool History::jumpTo(qsizetype position, LayerStack &stack)
+{
+    position = std::clamp<qsizetype>(position, 0, m_entries.size());
+    bool changed = false;
+    while (m_position > position)
+        changed |= undo(stack);
+    while (m_position < position)
+        changed |= redo(stack);
+    return changed;
 }
 
 void History::swap(Entry &e, TileStore &store, QSize *canvasSize)

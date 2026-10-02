@@ -21,6 +21,8 @@ add_library(easel_ui STATIC
     griddialog.cpp
     newdocumentdialog.h
     newdocumentdialog.cpp
+    layerpanel.h
+    layerpanel.cpp
     mainwindow.h
     mainwindow.cpp
 )

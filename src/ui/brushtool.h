@@ -19,7 +19,9 @@ class BrushTool : public QObject, public CanvasTool
 public:
     explicit BrushTool(QObject *parent = nullptr);
 
-    void setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history);
+    // store: the layer strokes go to; null when there's nothing to paint on
+    // (a locked or hidden layer, a group). layerId names it in the history.
+    void setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history, int layerId = 0);
     // Strokes stay inside this selection when it isn't empty.
     void setSelection(const easel::Selection *selection) { m_selection = selection; }
 
@@ -47,6 +49,8 @@ signals:
     void modeChanged(easel::BrushMode mode);
     void settingsChanged();
     void strokeCommitted();
+    // A stroke was started with nothing to paint on.
+    void blocked();
 
 private:
     easel::BrushSettings &current();
@@ -54,6 +58,7 @@ private:
     easel::TileStore *m_store = nullptr;
     QRect m_bounds;
     easel::History *m_history = nullptr;
+    int m_layerId = 0;
 
     easel::BrushMode m_mode = easel::BrushMode::Paint;
     easel::BrushSettings m_paint;

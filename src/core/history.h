@@ -1,5 +1,6 @@
 #pragma once
 
+#include "layerstack.h"
 #include "tilestore.h"
 
 #include <QHash>
@@ -7,6 +8,8 @@
 #include <QList>
 #include <QSize>
 #include <QString>
+
+#include <memory>
 
 namespace easel {
 
@@ -16,6 +19,11 @@ namespace easel {
 // tiles with the store's current ones, so an entry always holds "the other
 // state" and costs one copy of the changed tiles, never the whole image.
 // When the entries' memory exceeds the budget, the oldest are dropped.
+//
+// With layers, a tile entry names the layer it changed. Anything that changes
+// the stack itself (add, delete, reorder, opacity, crop, ...) is recorded as a
+// snapshot of the layers before it; snapshots share their tiles with the
+// document, so they only cost what has changed since.
 class History
 {
 public:
@@ -32,6 +40,11 @@ public:
     // sizeBefore: the canvas size before the action, for actions that change
     // it (crop); invalid when the size didn't change.
     void push(const QString &label, QHash<TileCoord, QImage> tiles, const QSize &sizeBefore = {});
+    // The same, for one layer of a stack.
+    void push(const QString &label, int layerId, QHash<TileCoord, QImage> tiles);
+    // Records a change to the stack that has already been made. before: a
+    // snapshot() taken before it; now: the stack as it is.
+    void pushState(const QString &label, LayerStack before, const LayerStack &now);
 
     bool canUndo() const { return m_position > 0; }
     bool canRedo() const { return m_position < m_entries.size(); }
@@ -40,6 +53,12 @@ public:
     void redo(TileStore &store, QSize *canvasSize = nullptr);
     // Undoes or redoes until `position` entries are applied.
     void jumpTo(qsizetype position, TileStore &store, QSize *canvasSize = nullptr);
+    // For a layered document. True when the stack itself changed (layers
+    // added, removed, reordered, resized ...), not just one layer's tiles:
+    // the caller then recomposites everything.
+    bool undo(LayerStack &stack);
+    bool redo(LayerStack &stack);
+    bool jumpTo(qsizetype position, LayerStack &stack);
 
     QString baseLabel() const { return m_baseLabel; }
     qsizetype count() const { return m_entries.size(); }
@@ -63,7 +82,9 @@ public:
 private:
     struct Entry {
         QString label;
+        int layerId = 0; // the layer the tiles belong to
         QHash<TileCoord, QImage> tiles;
+        std::shared_ptr<LayerStack> state; // the other state's layers, for stack changes
         QSize size; // the other state's canvas size, if it differs
         qint64 bytes = 0;
         quint64 id = 0;
@@ -71,6 +92,8 @@ private:
 
     static qint64 bytesOf(const QHash<TileCoord, QImage> &tiles);
     void swap(Entry &e, TileStore &store, QSize *canvasSize);
+    bool swap(Entry &e, LayerStack &stack);
+    void append(Entry e);
     void enforceBudget();
 
     qint64 m_budget;

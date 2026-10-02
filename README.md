@@ -4,9 +4,11 @@ A balanced layered image editor: Paint.NET approachability with Photoshop's laye
 
 ## Status
 
-M1. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
+M2. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
 
-The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Opening an image runs in the background. Layers, selections and the rest arrive by milestone.
+Layers: raster layers and groups, each with visibility, lock, opacity and one of 12 blend modes (Normal, Multiply, Screen, Overlay, Soft Light, Darken, Lighten, Color Dodge, Color Burn, Difference, Hue, Color). Painting, erasing, smudging, cut, paste, move and Color to Alpha act on the active layer; the eyedropper, Trim and Export use the whole picture; Crop cuts every layer. Every layer change is an undo step. Normal blending and opacity mix in linear light; the other modes compare colours as sRGB values, so they give the results other editors do.
+
+The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Masks, adjustments and the rest arrive by milestone.
 
 ## Controls
 
@@ -17,6 +19,11 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Export PNG, JPEG or WebP | Ctrl+Shift+E |
 | Paint | Left-drag or pen |
 | Brush / Eraser / Smudge / Eyedropper | B / E / S / I |
+| New layer / duplicate / group | Ctrl+Shift+N / Ctrl+J / Ctrl+G |
+| Merge down (or merge a group) | Ctrl+E |
+| Show, lock, rename, reorder a layer | Layers panel: tick the box, tick Lock, double-click the name, drag the row (onto a group to put it inside) |
+| Layer blend mode and opacity | Top of the Layers panel |
+| Delete layer, move up / down, flatten | Layers panel buttons, or the Layer menu |
 | Hard 1 px pixels (sprites) | Tick **Pixel** in the tool options |
 | Rectangle / ellipse select | M / Shift+M; drag, Shift for square or circle, click to deselect |
 | Select all / deselect | Ctrl+A / Ctrl+D |
@@ -44,7 +51,9 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 
 ## Files
 
-Easel saves `.easel` documents: a zip with a `manifest.json`, a flattened `preview.png` (up to 2048 px) you can look at without Easel, and the canvas tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
+Easel saves `.easel` documents: a zip with a `manifest.json` (canvas size and the layer list: name, group, visibility, lock, opacity, blend mode), a flattened `preview.png` (up to 2048 px) you can look at without Easel, and each layer's tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
+
+Documents saved before layers (format 1) open as a single layer. Documents saved now are format 2, which older builds decline to open.
 
 ## Build
 

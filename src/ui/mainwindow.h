@@ -2,6 +2,7 @@
 
 #include "griddialog.h"
 #include "history.h"
+#include "layerstack.h"
 #include "regionops.h"
 #include "selection.h"
 #include "tilepyramid.h"
@@ -21,6 +22,7 @@ class BrushTool;
 class CanvasTool;
 class CanvasView;
 class EyedropperTool;
+class LayerPanel;
 class MoveTool;
 class SelectTool;
 class WandTool;
@@ -52,7 +54,10 @@ public:
     QString documentPath() const { return m_path; }
 
     CanvasView *canvasView() const { return m_view; }
-    easel::TileStore *layer() const { return m_layer.get(); }
+    // The active layer's pixels (null while a group is active).
+    easel::TileStore *layer() const;
+    const easel::LayerStack &layers() const { return *m_stack; }
+    LayerPanel *layerPanel() const { return m_layerPanel; }
     BrushTool *brushTool() const { return m_brush; }
     EyedropperTool *eyedropperTool() const { return m_eyedropper; }
     ColorPanel *colorPanel() const { return m_color; }
@@ -67,7 +72,7 @@ public:
     // Pasted or lifted pixels not yet committed.
     bool isFloating() const { return m_floating.isActive(); }
     QPoint floatingPosition() const { return m_floating.position(); }
-    QSize canvasSize() const { return m_size; }
+    QSize canvasSize() const { return m_stack ? m_stack->size() : QSize(); }
 
     const GridSettings &gridSettings() const { return m_grid; }
     void setGridSettings(const GridSettings &grid);
@@ -99,6 +104,27 @@ public slots:
     // Color to Alpha in the selection, or everywhere without one.
     void colorToAlpha(const QColor &color, double threshold);
 
+    // Layers. Each is one undo step and returns false if it couldn't be done.
+    // New layers go above the active one and become active.
+    bool addLayer();
+    // Puts the active layer into a new group.
+    bool addGroup();
+    bool duplicateLayer();
+    bool deleteLayer();
+    // Merges the active layer into the one below, or a group into one layer.
+    bool mergeDown();
+    bool flattenImage();
+    bool raiseLayer();
+    bool lowerLayer();
+    void setActiveLayer(int id);
+    void setLayerVisible(int id, bool visible);
+    void setLayerLocked(int id, bool locked);
+    void renameLayer(int id, const QString &name);
+    void setLayerOpacity(int id, double opacity);
+    void setLayerBlend(int id, easel::BlendMode mode);
+    // The whole stack in a new order, bottom to top: (layer id, parent id).
+    bool rearrangeLayers(const QList<QPair<int, int>> &order);
+
 signals:
     void documentOpened(const QString &path, bool ok);
     void documentSaved(const QString &path, bool ok);
@@ -126,7 +152,24 @@ private:
     void clearSelected(const QString &label);
     void storeClip(const QImage &content, const easel::Selection &shape, const QPoint &origin);
     QRect visibleCanvasRect() const;
-    QRect canvasRect() const { return QRect(QPoint(0, 0), m_size); }
+    QRect canvasRect() const { return QRect(QPoint(0, 0), canvasSize()); }
+    // The active layer's pixels if they can be changed now; otherwise null,
+    // with the reason in the status bar.
+    easel::TileStore *editStore();
+    // What copy, the wand and export read: the active layer, or the whole
+    // picture while a group is active.
+    const easel::TileStore *readStore() const;
+    // Points the tools at the active layer.
+    void bindTools();
+    // Before a change to the stack: false if it can't happen now.
+    bool beginLayerChange();
+    void finishLayerChange(const QString &label, easel::LayerStack before);
+    // After the stack changed: recomposite, rebind, refresh the panel.
+    void layersChanged();
+    bool moveLayerBy(int step);
+    void flushOpacityRedraw();
+    // Brings the composite up to date with the layers.
+    void syncComposite() const;
     void updateSelectionActions();
     void showNewDialog();
     void showOpenDialog();
@@ -136,8 +179,8 @@ private:
     void showColorToAlphaDialog();
     void wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers);
     void cropCanvasTo(const QRect &rect, const QString &label);
-    // After undo / redo, which may have changed the canvas size.
-    void afterHistoryMove(const QSize &sizeBefore);
+    // After undo / redo. stackChanged: layers or the canvas size may differ.
+    void afterHistoryMove(const QSize &sizeBefore, bool stackChanged);
     // Points the view and tools at the document again after a size change.
     void applyCanvasSize();
     QString askSavePath();
@@ -145,8 +188,7 @@ private:
     bool maybeSave();
     void finishSave(const QString &path, quint64 stateId, quint64 docGeneration, const QString &error);
     void showAbout();
-    void setDocument(std::unique_ptr<easel::TileStore> layer, const QSize &size,
-                     const QString &name, const QString &historyLabel,
+    void setDocument(std::unique_ptr<easel::LayerStack> stack, const QString &name, const QString &historyLabel,
                      easel::TilePyramid pyramid = {}, const QString &path = {});
     void finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc);
     void historyChanged();
@@ -154,8 +196,7 @@ private:
     void updateTitle();
     void updateMemoryLabel();
 
-    std::unique_ptr<easel::TileStore> m_layer;
-    QSize m_size;
+    std::unique_ptr<easel::LayerStack> m_stack;
     QString m_name;
     QString m_lastDir;
     QString m_path;           // the .easel file this document saves to; empty if none
@@ -168,7 +209,7 @@ private:
     BrushTool *m_brush = nullptr;
     EyedropperTool *m_eyedropper = nullptr;
     BrushOptionsBar *m_options = nullptr;
-    QListWidget *m_layers = nullptr;
+    LayerPanel *m_layerPanel = nullptr;
     QListWidget *m_historyList = nullptr;
     ColorPanel *m_color = nullptr;
     SelectTool *m_rectSelect = nullptr;
@@ -182,6 +223,12 @@ private:
     easel::FloatingContent m_floating;
     easel::Selection m_selectionBeforeFloat; // restored on cancel
     QString m_floatLabel;                    // history label when committed
+    int m_floatLayer = 0;                    // the layer the pixels float over
+    // Dragging the opacity slider is one undo step: the layer and history
+    // state the last opacity entry belongs to.
+    int m_opacityLayer = 0;
+    quint64 m_opacityState = 0;
+    mutable bool m_opacityRedrawPending = false;
     QPoint m_floatStart;                     // where the floating pixels began
     QPointF m_dragStart;
     QPoint m_dragOrigin;

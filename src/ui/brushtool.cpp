@@ -52,8 +52,9 @@ BrushTool::BrushTool(QObject *parent)
     m_smudge.spacing = 0.08;
 }
 
-void BrushTool::setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history)
+void BrushTool::setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history, int layerId)
 {
+    m_layerId = layerId;
     if (m_stroke.isActive())
         m_stroke.end(); // the old document is going away; nothing to record
     m_store = store;
@@ -124,8 +125,10 @@ void BrushTool::saveSettings(QSettings &s) const
 
 void BrushTool::press(const easel::StrokeSample &s)
 {
-    if (!m_store)
+    if (!m_store) {
+        emit blocked();
         return;
+    }
     m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s,
                    m_selection ? *m_selection : easel::Selection());
 }
@@ -147,7 +150,7 @@ void BrushTool::release(const easel::StrokeSample &s)
     const QString label = m_mode == BrushMode::Erase    ? tr("Eraser")
                           : m_mode == BrushMode::Smudge ? tr("Smudge")
                                                         : tr("Brush");
-    m_history->push(label, std::move(before));
+    m_history->push(label, m_layerId, std::move(before));
     emit strokeCommitted();
 }
 

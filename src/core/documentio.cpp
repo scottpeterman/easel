@@ -38,13 +38,14 @@ LoadedDocument failed(const QString &error)
     return doc;
 }
 
-void finish(LoadedDocument &doc, std::unique_ptr<TileStore> store, const QSize &size)
+void finish(LoadedDocument &doc, std::unique_ptr<LayerStack> stack)
 {
-    store->takeDirty(); // a fresh document has nothing to redraw incrementally
-    doc.size = size;
-    doc.pyramid.setBase(store.get(), size);
+    stack->recompositeAll();
+    stack->compositeStore()->takeDirty(); // a fresh document has nothing to redraw incrementally
+    doc.size = stack->size();
+    doc.pyramid.setBase(stack->compositeStore(), doc.size);
     doc.pyramid.buildAll();
-    doc.store = std::move(store);
+    doc.stack = std::move(stack);
 }
 
 QJsonArray pixelToJson(const Pixel &p)
@@ -192,13 +193,13 @@ LoadedDocument loadImageDocument(const QString &path)
     if (image.isNull())
         return failed(reader.errorString());
 
-    auto store = std::make_unique<TileStore>(QColor(0, 0, 0, 0));
-    store->writeImage(image);
+    TileStore store(QColor(0, 0, 0, 0));
+    store.writeImage(image);
     const QSize size = image.size();
     image = QImage(); // free the decoded copy before building the pyramid
 
     LoadedDocument doc;
-    finish(doc, std::move(store), size);
+    finish(doc, std::make_unique<LayerStack>(LayerStack::single(std::move(store), size, QObject::tr("Background"))));
     return doc;
 }
 
@@ -225,17 +226,54 @@ LoadedDocument loadNativeDocument(const QString &path)
     if (size.isEmpty() || layers.isEmpty())
         return failed(QObject::tr("The document is damaged (no canvas or layers)."));
 
-    // One layer until M2; later layers are ignored by this version.
-    const QJsonObject layer = layers.at(0).toObject();
-    auto store = std::make_unique<TileStore>(QColor(0, 0, 0, 0));
-    store->setDefaultPixel(pixelFromJson(layer.value(QLatin1String("default")).toArray()));
+    // Version 1 files list one layer with no id; it reads as a raster layer.
+    QList<Layer> list;
+    QHash<int, int> byEntry; // place in the manifest -> place in list
+    for (int i = 0; i < layers.size(); ++i) {
+        const QJsonObject o = layers.at(i).toObject();
+        Layer l;
+        l.id = o.value(QLatin1String("id")).toInt(i + 1);
+        l.name = o.value(QLatin1String("name")).toString();
+        l.group = o.value(QLatin1String("type")).toString() == QLatin1String("group");
+        l.parent = o.value(QLatin1String("parent")).toInt(0);
+        l.visible = o.value(QLatin1String("visible")).toBool(true);
+        l.locked = o.value(QLatin1String("locked")).toBool(false);
+        l.opacity = std::clamp(o.value(QLatin1String("opacity")).toDouble(1.0), 0.0, 1.0);
+        l.blend = blendModeFromKey(o.value(QLatin1String("blend")).toString());
+        l.store.setDefaultPixel(pixelFromJson(o.value(QLatin1String("default")).toArray()));
+        if (l.id <= 0)
+            return failed(QObject::tr("The document is damaged (layer %1).").arg(i));
+        byEntry.insert(i, int(list.size()));
+        list.append(std::move(l));
+    }
+    // A parent must be a group in the file, and no group may contain itself.
+    for (Layer &l : list) {
+        const auto parent = std::find_if(list.cbegin(), list.cend(),
+                                         [&](const Layer &p) { return p.id == l.parent && p.group; });
+        if (l.parent != 0 && (parent == list.cend() || l.parent == l.id))
+            l.parent = 0;
+    }
+    for (Layer &l : list) {
+        int hops = 0;
+        for (int p = l.parent; p != 0 && hops <= list.size(); ++hops) {
+            const auto it = std::find_if(list.cbegin(), list.cend(), [&](const Layer &x) { return x.id == p; });
+            p = it == list.cend() ? 0 : it->parent;
+        }
+        if (hops > list.size())
+            l.parent = 0;
+    }
 
     // Qt's zip reader looks entries up by name with a linear scan, so walk the
     // entry list once rather than asking for each chunk by name.
-    static const QRegularExpression chunkName(QStringLiteral("^layers/0/chunks/(-?\\d+)_(-?\\d+)$"));
+    static const QRegularExpression chunkName(QStringLiteral("^layers/(\\d+)/chunks/(-?\\d+)_(-?\\d+)$"));
     for (const QZipReader::FileInfo &info : zip.fileInfoList()) {
-        if (!chunkName.match(info.filePath).hasMatch())
+        const QRegularExpressionMatch match = chunkName.match(info.filePath);
+        if (!match.hasMatch())
             continue;
+        const auto entry = byEntry.constFind(match.captured(1).toInt());
+        if (entry == byEntry.cend() || list.at(entry.value()).group)
+            continue;
+        TileStore &store = list[entry.value()].store;
         const QByteArray data = zip.fileData(info.filePath);
         const char *p = data.constData();
         constexpr qsizetype header = 12, record = 8 + kTileBytes;
@@ -247,20 +285,31 @@ LoadedDocument loadNativeDocument(const QString &path)
             return failed(QObject::tr("The document is damaged (%1).").arg(info.filePath));
         for (quint32 i = 0; i < count; ++i) {
             const char *r = p + header + qsizetype(i) * record;
-            store->setTile({getLE<qint32>(r), getLE<qint32>(r + 4)}, tileFromData(r + 8));
+            store.setTile({getLE<qint32>(r), getLE<qint32>(r + 4)}, tileFromData(r + 8));
         }
     }
     if (zip.status() != QZipReader::NoError)
         return failed(QObject::tr("The file can't be read completely."));
 
+    auto stack = std::make_unique<LayerStack>();
+    stack->setSize(size);
+    stack->replaceLayers(std::move(list), m.value(QLatin1String("activeLayer")).toInt(0));
+
     LoadedDocument doc;
     doc.native = true;
-    finish(doc, std::move(store), size);
+    finish(doc, std::move(stack));
     return doc;
 }
 
 QString saveNativeDocument(const QString &path, TileStore store, const QSize &size)
 {
+    return saveNativeDocument(path, LayerStack::single(std::move(store), size, QObject::tr("Background")));
+}
+
+QString saveNativeDocument(const QString &path, LayerStack stack)
+{
+    const QSize size = stack.size();
+    const TileStore &store = stack.composite();
     // Write next to the target, then rename over it: the old file is replaced
     // in one step, or not at all. (QSaveFile would do this, but QZipWriter
     // closes its device when done, which QSaveFile doesn't allow.)
@@ -278,14 +327,25 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
         zip.addFile(QStringLiteral("mimetype"), QByteArray(kMimeType));
         zip.setCompressionPolicy(QZipWriter::AutoCompress);
 
-        QJsonObject layer{
-            {QLatin1String("name"), QLatin1String("Background")},
-            {QLatin1String("visible"), true},
-            {QLatin1String("opacity"), 1.0},
-            {QLatin1String("blend"), QLatin1String("normal")},
-            {QLatin1String("default"), pixelToJson(store.defaultPixel())},
-            {QLatin1String("chunks"), QLatin1String("layers/0/chunks/")},
-        };
+        QJsonArray layerList;
+        for (int i = 0; i < stack.count(); ++i) {
+            const Layer &l = stack.layers().at(i);
+            QJsonObject o{
+                {QLatin1String("id"), l.id},
+                {QLatin1String("name"), l.name},
+                {QLatin1String("type"), QLatin1String(l.group ? "group" : "raster")},
+                {QLatin1String("parent"), l.parent},
+                {QLatin1String("visible"), l.visible},
+                {QLatin1String("locked"), l.locked},
+                {QLatin1String("opacity"), l.opacity},
+                {QLatin1String("blend"), blendModeKey(l.blend)},
+            };
+            if (!l.group) {
+                o.insert(QLatin1String("default"), pixelToJson(l.store.defaultPixel()));
+                o.insert(QLatin1String("chunks"), QStringLiteral("layers/%1/chunks/").arg(i));
+            }
+            layerList.append(o);
+        }
         const QJsonObject manifest{
             {QLatin1String("format"), QLatin1String("easel")},
             {QLatin1String("version"), FormatVersion},
@@ -294,7 +354,8 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
             {QLatin1String("tileSize"), TileStore::TileSize},
             {QLatin1String("chunkTiles"), ChunkTiles},
             {QLatin1String("pixelFormat"), QLatin1String(kPixelFormat)},
-            {QLatin1String("layers"), QJsonArray{layer}},
+            {QLatin1String("activeLayer"), stack.activeId()},
+            {QLatin1String("layers"), layerList},
         };
         zip.addFile(QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson());
 
@@ -315,24 +376,29 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
 
         // Group tiles into chunks: few zip entries (fast to open), each small.
         const QRect canvas(QPoint(0, 0), size);
-        QHash<TileCoord, QList<TileCoord>> chunks;
-        for (const TileCoord c : store.tileCoords()) {
-            if (!TileStore::tileRect(c).intersects(canvas))
-                continue; // nothing outside the canvas is ever shown
-            chunks[{floorDiv(c.x, ChunkTiles), floorDiv(c.y, ChunkTiles)}].append(c);
-        }
-        for (auto it = chunks.cbegin(); it != chunks.cend(); ++it) {
-            QByteArray data;
-            data.reserve(12 + it.value().size() * (8 + kTileBytes));
-            data.append(kChunkMagic, 4);
-            putLE<quint32>(data, kChunkVersion);
-            putLE<quint32>(data, quint32(it.value().size()));
-            for (const TileCoord c : it.value()) {
-                putLE<qint32>(data, c.x);
-                putLE<qint32>(data, c.y);
-                appendTileData(data, store.tile(c));
+        for (int i = 0; i < stack.count(); ++i) {
+            const Layer &l = stack.layers().at(i);
+            if (l.group)
+                continue;
+            QHash<TileCoord, QList<TileCoord>> chunks;
+            for (const TileCoord c : l.store.tileCoords()) {
+                if (!TileStore::tileRect(c).intersects(canvas))
+                    continue; // nothing outside the canvas is ever shown
+                chunks[{floorDiv(c.x, ChunkTiles), floorDiv(c.y, ChunkTiles)}].append(c);
             }
-            zip.addFile(chunkEntry(0, it.key().x, it.key().y), data);
+            for (auto it = chunks.cbegin(); it != chunks.cend(); ++it) {
+                QByteArray data;
+                data.reserve(12 + it.value().size() * (8 + kTileBytes));
+                data.append(kChunkMagic, 4);
+                putLE<quint32>(data, kChunkVersion);
+                putLE<quint32>(data, quint32(it.value().size()));
+                for (const TileCoord c : it.value()) {
+                    putLE<qint32>(data, c.x);
+                    putLE<qint32>(data, c.y);
+                    appendTileData(data, l.store.tile(c));
+                }
+                zip.addFile(chunkEntry(i, it.key().x, it.key().y), data);
+            }
         }
         zip.close();
         if (zip.status() != QZipWriter::NoError)

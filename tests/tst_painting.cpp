@@ -246,8 +246,8 @@ private slots:
 
         const LoadedDocument doc = loadDocument(path);
         QVERIFY(doc.ok());
-        QCOMPARE(pixelToColor(doc.store->pixel(100, 100)), QColor(Qt::red));
-        QCOMPARE(pixelToColor(doc.store->pixel(300, 100)), QColor(Qt::white));
+        QCOMPARE(pixelToColor(doc.stack->layers().first().store.pixel(100, 100)), QColor(Qt::red));
+        QCOMPARE(pixelToColor(doc.stack->layers().first().store.pixel(300, 100)), QColor(Qt::white));
     }
 
     void spaceDragPansInsteadOfPainting()
