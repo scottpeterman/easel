@@ -41,7 +41,8 @@ public:
     // it (crop); invalid when the size didn't change.
     void push(const QString &label, QHash<TileCoord, QImage> tiles, const QSize &sizeBefore = {});
     // The same, for one layer of a stack.
-    void push(const QString &label, int layerId, QHash<TileCoord, QImage> tiles);
+    // mask: the tiles are the layer's mask, not its pixels.
+    void push(const QString &label, int layerId, QHash<TileCoord, QImage> tiles, bool mask = false);
     // Records a change to the stack that has already been made. before: a
     // snapshot() taken before it; now: the stack as it is.
     void pushState(const QString &label, LayerStack before, const LayerStack &now);
@@ -83,6 +84,7 @@ private:
     struct Entry {
         QString label;
         int layerId = 0; // the layer the tiles belong to
+        bool mask = false; // ... its mask, not its pixels
         QHash<TileCoord, QImage> tiles;
         std::shared_ptr<LayerStack> state; // the other state's layers, for stack changes
         QSize size; // the other state's canvas size, if it differs

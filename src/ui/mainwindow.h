@@ -26,6 +26,7 @@ class LayerPanel;
 class MoveTool;
 class SelectTool;
 class WandTool;
+class LassoTool;
 class QToolBar;
 class ColorPanel;
 class QAction;
@@ -66,6 +67,9 @@ public:
     SelectTool *ellipseSelectTool() const { return m_ellipseSelect; }
     MoveTool *moveTool() const { return m_move; }
     WandTool *wandTool() const { return m_wand; }
+    LassoTool *lassoTool() const { return m_lasso; }
+    // Painting and editing go to the active layer's mask, not its pixels.
+    bool isEditingMask() const { return m_editMask; }
 
     const easeletch::Selection &selection() const { return m_selection; }
     void setSelection(const easeletch::Selection &selection);
@@ -101,6 +105,8 @@ public slots:
     void invertSelection();
     // Grows (pixels > 0) or shrinks (< 0) the selection.
     void growSelection(int pixels);
+    // Fades the selection's edge over about that many pixels.
+    void featherSelection(int pixels);
     // Color to Alpha in the selection, or everywhere without one.
     void colorToAlpha(const QColor &color, double threshold);
 
@@ -124,6 +130,13 @@ public slots:
     void setLayerBlend(int id, easeletch::BlendMode mode);
     // The whole stack in a new order, bottom to top: (layer id, parent id).
     bool rearrangeLayers(const QList<QPair<int, int>> &order);
+    // Masks. A new mask shows everything, or only the selection if there is
+    // one, and becomes what the brush paints on.
+    bool addLayerMask();
+    bool deleteLayerMask();
+    bool applyLayerMask();
+    void setLayerMaskEnabled(int id, bool enabled);
+    void setEditingMask(bool on);
 
 signals:
     void documentOpened(const QString &path, bool ok);
@@ -178,6 +191,7 @@ private:
     void showGridDialog();
     void showColorToAlphaDialog();
     void wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers);
+    void lassoFinished(const QPolygonF &path, Qt::KeyboardModifiers modifiers);
     void cropCanvasTo(const QRect &rect, const QString &label);
     // After undo / redo. stackChanged: layers or the canvas size may differ.
     void afterHistoryMove(const QSize &sizeBefore, bool stackChanged);
@@ -216,6 +230,9 @@ private:
     SelectTool *m_ellipseSelect = nullptr;
     MoveTool *m_move = nullptr;
     WandTool *m_wand = nullptr;
+    LassoTool *m_lasso = nullptr;
+    bool m_editMask = false;
+    bool m_floatMask = false; // the floating pixels are on a mask
     QToolBar *m_wandOptions = nullptr;
     double m_colorToAlphaThreshold = 0.04;
 
@@ -258,6 +275,10 @@ private:
     QAction *m_deselectAct = nullptr;
     QAction *m_cropAct = nullptr;
     QAction *m_wandAct = nullptr;
+    QAction *m_lassoAct = nullptr;
+    QAction *m_featherAct = nullptr;
+    QAction *m_editMaskAct = nullptr;
+    int m_featherPixels = 4;
     QAction *m_invertAct = nullptr;
     QAction *m_growAct = nullptr;
     QAction *m_shrinkAct = nullptr;

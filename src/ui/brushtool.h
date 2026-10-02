@@ -21,7 +21,9 @@ public:
 
     // store: the layer strokes go to; null when there's nothing to paint on
     // (a locked or hidden layer, a group). layerId names it in the history.
-    void setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId = 0);
+    // mask: store is the layer's mask, not its pixels.
+    void setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId = 0,
+                     bool mask = false);
     // Strokes stay inside this selection when it isn't empty.
     void setSelection(const easeletch::Selection *selection) { m_selection = selection; }
 
@@ -59,6 +61,7 @@ private:
     QRect m_bounds;
     easeletch::History *m_history = nullptr;
     int m_layerId = 0;
+    bool m_layerMask = false;
 
     easeletch::BrushMode m_mode = easeletch::BrushMode::Paint;
     easeletch::BrushSettings m_paint;

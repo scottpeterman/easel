@@ -86,6 +86,15 @@ MainWindow::MainWindow(QWidget *parent)
     m_move = new MoveTool(this);
     m_wand = new WandTool(this);
     connect(m_wand, &WandTool::clicked, this, &MainWindow::wandClicked);
+    m_lasso = new LassoTool(this);
+    connect(m_lasso, &LassoTool::finished, this, &MainWindow::lassoFinished);
+    // While it's being drawn, the path shows in place of the selection outline.
+    connect(m_lasso, &LassoTool::pathChanged, this, [this](const QPolygonF &path) {
+        if (path.isEmpty())
+            m_view->setSelectionOutline(m_selection.outlines());
+        else
+            m_view->setSelectionOutline({path});
+    });
     m_brush->setSelection(&m_selection);
     connect(m_brush, &BrushTool::blocked, this, [this] { editStore(); });
     // Painting changes a layer; the canvas draws the composite of them all.
@@ -204,6 +213,16 @@ void MainWindow::createActions()
             growSelection(-n);
         }
     });
+    m_featherAct = edit->addAction(tr("&Feather Selection..."), this, [this] {
+        bool ok = false;
+        const int n = QInputDialog::getInt(this, tr("Feather Selection"), tr("Fade the edge over (pixels):"),
+                                           m_featherPixels, 1, 250, 1, &ok);
+        if (ok) {
+            m_featherPixels = n;
+            featherSelection(n);
+        }
+    });
+    m_featherAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F6));
     edit->addSeparator();
 
     QMenu *image = menuBar()->addMenu(tr("&Image"));
@@ -230,6 +249,14 @@ void MainWindow::createActions()
     auto *mergeAct = layer->addAction(tr("&Merge Down"), this, &MainWindow::mergeDown);
     mergeAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
     layer->addAction(tr("&Flatten Image"), this, &MainWindow::flattenImage);
+    layer->addSeparator();
+    layer->addAction(tr("Add Layer Mas&k"), this, &MainWindow::addLayerMask);
+    m_editMaskAct = layer->addAction(tr("&Paint on Mask"));
+    m_editMaskAct->setCheckable(true);
+    m_editMaskAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
+    connect(m_editMaskAct, &QAction::triggered, this, &MainWindow::setEditingMask);
+    layer->addAction(tr("&Apply Layer Mask"), this, &MainWindow::applyLayerMask);
+    layer->addAction(tr("&Remove Layer Mask"), this, &MainWindow::deleteLayerMask);
 
     auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
     smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
@@ -241,13 +268,20 @@ void MainWindow::createActions()
     auto *commitAct = new QAction(tr("Commit"), m_view);
     commitAct->setShortcuts({QKeySequence(Qt::Key_Return), QKeySequence(Qt::Key_Enter)});
     commitAct->setShortcutContext(Qt::WidgetShortcut);
-    connect(commitAct, &QAction::triggered, this, &MainWindow::commitFloating);
+    connect(commitAct, &QAction::triggered, this, [this] {
+        if (m_lasso->isOpen())
+            m_lasso->finish();
+        else
+            commitFloating();
+    });
     m_view->addAction(commitAct);
     auto *escapeAct = new QAction(tr("Cancel"), m_view);
     escapeAct->setShortcut(QKeySequence(Qt::Key_Escape));
     escapeAct->setShortcutContext(Qt::WidgetShortcut);
     connect(escapeAct, &QAction::triggered, this, [this] {
-        if (m_floating.isActive())
+        if (m_lasso->isOpen())
+            m_lasso->cancel();
+        else if (m_floating.isActive())
             cancelFloating();
         else
             deselect();
@@ -348,6 +382,10 @@ void MainWindow::createToolBars()
     m_ellipseSelectAct = tools->addAction(tr("Ellipse"), this, [this] { activateTool(m_ellipseSelect, false); });
     m_ellipseSelectAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M));
     m_ellipseSelectAct->setToolTip(tr("Ellipse select (Shift+M). Shift for a circle."));
+    m_lassoAct = tools->addAction(tr("Lasso"), this, [this] { activateTool(m_lasso, false); });
+    m_lassoAct->setShortcut(QKeySequence(Qt::Key_L));
+    m_lassoAct->setToolTip(tr("Lasso (L): drag around something, or click point by point and press Enter. "
+                              "Shift adds, Ctrl subtracts."));
     m_wandAct = tools->addAction(tr("Wand"), this, [this] { activateTool(m_wand, false); });
     m_wandAct->setShortcut(QKeySequence(Qt::Key_W));
     m_wandAct->setToolTip(tr("Magic wand (W): select by colour. Shift adds, Ctrl subtracts."));
@@ -356,7 +394,7 @@ void MainWindow::createToolBars()
     m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
                              "Enter drops, Escape cancels."));
     for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
-                       m_ellipseSelectAct, m_wandAct, m_moveAct}) {
+                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_moveAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
@@ -448,6 +486,11 @@ void MainWindow::createDocks()
     connect(m_layerPanel, &LayerPanel::lowerRequested, this, &MainWindow::lowerLayer);
     connect(m_layerPanel, &LayerPanel::mergeRequested, this, &MainWindow::mergeDown);
     connect(m_layerPanel, &LayerPanel::deleteRequested, this, &MainWindow::deleteLayer);
+    connect(m_layerPanel, &LayerPanel::maskEnabledChanged, this, &MainWindow::setLayerMaskEnabled);
+    connect(m_layerPanel, &LayerPanel::addMaskRequested, this, &MainWindow::addLayerMask);
+    connect(m_layerPanel, &LayerPanel::deleteMaskRequested, this, &MainWindow::deleteLayerMask);
+    connect(m_layerPanel, &LayerPanel::applyMaskRequested, this, &MainWindow::applyLayerMask);
+    connect(m_layerPanel, &LayerPanel::editMaskToggled, this, &MainWindow::setEditingMask);
 
     m_color = new ColorPanel;
     auto *colorDock = new QDockWidget(tr("Color"), this);
@@ -497,6 +540,7 @@ void MainWindow::createStatusBar()
     statusBar()->addPermanentWidget(m_zoomLabel);
 
     connect(m_view, &CanvasView::viewChanged, this, [this](double zoom, double rotation) {
+        m_lasso->setCloseDistance(8.0 / qMax(zoom, 0.01)); // eight screen pixels
         m_zoomLabel->setText(tr("%1%").arg(zoom * 100.0, 0, 'f', zoom < 0.1 ? 1 : 0));
         m_rotationLabel->setText(tr("%1°").arg(rotation, 0, 'f', 0));
     });
@@ -529,6 +573,8 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
 {
     if (tool != m_move)
         commitFloating();
+    if (tool != m_lasso)
+        m_lasso->cancel();
     m_view->setTool(tool);
     m_options->setEnabled(brushOptions);
     m_options->setVisible(tool != m_wand);
@@ -537,6 +583,7 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
                    : tool == m_ellipseSelect ? m_ellipseSelectAct
                    : tool == m_move          ? m_moveAct
                    : tool == m_wand          ? m_wandAct
+                   : tool == m_lasso         ? m_lassoAct
                    : tool == m_eyedropper    ? m_eyedropperAct
                                              : nullptr;
     if (act)
@@ -557,12 +604,13 @@ void MainWindow::updateSelectionActions()
 {
     const bool any = !m_selection.isEmpty();
     for (QAction *a : {m_cutAct, m_copyAct, m_deleteAct, m_deselectAct, m_cropAct, m_exportSelectionAct,
-                       m_growAct, m_shrinkAct})
+                       m_growAct, m_shrinkAct, m_featherAct})
         if (a)
             a->setEnabled(any);
     if (m_selectionLabel) {
         const QRect b = m_selection.bounds();
-        m_selectionLabel->setText(any ? tr("Selection %1 × %2 at %3, %4")
+        m_selectionLabel->setText(any ? tr(m_selection.isSoft() ? "Feathered selection %1 × %2 at %3, %4"
+                                                               : "Selection %1 × %2 at %3, %4")
                                             .arg(b.width()).arg(b.height()).arg(b.x()).arg(b.y())
                                       : QString());
     }
@@ -629,6 +677,7 @@ void MainWindow::clearSelected(const QString &label)
     const easeletch::Selection target = m_selection;
     QHash<easeletch::TileCoord, QImage> before;
     int layerId = m_stack->activeId();
+    bool onMask = m_editMask;
     if (m_floating.isActive()) {
         // Floating pixels just go away: for a paste that's no change at all,
         // for a lift it's the original area cleared.
@@ -636,9 +685,10 @@ void MainWindow::clearSelected(const QString &label)
         const easeletch::Selection origin = m_selectionBeforeFloat;
         m_floating.cancel();
         layerId = m_floatLayer;
+        onMask = m_floatMask;
         easeletch::Layer *l = m_stack->layer(layerId);
         if (lifted && l)
-            before = easeletch::clearSelection(l->store, origin, canvasRect());
+            before = easeletch::clearSelection(onMask ? l->mask : l->store, origin, canvasRect());
     } else {
         easeletch::TileStore *store = editStore();
         if (!store)
@@ -646,7 +696,7 @@ void MainWindow::clearSelected(const QString &label)
         before = easeletch::clearSelection(*store, target, canvasRect());
     }
     if (!before.isEmpty())
-        m_history.push(label, layerId, std::move(before));
+        m_history.push(label, layerId, std::move(before), onMask);
     setSelection(target);
     m_view->refresh();
     historyChanged();
@@ -694,6 +744,7 @@ void MainWindow::paste()
         return;
     m_selectionBeforeFloat = m_selection;
     m_floatLayer = m_stack->activeId();
+    m_floatMask = m_editMask;
     m_floating.paste(store, content, pos, shape, canvasRect());
     m_floatLabel = tr("Paste");
     m_floatStart = QPoint(INT_MIN, INT_MIN); // always a change
@@ -713,6 +764,7 @@ bool MainWindow::liftForMove()
     const easeletch::Selection sel = m_selection.isEmpty() ? easeletch::Selection::rect(canvasRect()) : m_selection;
     m_selectionBeforeFloat = m_selection;
     m_floatLayer = m_stack->activeId();
+    m_floatMask = m_editMask;
     m_floating.lift(store, sel, canvasRect());
     if (!m_floating.isActive())
         return false;
@@ -758,7 +810,7 @@ void MainWindow::commitFloating()
         return;
     }
     const easeletch::Selection placed = m_floating.selection();
-    m_history.push(m_floatLabel, m_floatLayer, m_floating.commit());
+    m_history.push(m_floatLabel, m_floatLayer, m_floating.commit(), m_floatMask);
     m_moveDragging = false;
     setSelection(placed);
     m_view->refresh();
@@ -828,9 +880,12 @@ void MainWindow::cropCanvasTo(const QRect &rect, const QString &label)
     if (rect.isEmpty() || rect == canvasRect())
         return;
     easeletch::LayerStack before = m_stack->snapshot();
-    for (const easeletch::Layer &l : m_stack->layers())
+    for (const easeletch::Layer &l : m_stack->layers()) {
         if (!l.group)
             easeletch::cropStore(m_stack->layer(l.id)->store, rect);
+        if (l.hasMask)
+            easeletch::cropStore(m_stack->layer(l.id)->mask, rect);
+    }
     m_stack->setSize(rect.size());
     m_history.pushState(label, std::move(before), *m_stack);
     setSelection({});
@@ -854,6 +909,31 @@ void MainWindow::growSelection(int pixels)
     const easeletch::Selection s = m_selection.grown(pixels, canvasRect());
     QApplication::restoreOverrideCursor();
     setSelection(s);
+}
+
+void MainWindow::featherSelection(int pixels)
+{
+    if (m_selection.isEmpty() || pixels <= 0)
+        return;
+    commitFloating();
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    const easeletch::Selection s = m_selection.feathered(pixels, canvasRect());
+    QApplication::restoreOverrideCursor();
+    setSelection(s);
+}
+
+void MainWindow::lassoFinished(const QPolygonF &path, Qt::KeyboardModifiers modifiers)
+{
+    if (!m_stack)
+        return;
+    commitFloating();
+    const easeletch::Selection drawn = easeletch::Selection::polygon(path, canvasRect());
+    if (modifiers & Qt::ShiftModifier)
+        setSelection(m_selection.united(drawn));
+    else if (modifiers & Qt::ControlModifier)
+        setSelection(m_selection.subtracted(drawn));
+    else
+        setSelection(drawn);
 }
 
 void MainWindow::wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers)
@@ -888,7 +968,7 @@ void MainWindow::colorToAlpha(const QColor &color, double threshold)
     QApplication::restoreOverrideCursor();
     if (before.isEmpty())
         return;
-    m_history.push(tr("Color to Alpha"), m_stack->activeId(), std::move(before));
+    m_history.push(tr("Color to Alpha"), m_stack->activeId(), std::move(before), m_editMask);
     m_view->refresh();
     historyChanged();
 }
@@ -996,8 +1076,9 @@ easeletch::TileStore *MainWindow::editStore()
     easeletch::Layer *l = m_stack ? m_stack->active() : nullptr;
     if (!l)
         return nullptr;
+    const bool onMask = m_editMask && l->hasMask;
     QString why;
-    if (l->group)
+    if (l->group && !onMask)
         why = tr("A group has no pixels of its own: pick a layer inside it");
     else if (m_stack->isLocked(l->id))
         why = tr("\"%1\" is locked").arg(l->name);
@@ -1007,11 +1088,14 @@ easeletch::TileStore *MainWindow::editStore()
         statusBar()->showMessage(why, 4000);
         return nullptr;
     }
-    return &l->store;
+    return onMask ? &l->mask : &l->store;
 }
 
 const easeletch::TileStore *MainWindow::readStore() const
 {
+    easeletch::Layer *l = m_stack->active();
+    if (l && m_editMask && l->hasMask)
+        return &l->mask;
     if (const easeletch::TileStore *store = layer())
         return store;
     syncComposite();
@@ -1022,8 +1106,15 @@ void MainWindow::bindTools()
 {
     const QRect bounds = canvasRect();
     easeletch::Layer *l = m_stack->active();
-    const bool paintable = l && !l->group && !m_stack->isLocked(l->id) && m_stack->isShown(l->id);
-    m_brush->setDocument(paintable ? &l->store : nullptr, bounds, &m_history, l ? l->id : 0);
+    m_editMask = m_editMask && l && l->hasMask;
+    const bool paintable = l && (m_editMask || !l->group) && !m_stack->isLocked(l->id) && m_stack->isShown(l->id);
+    m_brush->setDocument(paintable ? (m_editMask ? &l->mask : &l->store) : nullptr, bounds, &m_history,
+                         l ? l->id : 0, m_editMask);
+    m_layerPanel->setEditingMask(m_editMask);
+    if (m_editMaskAct) {
+        m_editMaskAct->setEnabled(l && l->hasMask);
+        m_editMaskAct->setChecked(m_editMask);
+    }
     // The eyedropper picks what's on screen.
     m_eyedropper->setDocument(m_stack->compositeStore(), bounds);
 }
@@ -1058,6 +1149,7 @@ void MainWindow::setActiveLayer(int id)
         return;
     commitFloating();
     m_stack->setActive(id);
+    m_editMask = false; // a newly picked layer is painted on, not its mask
     bindTools();
     m_layerPanel->syncActive();
 }
@@ -1152,6 +1244,89 @@ bool MainWindow::flattenImage()
     QApplication::restoreOverrideCursor();
     finishLayerChange(tr("Flatten Image"), std::move(before));
     return true;
+}
+
+bool MainWindow::addLayerMask()
+{
+    if (!beginLayerChange() || !m_stack->active() || m_stack->active()->hasMask)
+        return false;
+    easeletch::LayerStack before = m_stack->snapshot();
+    const int id = m_stack->activeId();
+    m_stack->addMask(id);
+    if (!m_selection.isEmpty()) {
+        // Show only what's selected: black everywhere, the selection in white
+        // (grey where it's feathered).
+        easeletch::Layer *l = m_stack->layer(id);
+        l->mask = easeletch::TileStore(Qt::black);
+        const QRect area = m_selection.bounds() & canvasRect();
+        constexpr int N = easeletch::TileStore::TileSize;
+        for (const easeletch::TileCoord c : easeletch::TileStore::tilesIntersecting(area)) {
+            const QRect tr = easeletch::TileStore::tileRect(c);
+            const QRect part = tr & area;
+            auto *d = reinterpret_cast<easeletch::Pixel *>(l->mask.writableTile(c).bits());
+            for (int y = part.top(); y <= part.bottom(); ++y) {
+                for (int x = part.left(); x <= part.right(); ++x) {
+                    const float k = m_selection.coverage(x, y);
+                    d[(y - tr.top()) * N + (x - tr.left())] = easeletch::makePixel(k, k, k, 1.0f);
+                }
+            }
+        }
+    }
+    m_editMask = true;
+    finishLayerChange(tr("Add Layer Mask"), std::move(before));
+    statusBar()->showMessage(tr("Painting on the mask: black hides, white shows. Ctrl+M goes back to the layer."),
+                             6000);
+    return true;
+}
+
+bool MainWindow::deleteLayerMask()
+{
+    if (!beginLayerChange() || !m_stack->active() || !m_stack->active()->hasMask)
+        return false;
+    easeletch::LayerStack before = m_stack->snapshot();
+    m_stack->removeMask(m_stack->activeId());
+    finishLayerChange(tr("Remove Layer Mask"), std::move(before));
+    return true;
+}
+
+bool MainWindow::applyLayerMask()
+{
+    if (!beginLayerChange() || !m_stack->active() || !m_stack->active()->hasMask)
+        return false;
+    if (m_stack->active()->group) {
+        statusBar()->showMessage(tr("A group's mask can't be applied: merge the group first"), 4000);
+        return false;
+    }
+    easeletch::LayerStack before = m_stack->snapshot();
+    m_stack->applyMask(m_stack->activeId());
+    finishLayerChange(tr("Apply Layer Mask"), std::move(before));
+    return true;
+}
+
+void MainWindow::setLayerMaskEnabled(int id, bool enabled)
+{
+    if (!beginLayerChange() || !m_stack->layer(id) || !m_stack->layer(id)->hasMask
+        || m_stack->layer(id)->maskEnabled == enabled)
+        return;
+    easeletch::LayerStack before = m_stack->snapshot();
+    m_stack->layer(id)->maskEnabled = enabled;
+    finishLayerChange(enabled ? tr("Enable Layer Mask") : tr("Disable Layer Mask"), std::move(before));
+}
+
+void MainWindow::setEditingMask(bool on)
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    commitFloating();
+    const easeletch::Layer *l = m_stack->active();
+    m_editMask = on && l && l->hasMask;
+    bindTools();
+    if (m_editMask)
+        statusBar()->showMessage(tr("Painting on the mask: black hides, white shows"), 4000);
+    else if (on)
+        statusBar()->showMessage(tr("This layer has no mask: add one first"), 4000);
+    else
+        statusBar()->clearMessage();
 }
 
 bool MainWindow::moveLayerBy(int step)
@@ -1454,6 +1629,7 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
 {
     // Detach everything from the old document before it's freed.
     m_floating.cancel();
+    m_lasso->cancel();
     m_moveDragging = false;
     setSelection({});
     m_brush->setDocument(nullptr, {}, nullptr);
@@ -1468,6 +1644,7 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
     m_stack = std::move(stack);
     m_name = name;
     m_opacityLayer = 0;
+    m_editMask = false;
     m_view->setDocument(m_stack->compositeStore(), canvasSize(), std::move(pyramid));
     bindTools();
     m_layerPanel->setStack(m_stack.get());

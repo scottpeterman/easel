@@ -362,6 +362,131 @@ private slots:
             QVERIFY(near(at(d.stack.composite(), p.x(), p.y()), at(before, p.x(), p.y())));
     }
 
+    // --- Masks ---
+
+    void maskHidesWithoutErasing()
+    {
+        Doc d;
+        QVERIFY(d.stack.addMask(d.blue));
+        QVERIFY(!d.stack.addMask(d.blue)); // one per layer
+        d.stack.recompositeAll();
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::blue)); // a new mask shows everything
+
+        // Black over the right half of the blue square.
+        d.stack.layer(d.blue)->mask.fillRect(QRect(60, 40, 20, 40), Qt::black);
+        d.stack.updateComposite();
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::white)); // background through it
+        QCOMPARE(at(d.stack.composite(), 55, 55), QColor(Qt::blue));
+        QCOMPARE(at(d.stack.composite(), 50, 45), QColor(Qt::blue));
+        QCOMPARE(at(d.stack.layer(d.blue)->store, 70, 70), QColor(Qt::blue)); // still there
+
+        // Half-opaque black hides half.
+        d.stack.layer(d.blue)->mask.fillRect(QRect(40, 60, 20, 20), makePixel(0.5f, 0.5f, 0.5f, 1.0f));
+        d.stack.updateComposite();
+        QVERIFY(near(at(d.stack.composite(), 45, 70), QColor(188, 188, 255)));
+
+        // Off, the layer is whole again; removed, too.
+        d.stack.layer(d.blue)->maskEnabled = false;
+        d.stack.recompositeAll();
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::blue));
+        d.stack.layer(d.blue)->maskEnabled = true;
+        d.stack.recompositeAll();
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::white));
+        QVERIFY(d.stack.removeMask(d.blue));
+        d.stack.recompositeAll();
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::blue));
+    }
+
+    void maskValueIsLightness()
+    {
+        QCOMPARE(maskValue(pixelFromColor(Qt::white)), 1.0f);
+        QCOMPARE(maskValue(pixelFromColor(Qt::black)), 0.0f);
+        QCOMPARE(maskValue(makePixel(0, 0, 0, 0)), 0.0f); // erased: hidden
+        QVERIFY(qAbs(maskValue(makePixel(0.5f, 0.5f, 0.5f, 1.0f)) - 0.5f) < 1e-3f);
+    }
+
+    void maskWorksOverAFlatBackgroundAndOnGroups()
+    {
+        Doc d;
+        // The background is a default pixel with no tiles; a mask tile must
+        // still cut a hole in it.
+        d.stack.addMask(d.bg);
+        d.stack.layer(d.bg)->mask.fillRect(QRect(150, 150, 20, 20), Qt::black);
+        d.stack.updateComposite();
+        QCOMPARE(at(d.stack.composite(), 160, 160).alpha(), 0);
+        QCOMPARE(at(d.stack.composite(), 140, 140), QColor(Qt::white));
+        d.stack.removeMask(d.bg);
+
+        const int g = d.stack.insert(group(QStringLiteral("G")), 0, 1);
+        d.stack.move(d.red, g, 0);
+        d.stack.move(d.blue, g, 1);
+        d.stack.addMask(g);
+        d.stack.layer(g)->mask.fillRect(QRect(0, 0, 50, 200), Qt::black); // hide the group's left part
+        d.stack.recompositeAll();
+        QCOMPARE(at(d.stack.composite(), 30, 30), QColor(Qt::white));
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::blue));
+        QVERIFY(!d.stack.applyMask(g)); // groups have no pixels to erase
+    }
+
+    void applyMaskErasesWhatItHides()
+    {
+        Doc d;
+        d.stack.addMask(d.blue);
+        d.stack.layer(d.blue)->mask.fillRect(QRect(60, 40, 20, 40), Qt::black);
+        d.stack.recompositeAll();
+        const TileStore before = d.stack.composite();
+        QVERIFY(d.stack.applyMask(d.blue));
+        d.stack.recompositeAll();
+        QVERIFY(!d.stack.layer(d.blue)->hasMask);
+        QCOMPARE(at(d.stack.layer(d.blue)->store, 70, 70).alpha(), 0);
+        QCOMPARE(at(d.stack.layer(d.blue)->store, 50, 50), QColor(Qt::blue));
+        for (const QPoint p : {QPoint(5, 5), QPoint(30, 30), QPoint(50, 50), QPoint(70, 70), QPoint(150, 150)})
+            QVERIFY(near(at(d.stack.composite(), p.x(), p.y()), at(before, p.x(), p.y())));
+    }
+
+    void mergingMaskedLayersLooksTheSame()
+    {
+        Doc d;
+        d.stack.addMask(d.blue);
+        d.stack.layer(d.blue)->mask.fillRect(QRect(60, 40, 20, 40), Qt::black);
+        d.stack.addMask(d.red);
+        d.stack.layer(d.red)->mask.fillRect(QRect(20, 20, 10, 40), Qt::black);
+        d.stack.recompositeAll();
+        const TileStore before = d.stack.composite();
+        const QList<QPoint> probes{QPoint(5, 5), QPoint(25, 30), QPoint(35, 30), QPoint(50, 50), QPoint(70, 70)};
+        QVERIFY(d.stack.mergeDown(d.blue));
+        d.stack.recompositeAll();
+        QVERIFY(!d.stack.layer(d.red)->hasMask);
+        for (const QPoint p : probes)
+            QVERIFY(near(at(d.stack.composite(), p.x(), p.y()), at(before, p.x(), p.y())));
+        // A duplicate carries its mask.
+        d.stack.addMask(d.red);
+        const int copy = d.stack.duplicate(d.red);
+        QVERIFY(d.stack.layer(copy)->hasMask);
+    }
+
+    void maskStrokesUndoOnTheMask()
+    {
+        Doc d;
+        History h;
+        d.stack.addMask(d.blue);
+        const TileStore pre = d.stack.layer(d.blue)->mask;
+        d.stack.layer(d.blue)->mask.fillRect(QRect(60, 40, 20, 40), Qt::black);
+        QHash<TileCoord, QImage> tiles;
+        for (const TileCoord c : d.stack.layer(d.blue)->mask.tileCoords())
+            tiles.insert(c, pre.tile(c));
+        h.push(QStringLiteral("Brush"), d.blue, std::move(tiles), true);
+        const QColor pixelsBefore = at(d.stack.layer(d.blue)->store, 70, 70);
+
+        QVERIFY(!h.undo(d.stack));
+        QCOMPARE(d.stack.layer(d.blue)->mask.tileCount(), 0);
+        QCOMPARE(at(d.stack.layer(d.blue)->store, 70, 70), pixelsBefore); // the pixels were never involved
+        h.redo(d.stack);
+        QCOMPARE(at(d.stack.layer(d.blue)->mask, 70, 70), QColor(Qt::black));
+        d.stack.updateComposite();
+        QCOMPARE(at(d.stack.composite(), 70, 70), QColor(Qt::white));
+    }
+
     // --- Undo ---
 
     void copiesLeaveTheOriginalInPlace()

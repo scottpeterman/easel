@@ -57,9 +57,12 @@ QImage extractSelection(const TileStore &store, const Selection &selection)
         for (int y = part.top(); y <= part.bottom(); ++y) {
             auto *dst = reinterpret_cast<Pixel *>(out.scanLine(y - b.top()));
             for (int x = part.left(); x <= part.right(); ++x) {
-                if (!selection.contains(x, y))
+                const float k = selection.coverage(x, y);
+                if (k <= 0.0f)
                     continue;
-                dst[x - b.left()] = src ? src[(y - tr.top()) * N + (x - tr.left())] : def;
+                const Pixel &p = src ? src[(y - tr.top()) * N + (x - tr.left())] : def;
+                dst[x - b.left()] = k >= 1.0f ? p : makePixel(float(p.r) * k, float(p.g) * k, float(p.b) * k,
+                                                              float(p.a) * k);
             }
         }
     }
@@ -79,10 +82,18 @@ QHash<TileCoord, QImage> clearSelection(TileStore &store, const Selection &selec
         const QRect tr = TileStore::tileRect(c);
         const QRect part = tr & area;
         Pixel *d = tilePixels(store.writableTile(c));
-        for (int y = part.top(); y <= part.bottom(); ++y)
-            for (int x = part.left(); x <= part.right(); ++x)
-                if (selection.contains(x, y))
-                    d[(y - tr.top()) * N + (x - tr.left())] = clear;
+        for (int y = part.top(); y <= part.bottom(); ++y) {
+            for (int x = part.left(); x <= part.right(); ++x) {
+                const float k = selection.coverage(x, y);
+                if (k <= 0.0f)
+                    continue;
+                Pixel &p = d[(y - tr.top()) * N + (x - tr.left())];
+                // A partly selected pixel loses that part of itself.
+                const float keep = 1.0f - k;
+                p = k >= 1.0f ? clear : makePixel(float(p.r) * keep, float(p.g) * keep, float(p.b) * keep,
+                                                  float(p.a) * keep);
+            }
+        }
     }
     return before;
 }
@@ -275,12 +286,14 @@ QHash<TileCoord, QImage> colorToAlpha(TileStore &store, const Selection &selecti
         bool changed = false;
         for (int y = part.top(); y <= part.bottom(); ++y) {
             for (int x = part.left(); x <= part.right(); ++x) {
-                if (!selection.isEmpty() && !selection.contains(x, y))
+                const float cover = selection.isEmpty() ? 1.0f : selection.coverage(x, y);
+                if (cover <= 0.0f)
                     continue;
                 Pixel &p = d[(y - tr.top()) * N + (x - tr.left())];
                 const float a0 = float(p.a);
                 if (a0 <= 0.0f)
                     continue;
+                const Pixel was = p;
                 // Straight sRGB, 0..1.
                 const float s[3] = {enc(float(p.r) / a0), enc(float(p.g) / a0), enc(float(p.b) / a0)};
                 float alpha = 0.0f;
@@ -300,6 +313,12 @@ QHash<TileCoord, QImage> colorToAlpha(TileStore &store, const Selection &selecti
                 const float kept = alpha <= t ? 0.0f : (alpha - t) / (1.0f - t);
                 const float a = kept * a0;
                 p = makePixel(dec(out[0]) * a, dec(out[1]) * a, dec(out[2]) * a, a);
+                if (cover < 1.0f) {
+                    // Partly selected: that much of the way to the result.
+                    const float keep = 1.0f - cover;
+                    p = makePixel(float(p.r) * cover + float(was.r) * keep, float(p.g) * cover + float(was.g) * keep,
+                                  float(p.b) * cover + float(was.b) * keep, float(p.a) * cover + float(was.a) * keep);
+                }
                 changed = true;
             }
         }

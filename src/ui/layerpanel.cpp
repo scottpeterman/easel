@@ -24,6 +24,7 @@ namespace {
 constexpr int kIdRole = Qt::UserRole;
 constexpr int kNameColumn = 0;
 constexpr int kLockColumn = 1;
+constexpr int kMaskColumn = 2;
 
 } // namespace
 
@@ -92,11 +93,12 @@ LayerPanel::LayerPanel(QWidget *parent)
     column->addLayout(top);
 
     m_tree = new LayerTree(this);
-    m_tree->setColumnCount(2);
-    m_tree->setHeaderLabels({tr("Layer"), tr("Lock")});
+    m_tree->setColumnCount(3);
+    m_tree->setHeaderLabels({tr("Layer"), tr("Lock"), tr("Mask")});
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(kNameColumn, QHeaderView::Stretch);
     m_tree->header()->setSectionResizeMode(kLockColumn, QHeaderView::ResizeToContents);
+    m_tree->header()->setSectionResizeMode(kMaskColumn, QHeaderView::ResizeToContents);
     m_tree->header()->setSectionsMovable(false);
     m_tree->setSelectionMode(QAbstractItemView::SingleSelection);
     m_tree->setDragDropMode(QAbstractItemView::InternalMove);
@@ -104,7 +106,7 @@ LayerPanel::LayerPanel(QWidget *parent)
     m_tree->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
     column->addWidget(m_tree, 1);
 
-    auto *buttons = new QHBoxLayout;
+    QHBoxLayout *buttons = new QHBoxLayout;
     buttons->setSpacing(2);
     const auto button = [&](const QString &text, const QString &tip, void (LayerPanel::*signal)()) {
         auto *b = new QToolButton(this);
@@ -125,6 +127,27 @@ LayerPanel::LayerPanel(QWidget *parent)
                      &LayerPanel::mergeRequested);
     buttons->addStretch(1);
     m_delete = button(tr("Delete"), tr("Delete this layer"), &LayerPanel::deleteRequested);
+    column->addLayout(buttons);
+
+    // Mask commands for the active layer.
+    buttons = new QHBoxLayout;
+    buttons->setSpacing(2);
+    m_addMask = button(tr("Add Mask"),
+                       tr("Give this layer a mask. With a selection, the mask shows only what's selected."),
+                       &LayerPanel::addMaskRequested);
+    m_editMask = new QToolButton(this);
+    m_editMask->setText(tr("Paint Mask"));
+    m_editMask->setToolTip(tr("Paint on the mask instead of the layer (Ctrl+M): black hides, white shows"));
+    m_editMask->setCheckable(true);
+    m_editMask->setAutoRaise(true);
+    m_editMask->setFocusPolicy(Qt::NoFocus);
+    connect(m_editMask, &QToolButton::clicked, this, &LayerPanel::editMaskToggled);
+    buttons->addWidget(m_editMask);
+    m_applyMask = button(tr("Apply"), tr("Erase what the mask hides and remove the mask"),
+                         &LayerPanel::applyMaskRequested);
+    buttons->addStretch(1);
+    m_deleteMask = button(tr("Remove"), tr("Remove the mask; the layer shows whole again"),
+                          &LayerPanel::deleteMaskRequested);
     column->addLayout(buttons);
 
     connect(m_tree, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item) {
@@ -176,6 +199,10 @@ void LayerPanel::addItems(QTreeWidgetItem *parentItem, int parentId)
         item->setCheckState(kLockColumn, l->locked ? Qt::Checked : Qt::Unchecked);
         item->setToolTip(kNameColumn, tr("Tick to show. Double-click to rename. Drag to reorder."));
         item->setToolTip(kLockColumn, tr("Locked layers can't be painted on or edited"));
+        if (l->hasMask) {
+            item->setCheckState(kMaskColumn, l->maskEnabled ? Qt::Checked : Qt::Unchecked);
+            item->setToolTip(kMaskColumn, tr("This layer has a mask. Untick to see the layer without it."));
+        }
         Qt::ItemFlags flags = Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsUserCheckable
                               | Qt::ItemIsEditable | Qt::ItemIsDragEnabled;
         if (l->group) {
@@ -227,6 +254,12 @@ void LayerPanel::syncActive()
     refreshControls();
 }
 
+void LayerPanel::setEditingMask(bool on)
+{
+    m_editingMask = on;
+    refreshControls();
+}
+
 void LayerPanel::refreshControls()
 {
     m_updating = true;
@@ -245,6 +278,11 @@ void LayerPanel::refreshControls()
         m_merge->setEnabled(active->group || below);
         m_delete->setEnabled(m_stack->count() > 1);
     }
+    m_addMask->setEnabled(active && !active->hasMask);
+    m_editMask->setEnabled(active && active->hasMask);
+    m_editMask->setChecked(active && active->hasMask && m_editingMask);
+    m_applyMask->setEnabled(active && active->hasMask && !active->group);
+    m_deleteMask->setEnabled(active && active->hasMask);
     m_updating = false;
 }
 
@@ -259,6 +297,13 @@ void LayerPanel::itemChanged(QTreeWidgetItem *item, int column)
         const bool locked = item->checkState(kLockColumn) == Qt::Checked;
         if (locked != l->locked)
             QMetaObject::invokeMethod(this, [this, id = l->id, locked] { emit lockChanged(id, locked); },
+                                      Qt::QueuedConnection);
+        return;
+    }
+    if (column == kMaskColumn) {
+        const bool enabled = item->checkState(kMaskColumn) == Qt::Checked;
+        if (l->hasMask && enabled != l->maskEnabled)
+            QMetaObject::invokeMethod(this, [this, id = l->id, enabled] { emit maskEnabledChanged(id, enabled); },
                                       Qt::QueuedConnection);
         return;
     }

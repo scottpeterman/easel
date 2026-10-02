@@ -1,5 +1,8 @@
 #include "selection.h"
 
+#include <QPainter>
+#include <QPainterPath>
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -54,6 +57,49 @@ Selection Selection::mask(const QRect &bounds, const QImage &mask)
     return s;
 }
 
+Selection Selection::polygon(const QPolygonF &path, const QRect &clip)
+{
+    const QRect area = path.boundingRect().toAlignedRect() & clip;
+    if (path.size() < 3 || area.isEmpty())
+        return {};
+    QImage m(area.size(), QImage::Format_Grayscale8);
+    m.fill(0);
+    QPainterPath shape;
+    shape.addPolygon(path);
+    shape.closeSubpath();
+    shape.setFillRule(Qt::WindingFill);
+    QPainter p(&m);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.translate(-area.topLeft());
+    p.fillPath(shape, Qt::white);
+    p.end();
+    // The unantialiased fill only ever writes 0 or 255.
+    return mask(area, m);
+}
+
+float Selection::coverage(int x, int y) const
+{
+    if (m_shape == Shape::Mask) {
+        if (!m_bounds.contains(x, y))
+            return 0.0f;
+        return float(m_mask.constScanLine(y - m_bounds.top())[x - m_bounds.left()]) / 255.0f;
+    }
+    return contains(x, y) ? 1.0f : 0.0f;
+}
+
+bool Selection::isSoft() const
+{
+    if (m_shape != Shape::Mask)
+        return false;
+    for (int y = 0; y < m_mask.height(); ++y) {
+        const uchar *row = m_mask.constScanLine(y);
+        for (int x = 0; x < m_mask.width(); ++x)
+            if (row[x] != 0 && row[x] != 255)
+                return true;
+    }
+    return false;
+}
+
 bool Selection::contains(int x, int y) const
 {
     if (isEmpty() || !m_bounds.contains(x, y))
@@ -106,7 +152,7 @@ QList<QPolygonF> Selection::outlines() const
     const int w = m_bounds.width(), h = m_bounds.height();
     const int ox = m_bounds.left(), oy = m_bounds.top();
     const auto at = [&](int x, int y) {
-        return x >= 0 && y >= 0 && x < w && y < h && m_mask.constScanLine(y)[x] != 0;
+        return x >= 0 && y >= 0 && x < w && y < h && m_mask.constScanLine(y)[x] >= 128;
     };
     // Horizontal edges: between rows y-1 and y, merged into runs.
     for (int y = 0; y <= h; ++y) {
@@ -165,8 +211,10 @@ Selection combine(const Selection &a, const Selection &b, const QRect &area, Op 
     for (int y = 0; y < m.height(); ++y) {
         uchar *row = m.scanLine(y);
         for (int x = 0; x < m.width(); ++x)
-            row[x] = op(a.contains(area.left() + x, area.top() + y), b.contains(area.left() + x, area.top() + y))
-                         ? 255 : 0;
+            row[x] = uchar(std::clamp(int(std::lround(op(a.coverage(area.left() + x, area.top() + y),
+                                                         b.coverage(area.left() + x, area.top() + y))
+                                                      * 255.0f)),
+                                      0, 255));
     }
     return Selection::mask(area, m);
 }
@@ -179,14 +227,14 @@ Selection Selection::united(const Selection &other) const
         return *this;
     if (isEmpty())
         return other;
-    return combine(*this, other, m_bounds | other.m_bounds, [](bool a, bool b) { return a || b; });
+    return combine(*this, other, m_bounds | other.m_bounds, [](float a, float b) { return std::max(a, b); });
 }
 
 Selection Selection::subtracted(const Selection &other) const
 {
     if (isEmpty() || other.isEmpty() || !m_bounds.intersects(other.m_bounds))
         return *this;
-    return combine(*this, other, m_bounds, [](bool a, bool b) { return a && !b; });
+    return combine(*this, other, m_bounds, [](float a, float b) { return a * (1.0f - b); });
 }
 
 Selection Selection::inverted(const QRect &canvas) const
@@ -208,7 +256,7 @@ Selection Selection::grown(int radius, const QRect &clip) const
     std::vector<uchar> cur(size_t(w) * h), next(cur.size());
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x)
-            cur[size_t(y) * w + x] = contains(area.left() + x, area.top() + y) ? 1 : 0;
+            cur[size_t(y) * w + x] = coverage(area.left() + x, area.top() + y) >= 0.5f ? 1 : 0;
 
     // Alternating 4- and 8-neighbour passes grow an octagon, close to a circle.
     for (int pass = 0; pass < r; ++pass) {
@@ -242,6 +290,56 @@ Selection Selection::grown(int radius, const QRect &clip) const
         uchar *row = m.scanLine(y);
         for (int x = 0; x < w; ++x)
             row[x] = cur[size_t(y) * w + x] ? 255 : 0;
+    }
+    return mask(area, m);
+}
+
+Selection Selection::feathered(int radius, const QRect &clip) const
+{
+    if (isEmpty() || radius <= 0)
+        return *this;
+    // Three box blurs come close to a Gaussian. Room for the fade on every
+    // side, as far as clip allows; beyond clip counts as unselected.
+    const int reach = radius * 2;
+    const QRect area = m_bounds.adjusted(-reach, -reach, reach, reach) & clip;
+    if (area.isEmpty())
+        return {};
+    const int w = area.width(), h = area.height();
+    std::vector<float> cur(size_t(w) * h);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            cur[size_t(y) * w + x] = coverage(area.left() + x, area.top() + y);
+
+    const int half = std::max(1, int(std::lround(radius * 0.6)));
+    const float norm = 1.0f / float(2 * half + 1);
+    std::vector<float> line(size_t(std::max(w, h)));
+    const auto blurLine = [&](float *data, int count, int stride) {
+        for (int i = 0; i < count; ++i)
+            line[size_t(i)] = data[i * stride];
+        float sum = 0.0f;
+        for (int i = 0; i <= half && i < count; ++i)
+            sum += line[size_t(i)];
+        for (int i = 0; i < count; ++i) {
+            data[i * stride] = sum * norm;
+            const int out = i - half, in = i + half + 1;
+            if (out >= 0)
+                sum -= line[size_t(out)];
+            if (in < count)
+                sum += line[size_t(in)];
+        }
+    };
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int y = 0; y < h; ++y)
+            blurLine(cur.data() + size_t(y) * w, w, 1);
+        for (int x = 0; x < w; ++x)
+            blurLine(cur.data() + x, h, w);
+    }
+
+    QImage m(w, h, QImage::Format_Grayscale8);
+    for (int y = 0; y < h; ++y) {
+        uchar *row = m.scanLine(y);
+        for (int x = 0; x < w; ++x)
+            row[x] = uchar(std::clamp(int(std::lround(cur[size_t(y) * w + x] * 255.0f)), 0, 255));
     }
     return mask(area, m);
 }

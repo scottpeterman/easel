@@ -52,9 +52,11 @@ BrushTool::BrushTool(QObject *parent)
     m_smudge.spacing = 0.08;
 }
 
-void BrushTool::setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId)
+void BrushTool::setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId,
+                            bool mask)
 {
     m_layerId = layerId;
+    m_layerMask = mask;
     if (m_stroke.isActive())
         m_stroke.end(); // the old document is going away; nothing to record
     m_store = store;
@@ -150,7 +152,7 @@ void BrushTool::release(const easeletch::StrokeSample &s)
     const QString label = m_mode == BrushMode::Erase    ? tr("Eraser")
                           : m_mode == BrushMode::Smudge ? tr("Smudge")
                                                         : tr("Brush");
-    m_history->push(label, m_layerId, std::move(before));
+    m_history->push(label, m_layerId, std::move(before), m_layerMask);
     emit strokeCommitted();
 }
 

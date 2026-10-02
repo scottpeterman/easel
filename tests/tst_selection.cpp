@@ -1,3 +1,4 @@
+#include "brush.h"
 #include "history.h"
 #include "regionops.h"
 
@@ -281,6 +282,110 @@ private slots:
         h.redo(s, &size);
         QCOMPARE(size, crop.size());
         QCOMPARE(at(s, 10, 5), QColor(Qt::red));
+    }
+
+    // --- Lasso and feathering ---
+
+    void polygonSelectsPixelsWhoseCentresAreInside()
+    {
+        // A right triangle with its corner at (10, 10) and legs of 20.
+        const QPolygonF tri{QPointF(10, 10), QPointF(30, 10), QPointF(10, 30)};
+        const Selection s = Selection::polygon(tri, kCanvas);
+        QCOMPARE(s.shape(), Selection::Shape::Mask);
+        QVERIFY(s.contains(11, 11));
+        QVERIFY(s.contains(25, 12));
+        QVERIFY(!s.contains(28, 28)); // beyond the long side
+        QVERIFY(!s.contains(9, 15));
+        QVERIFY(!s.isSoft());
+        QVERIFY(s.bounds().width() <= 20 && s.bounds().height() <= 20);
+        // About half the square.
+        int n = 0;
+        for (int y = 10; y < 30; ++y)
+            for (int x = 10; x < 30; ++x)
+                n += s.contains(x, y);
+        QVERIFY(qAbs(n - 200) <= 22);
+
+        // Clipped to the canvas; too few points or nothing inside is no selection.
+        const Selection edge = Selection::polygon(
+            QPolygonF{QPointF(-50, -50), QPointF(50, -50), QPointF(50, 50), QPointF(-50, 50)}, kCanvas);
+        QCOMPARE(edge.bounds(), QRect(0, 0, 50, 50));
+        QVERIFY(Selection::polygon(QPolygonF{QPointF(1, 1), QPointF(5, 5)}, kCanvas).isEmpty());
+        QVERIFY(Selection::polygon(tri.translated(1000, 1000), kCanvas).isEmpty());
+    }
+
+    void featherFadesTheEdge()
+    {
+        const Selection hard = Selection::rect(QRect(100, 100, 100, 100));
+        QCOMPARE(hard.coverage(150, 150), 1.0f);
+        QCOMPARE(hard.coverage(99, 150), 0.0f);
+        const Selection soft = hard.feathered(10, kCanvas);
+        QVERIFY(soft.isSoft());
+        QVERIFY(soft.coverage(150, 150) > 0.99f);        // the middle is untouched
+        QVERIFY(qAbs(soft.coverage(100, 150) - 0.5f) < 0.06f); // the old edge is half in
+        QVERIFY(qAbs(soft.coverage(99, 150) - 0.5f) < 0.06f);
+        QVERIFY(soft.coverage(108, 150) > soft.coverage(102, 150)); // rising inward
+        QVERIFY(soft.coverage(92, 150) > 0.0f && soft.coverage(92, 150) < 0.3f);
+        QCOMPARE(soft.coverage(70, 150), 0.0f);          // and it ends
+        QVERIFY(soft.bounds().contains(hard.bounds()));
+        // Marching ants follow the half-covered line, where the edge was.
+        qreal left = 1e9;
+        for (const QPolygonF &line : soft.outlines())
+            for (const QPointF &p : line)
+                left = qMin(left, p.x());
+        QVERIFY(qAbs(left - 100.0) <= 1.0);
+
+        // Against the canvas edge the fade stops at the edge.
+        const Selection corner = Selection::rect(QRect(0, 0, 50, 50)).feathered(10, kCanvas);
+        QCOMPARE(corner.bounds().topLeft(), QPoint(0, 0));
+        // Grow and shrink take the half-covered edge.
+        QCOMPARE(soft.grown(1, kCanvas).bounds(), QRect(99, 99, 102, 102));
+    }
+
+    void softSelectionsCombineByCoverage()
+    {
+        const Selection soft = Selection::rect(QRect(100, 100, 100, 100)).feathered(10, kCanvas);
+        const float edge = soft.coverage(100, 150);
+        const Selection inv = soft.inverted(kCanvas);
+        QVERIFY(qAbs(inv.coverage(100, 150) - (1.0f - edge)) < 0.01f);
+        QCOMPARE(inv.coverage(150, 150) < 0.01f, true);
+        QCOMPARE(inv.coverage(10, 10), 1.0f);
+        const Selection both = soft.united(Selection::rect(QRect(90, 140, 20, 20)));
+        QCOMPARE(both.coverage(100, 150), 1.0f);
+        QVERIFY(qAbs(both.coverage(100, 120) - soft.coverage(100, 120)) < 0.01f);
+    }
+
+    void editsThroughAFeatheredSelectionArePartial()
+    {
+        TileStore s(Qt::white);
+        s.fillRect(kCanvas, Qt::red);
+        const Selection soft = Selection::rect(QRect(100, 100, 100, 100)).feathered(10, kCanvas);
+        const float k = soft.coverage(100, 150);
+        QVERIFY(k > 0.4f && k < 0.6f);
+
+        // Copy takes that share of the pixel; delete leaves the rest.
+        const QImage cut = extractSelection(s, soft);
+        const auto *row = reinterpret_cast<const Pixel *>(cut.constScanLine(150 - soft.bounds().top()));
+        QVERIFY(qAbs(float(row[100 - soft.bounds().left()].a) - k) < 0.01f);
+        QVERIFY(qAbs(float(row[150 - soft.bounds().left()].a) - 1.0f) < 0.01f);
+        clearSelection(s, soft, kCanvas);
+        QVERIFY(qAbs(float(s.pixel(100, 150).a) - (1.0f - k)) < 0.01f);
+        QVERIFY(float(s.pixel(150, 150).a) < 0.01f);
+        QCOMPARE(float(s.pixel(50, 150).a), 1.0f);
+
+        // A stroke through it fades the same way.
+        TileStore p(Qt::white);
+        BrushSettings b;
+        b.size = 40;
+        b.hardness = 1.0;
+        BrushStroke stroke;
+        stroke.begin(&p, kCanvas, b, Qt::black, BrushMode::Paint, {{60, 150}, 1.0}, soft);
+        for (int x = 70; x <= 160; x += 5)
+            stroke.moveTo({{double(x), 150}, 1.0});
+        stroke.end();
+        QCOMPARE(at(p, 75, 150), QColor(Qt::white));  // outside the fade: untouched
+        QCOMPARE(at(p, 150, 150), QColor(Qt::black)); // fully inside
+        const float mid = float(p.pixel(100, 150).r);  // linear: white x (1 - k)
+        QVERIFY(qAbs(mid - (1.0f - k)) < 0.02f);
     }
 };
 

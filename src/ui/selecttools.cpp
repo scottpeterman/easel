@@ -2,6 +2,7 @@
 
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLineF>
 
 #include <algorithm>
 #include <cmath>
@@ -100,4 +101,68 @@ bool MoveTool::keyPress(QKeyEvent *event)
 void WandTool::press(const easeletch::StrokeSample &s)
 {
     emit clicked(s.pos, QGuiApplication::keyboardModifiers());
+}
+
+void LassoTool::press(const easeletch::StrokeSample &s)
+{
+    m_ignore = false;
+    m_dragged = false;
+    m_pressPos = s.pos;
+    if (m_path.isEmpty()) {
+        m_fresh = true;
+        m_path << s.pos;
+    } else {
+        m_fresh = false;
+        if (m_path.size() >= 3 && QLineF(s.pos, m_path.first()).length() <= m_closeDistance) {
+            m_ignore = true;
+            finish();
+            return;
+        }
+        m_path << s.pos;
+    }
+    emit pathChanged(m_path);
+}
+
+void LassoTool::move(const easeletch::StrokeSample &s)
+{
+    if (m_ignore || m_path.isEmpty())
+        return;
+    if (QLineF(s.pos, m_pressPos).length() > m_closeDistance)
+        m_dragged = true;
+    if (QLineF(s.pos, m_path.last()).length() < 0.25)
+        return;
+    m_path << s.pos;
+    emit pathChanged(m_path);
+}
+
+void LassoTool::release(const easeletch::StrokeSample &s)
+{
+    Q_UNUSED(s);
+    if (m_ignore) {
+        m_ignore = false;
+        return;
+    }
+    // One drag from start to end is a freehand lasso: letting go closes it.
+    // A click only places a point.
+    if (m_fresh && m_dragged)
+        finish();
+}
+
+void LassoTool::finish()
+{
+    if (m_path.size() < 3) {
+        cancel();
+        return;
+    }
+    const QPolygonF path = m_path;
+    m_path.clear();
+    emit finished(path, QGuiApplication::keyboardModifiers());
+}
+
+void LassoTool::cancel()
+{
+    if (m_path.isEmpty())
+        return;
+    m_path.clear();
+    emit pathChanged(m_path);
 }

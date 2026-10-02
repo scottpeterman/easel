@@ -64,9 +64,9 @@ Pixel pixelFromJson(const QJsonArray &a)
 constexpr char kChunkMagic[4] = {'E', 'Z', 'C', 'H'};
 constexpr quint32 kChunkVersion = 1;
 
-QString chunkEntry(int layer, int cx, int cy)
+QString chunkEntry(int layer, const char *kind, int cx, int cy)
 {
-    return QStringLiteral("layers/%1/chunks/%2_%3").arg(layer).arg(cx).arg(cy);
+    return QStringLiteral("layers/%1/%2/%3_%4").arg(layer).arg(QLatin1String(kind)).arg(cx).arg(cy);
 }
 
 int floorDiv(int a, int b)
@@ -248,6 +248,12 @@ LoadedDocument loadNativeDocument(const QString &path)
         l.opacity = std::clamp(o.value(QLatin1String("opacity")).toDouble(1.0), 0.0, 1.0);
         l.blend = blendModeFromKey(o.value(QLatin1String("blend")).toString());
         l.store.setDefaultPixel(pixelFromJson(o.value(QLatin1String("default")).toArray()));
+        if (const QJsonValue mask = o.value(QLatin1String("mask")); mask.isObject()) {
+            const QJsonObject mo = mask.toObject();
+            l.hasMask = true;
+            l.maskEnabled = mo.value(QLatin1String("enabled")).toBool(true);
+            l.mask.setDefaultPixel(pixelFromJson(mo.value(QLatin1String("default")).toArray()));
+        }
         if (l.id <= 0)
             return failed(QObject::tr("The document is damaged (layer %1).").arg(i));
         byEntry.insert(i, int(list.size()));
@@ -272,15 +278,19 @@ LoadedDocument loadNativeDocument(const QString &path)
 
     // Qt's zip reader looks entries up by name with a linear scan, so walk the
     // entry list once rather than asking for each chunk by name.
-    static const QRegularExpression chunkName(QStringLiteral("^layers/(\\d+)/chunks/(-?\\d+)_(-?\\d+)$"));
+    static const QRegularExpression chunkName(QStringLiteral("^layers/(\\d+)/(chunks|mask)/(-?\\d+)_(-?\\d+)$"));
     for (const QZipReader::FileInfo &info : zip.fileInfoList()) {
         const QRegularExpressionMatch match = chunkName.match(info.filePath);
         if (!match.hasMatch())
             continue;
         const auto entry = byEntry.constFind(match.captured(1).toInt());
-        if (entry == byEntry.cend() || list.at(entry.value()).group)
+        if (entry == byEntry.cend())
             continue;
-        TileStore &store = list[entry.value()].store;
+        Layer &layer = list[entry.value()];
+        const bool isMask = match.captured(2) == QLatin1String("mask");
+        if (isMask ? !layer.hasMask : layer.group)
+            continue;
+        TileStore &store = isMask ? layer.mask : layer.store;
         const QByteArray data = zip.fileData(info.filePath);
         const char *p = data.constData();
         constexpr qsizetype header = 12, record = 8 + kTileBytes;
@@ -351,6 +361,12 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
                 o.insert(QLatin1String("default"), pixelToJson(l.store.defaultPixel()));
                 o.insert(QLatin1String("chunks"), QStringLiteral("layers/%1/chunks/").arg(i));
             }
+            if (l.hasMask) {
+                o.insert(QLatin1String("mask"),
+                         QJsonObject{{QLatin1String("enabled"), l.maskEnabled},
+                                     {QLatin1String("default"), pixelToJson(l.mask.defaultPixel())},
+                                     {QLatin1String("chunks"), QStringLiteral("layers/%1/mask/").arg(i)}});
+            }
             layerList.append(o);
         }
         const QJsonObject manifest{
@@ -383,12 +399,9 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
 
         // Group tiles into chunks: few zip entries (fast to open), each small.
         const QRect canvas(QPoint(0, 0), size);
-        for (int i = 0; i < stack.count(); ++i) {
-            const Layer &l = stack.layers().at(i);
-            if (l.group)
-                continue;
+        const auto writeStore = [&](int index, const char *kind, const TileStore &tiles) {
             QHash<TileCoord, QList<TileCoord>> chunks;
-            for (const TileCoord c : l.store.tileCoords()) {
+            for (const TileCoord c : tiles.tileCoords()) {
                 if (!TileStore::tileRect(c).intersects(canvas))
                     continue; // nothing outside the canvas is ever shown
                 chunks[{floorDiv(c.x, ChunkTiles), floorDiv(c.y, ChunkTiles)}].append(c);
@@ -402,10 +415,17 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
                 for (const TileCoord c : it.value()) {
                     putLE<qint32>(data, c.x);
                     putLE<qint32>(data, c.y);
-                    appendTileData(data, l.store.tile(c));
+                    appendTileData(data, tiles.tile(c));
                 }
-                zip.addFile(chunkEntry(i, it.key().x, it.key().y), data);
+                zip.addFile(chunkEntry(index, kind, it.key().x, it.key().y), data);
             }
+        };
+        for (int i = 0; i < stack.count(); ++i) {
+            const Layer &l = stack.layers().at(i);
+            if (!l.group)
+                writeStore(i, "chunks", l.store);
+            if (l.hasMask)
+                writeStore(i, "mask", l.mask);
         }
         zip.close();
         if (zip.status() != QZipWriter::NoError)

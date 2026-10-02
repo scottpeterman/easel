@@ -48,6 +48,8 @@ public:
     void setStack(const easeletch::LayerStack *stack);
     // Selects the stack's active layer, without rebuilding the tree.
     void syncActive();
+    // Whether painting currently goes to the active layer's mask.
+    void setEditingMask(bool on);
     LayerTree *tree() const { return m_tree; }
     static QString blendModeName(easeletch::BlendMode mode);
 
@@ -67,6 +69,11 @@ signals:
     void lowerRequested();
     void mergeRequested();
     void deleteRequested();
+    void maskEnabledChanged(int id, bool enabled);
+    void addMaskRequested();
+    void deleteMaskRequested();
+    void applyMaskRequested();
+    void editMaskToggled(bool on);
 
 private:
     void addItems(QTreeWidgetItem *parentItem, int parentId);
@@ -86,6 +93,11 @@ private:
     QToolButton *m_raise = nullptr;
     QToolButton *m_lower = nullptr;
     QToolButton *m_delete = nullptr;
+    QToolButton *m_addMask = nullptr;
+    QToolButton *m_editMask = nullptr;
+    QToolButton *m_applyMask = nullptr;
+    QToolButton *m_deleteMask = nullptr;
+    bool m_editingMask = false;
     QSet<int> m_collapsed;
     bool m_updating = false;
 };

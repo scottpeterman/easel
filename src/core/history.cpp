@@ -57,11 +57,12 @@ void History::push(const QString &label, QHash<TileCoord, QImage> tiles, const Q
     append(std::move(e));
 }
 
-void History::push(const QString &label, int layerId, QHash<TileCoord, QImage> tiles)
+void History::push(const QString &label, int layerId, QHash<TileCoord, QImage> tiles, bool mask)
 {
     Entry e;
     e.label = label;
     e.layerId = layerId;
+    e.mask = mask;
     e.tiles = std::move(tiles);
     e.bytes = bytesOf(e.tiles);
     append(std::move(e));
@@ -86,7 +87,7 @@ bool History::swap(Entry &e, LayerStack &stack)
         return true;
     }
     if (Layer *l = stack.layer(e.layerId))
-        swap(e, l->store, nullptr);
+        swap(e, e.mask ? l->mask : l->store, nullptr);
     return false;
 }
 

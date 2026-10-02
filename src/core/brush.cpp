@@ -258,7 +258,9 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                 const float dist = std::sqrt(dx * dx + dy * dy);
                 if (dist >= reach)
                     continue;
-                if (!m_clip.isEmpty() && !m_clip.contains(x, y))
+                // A feathered selection lets that much of the stroke through.
+                const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
+                if (clip <= 0.0f)
                     continue;
                 const float a = coverageAt(dist, radius) * strength;
                 if (a <= 0.0f)
@@ -267,7 +269,7 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                 const int i = row + (x - tr.left());
                 float &m = mask[size_t(i)];
                 m += a * (1.0f - m);
-                const float cov = m * opacity;
+                const float cov = m * opacity * clip;
 
                 const Pixel &d = before ? before[i] : def;
                 const float dr = float(d.r), dg = float(d.g), db = float(d.b), da = float(d.a);
@@ -314,7 +316,8 @@ void BrushStroke::smudgeDab(const StrokeSample &dab)
         for (int y = part.top(); y <= part.bottom(); ++y) {
             const double dy = y + 0.5 - centre.y();
             for (int x = part.left(); x <= part.right(); ++x) {
-                if (!m_clip.isEmpty() && !m_clip.contains(x, y))
+                const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
+                if (clip <= 0.0f)
                     continue;
                 const double dx = x + 0.5 - centre.x();
                 const float a = coverageAt(std::sqrt(dx * dx + dy * dy), radius);
@@ -332,7 +335,7 @@ void BrushStroke::smudgeDab(const StrokeSample &dab)
                     m_carryLoaded[cell] = 1;
                     continue;
                 }
-                const float t = a * strength;
+                const float t = a * strength * clip;
                 float out[4];
                 for (int k = 0; k < 4; ++k) {
                     out[k] = cur[k] + (carry[size_t(k)] - cur[k]) * t;

@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QPoint>
+#include <QPolygonF>
 #include <QSize>
 
 // Drag out a rectangle or ellipse selection. Shift keeps it square / circular.
@@ -94,4 +95,43 @@ signals:
 private:
     double m_tolerance = 0.12;
     bool m_contiguous = true;
+};
+
+// Lasso: drag to draw around something, and let go to close the shape. Or
+// click point by point for straight edges (dragging between clicks draws
+// freehand), then click the first point or press Enter to close; Escape gives
+// up. The window turns the path into a selection: Shift adds, Ctrl subtracts.
+class LassoTool : public QObject, public CanvasTool
+{
+    Q_OBJECT
+
+public:
+    using QObject::QObject;
+
+    // How near the first point a click closes the shape, in canvas pixels.
+    void setCloseDistance(double distance) { m_closeDistance = distance; }
+    // A path has been started and not closed yet.
+    bool isOpen() const { return !m_path.isEmpty(); }
+    QPolygonF path() const { return m_path; }
+    // Closes the path (if it has three points) / throws it away.
+    void finish();
+    void cancel();
+
+    void press(const easeletch::StrokeSample &s) override;
+    void move(const easeletch::StrokeSample &s) override;
+    void release(const easeletch::StrokeSample &s) override;
+    double cursorDiameter() const override { return 0.0; }
+
+signals:
+    // The path so far, for drawing; empty when there is none.
+    void pathChanged(const QPolygonF &path);
+    void finished(const QPolygonF &path, Qt::KeyboardModifiers modifiers);
+
+private:
+    QPolygonF m_path;
+    QPointF m_pressPos;
+    double m_closeDistance = 6.0;
+    bool m_fresh = false;   // this press started the path
+    bool m_dragged = false; // ... and has moved since
+    bool m_ignore = false;  // the press closed the path; skip its move and release
 };

@@ -477,6 +477,197 @@ private slots:
         QCOMPARE(w2.layerPanel()->tree()->topLevelItemCount(), 2); // the group and the background
         QVERIFY(!w2.isModified());
     }
+
+    // --- Lasso, feather, masks ---
+
+    void lassoDragSelectsWhatItSurrounds()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        view->setTool(w.lassoTool());
+
+        // One drag around a triangle; letting go closes it.
+        QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 100}));
+        for (const QPointF p : {QPointF(150, 100), QPointF(200, 100), QPointF(200, 150), QPointF(200, 200)})
+            QTest::mouseMove(view, viewPos(w, p));
+        QVERIFY(w.lassoTool()->isOpen());
+        QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 200}));
+        QVERIFY(!w.lassoTool()->isOpen());
+        QVERIFY(w.selection().contains(180, 120));
+        QVERIFY(!w.selection().contains(120, 180)); // the other side of the diagonal
+        QVERIFY(!w.selection().contains(90, 90));
+
+        // Shift adds a second shape; Ctrl takes one away.
+        QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {300, 200}));
+        for (const QPointF p : {QPointF(350, 200), QPointF(350, 250), QPointF(300, 250)})
+            QTest::mouseMove(view, viewPos(w, p));
+        emit w.lassoTool()->finished(w.lassoTool()->path(), Qt::ShiftModifier);
+        w.lassoTool()->cancel();
+        QVERIFY(w.selection().contains(325, 225));
+        QVERIFY(w.selection().contains(180, 120));
+        emit w.lassoTool()->finished(QPolygonF{QPointF(290, 190), QPointF(360, 190), QPointF(360, 260),
+                                               QPointF(290, 260)},
+                                     Qt::ControlModifier);
+        QVERIFY(!w.selection().contains(325, 225));
+        QVERIFY(w.selection().contains(180, 120));
+    }
+
+    void lassoClicksMakeAPolygon()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        view->setTool(w.lassoTool());
+        for (const QPointF p : {QPointF(50, 50), QPointF(150, 50), QPointF(150, 150), QPointF(50, 150)})
+            QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, p));
+        QVERIFY(w.lassoTool()->isOpen()); // clicks only place points
+        QVERIFY(w.selection().isEmpty());
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {51, 51})); // back on the first point
+        QVERIFY(!w.lassoTool()->isOpen());
+        // QTest clicks land on whole view pixels, so allow a pixel either way.
+        const QRect made = w.selection().bounds();
+        QVERIFY(qAbs(made.left() - 50) <= 1 && qAbs(made.top() - 50) <= 1);
+        QVERIFY(qAbs(made.width() - 100) <= 1 && qAbs(made.height() - 100) <= 1);
+        QVERIFY(w.selection().contains(100, 100));
+
+        // Escape gives up a path that's been started; switching tools does too.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 200}));
+        QVERIFY(w.lassoTool()->isOpen());
+        w.lassoTool()->cancel();
+        QVERIFY(!w.lassoTool()->isOpen());
+        QCOMPARE(w.selection().bounds(), made); // the selection stays
+    }
+
+    void featheredSelectionSoftensPaintAndDelete()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.setSelection(Selection::rect(QRect(100, 50, 200, 200)));
+        w.featherSelection(10);
+        QVERIFY(w.selection().isSoft());
+        stroke(w, {50, 150}, {200, 150});
+        QCOMPARE(shown(w, 70, 150), QColor(Qt::white)); // outside: nothing
+        QCOMPARE(shown(w, 180, 150), QColor(Qt::red));  // inside: full
+        const QColor edge = shown(w, 100, 150);         // on the old edge: about half
+        QVERIFY(edge.red() == 255 && edge.green() > 150 && edge.green() < 230);
+        QVERIFY(w.history().count() == 1);              // feathering itself isn't a document change
+    }
+
+    void maskPaintingHidesAndUndoes()
+    {
+        MainWindow w;
+        setupWindow(w);
+        const int bg = w.layers().activeId();
+        w.addLayer();
+        const int top = w.layers().activeId();
+        w.layer()->fillRect(QRect(0, 0, 400, 300), QColor(Qt::blue));
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::blue));
+
+        QVERIFY(w.addLayerMask());
+        QVERIFY(w.isEditingMask());
+        QVERIFY(w.layers().layer(top)->hasMask);
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::blue)); // a new mask shows everything
+        QCOMPARE(w.layerPanel()->tree()->topLevelItem(0)->checkState(2), Qt::Checked);
+
+        // Black on the mask cuts through to the background; the pixels stay.
+        w.brushTool()->setColor(Qt::black);
+        stroke(w, {50, 100}, {300, 100});
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::white));
+        QVERIFY(near(drawn(w, {150.5, 100.5}), Qt::white));
+        QCOMPARE(shown(w, 150, 200), QColor(Qt::blue));
+        QCOMPARE(at(w.layers().layer(top)->store, 150, 100), QColor(Qt::blue));
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Brush"));
+
+        // White brings it back.
+        w.brushTool()->setColor(Qt::white);
+        stroke(w, {140, 100}, {160, 100});
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::blue));
+        QCOMPARE(shown(w, 250, 100), QColor(Qt::white));
+        w.undo();
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::white));
+
+        // Back on the layer, paint goes to the pixels (and is still masked).
+        w.setEditingMask(false);
+        QVERIFY(!w.isEditingMask());
+        w.brushTool()->setColor(Qt::red);
+        stroke(w, {50, 200}, {300, 200});
+        QCOMPARE(shown(w, 150, 200), QColor(Qt::red));
+        QCOMPARE(at(w.layers().layer(top)->store, 150, 200), QColor(Qt::red));
+
+        // Unticking the mask shows the whole layer; applying it erases for real.
+        w.setLayerMaskEnabled(top, false);
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::blue));
+        w.undo();
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::white));
+        QVERIFY(w.applyLayerMask());
+        QVERIFY(!w.layers().layer(top)->hasMask);
+        QCOMPARE(at(w.layers().layer(top)->store, 150, 100).alpha(), 0);
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::white));
+        w.undo();
+        QVERIFY(w.layers().layer(top)->hasMask);
+        QCOMPARE(at(w.layers().layer(top)->store, 150, 100), QColor(Qt::blue));
+        QVERIFY(w.deleteLayerMask());
+        QCOMPARE(shown(w, 150, 100), QColor(Qt::blue));
+        QCOMPARE(w.layers().layer(bg)->store.tileCount(), 0);
+    }
+
+    void maskFromSelectionShowsOnlyTheSelection()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("masked.easeletch"));
+        MainWindow w;
+        setupWindow(w);
+        w.addLayer();
+        const int top = w.layers().activeId();
+        w.layer()->fillRect(QRect(0, 0, 400, 300), QColor(Qt::blue));
+        w.setSelection(Selection::ellipse(QRect(100, 50, 200, 200)));
+        w.featherSelection(8);
+        QVERIFY(w.addLayerMask());
+        w.deselect();
+        QCOMPARE(shown(w, 200, 150), QColor(Qt::blue));  // inside the ellipse
+        QCOMPARE(shown(w, 20, 20), QColor(Qt::white));   // outside
+        const QColor edge = shown(w, 100, 150);          // the feathered rim
+        QVERIFY(edge.blue() == 255 && edge.red() > 60 && edge.red() < 240);
+
+        // Switching layers goes back to painting pixels.
+        const int bg = w.layers().children(0).first();
+        w.setActiveLayer(bg);
+        QVERIFY(!w.isEditingMask());
+        w.setActiveLayer(top);
+        QVERIFY(!w.isEditingMask());
+
+        QVERIFY(w.saveDocumentTo(path, true));
+        MainWindow w2;
+        w2.resize(1200, 800);
+        w2.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w2));
+        QSignalSpy opened(&w2, &MainWindow::documentOpened);
+        w2.openDocument(path);
+        QVERIFY(opened.wait(10000));
+        QVERIFY(w2.layers().layer(top)->hasMask);
+        QCOMPARE(shown(w2, 200, 150), QColor(Qt::blue));
+        QCOMPARE(shown(w2, 20, 20), QColor(Qt::white));
+        QCOMPARE(shown(w2, 100, 150), edge);
+    }
+
+    void cropKeepsMasksAligned()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.addLayer();
+        w.layer()->fillRect(QRect(0, 0, 400, 300), QColor(Qt::blue));
+        w.setSelection(Selection::rect(QRect(200, 100, 100, 100)));
+        w.addLayerMask();
+        w.setSelection(Selection::rect(QRect(150, 50, 200, 200)));
+        w.cropToSelection();
+        QCOMPARE(w.canvasSize(), QSize(200, 200));
+        QCOMPARE(shown(w, 100, 100), QColor(Qt::blue));  // was (250, 150): inside the mask
+        QCOMPARE(shown(w, 20, 20), QColor(Qt::white));   // was (170, 70): outside it
+        w.undo();
+        QCOMPARE(shown(w, 250, 150), QColor(Qt::blue));
+        QCOMPARE(shown(w, 170, 70), QColor(Qt::white));
+    }
 };
 
 QTEST_MAIN(TestLayerUi)

@@ -18,6 +18,9 @@ namespace easeletch {
 //                            id, name, type (raster / group), parent (the group it's
 //                            in, 0 for none), visible, locked, opacity, blend
 //   preview.png              flattened 8-bit sRGB image, at most 2048 px on its long side
+//   layers/<n>/mask/<cx>_<cy>
+//                            the same for layer n's mask, when it has one (the
+//                            manifest's "mask": enabled, default)
 //   layers/<n>/chunks/<cx>_<cy>
 //                            for raster layer n (its place in the manifest's list),
 //                            the existing tiles of one 16 x 16-tile (1024 px) square:
@@ -33,8 +36,9 @@ inline constexpr char NativeSuffix[] = "easeletch";
 // The app was first called Easel: its .easel files (manifest format "easel")
 // still open. They aren't written back to; saving one asks for a new name.
 inline constexpr char LegacySuffix[] = "easel";
-// Version 1 held a single layer; version 2 holds the layer stack.
-inline constexpr int FormatVersion = 2;
+// Version 1 held a single layer; version 2 holds the layer stack; version 3
+// adds layer masks.
+inline constexpr int FormatVersion = 3;
 inline constexpr int PreviewMaxSide = 2048;
 inline constexpr int ChunkTiles = 16; // tiles per chunk side
 

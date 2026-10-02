@@ -4,11 +4,15 @@ A balanced layered image editor: Paint.NET approachability with Photoshop's laye
 
 ## Status
 
-M2. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
+M3. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
 
 Layers: raster layers and groups, each with visibility, lock, opacity and one of 12 blend modes (Normal, Multiply, Screen, Overlay, Soft Light, Darken, Lighten, Color Dodge, Color Burn, Difference, Hue, Color). Painting, erasing, smudging, cut, paste, move and Color to Alpha act on the active layer; the eyedropper, Trim and Export use the whole picture; Crop cuts every layer. Every layer change is an undo step. Normal blending and opacity mix in linear light; the other modes compare colours as sRGB values, so they give the results other editors do.
 
-The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Masks, adjustments and the rest arrive by milestone.
+Selections: rectangle, ellipse, lasso (freehand or point by point) and magic wand, with add and subtract, invert, grow, shrink and feather. A feathered selection fades at its edge, and everything done through it (paint, delete, cut, copy, move, Color to Alpha) fades the same way.
+
+Layer masks: any layer or group can have a mask that hides part of it without erasing anything. Paint on the mask with the ordinary brush: black hides, white shows, and brush opacity gives the in-between. A mask added while something is selected shows only the selection. Masks can be switched off, applied (erasing what they hide) or removed.
+
+The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Transforms, adjustments and the rest arrive by milestone.
 
 ## Controls
 
@@ -30,6 +34,11 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Cut / copy / paste / delete | Ctrl+X / Ctrl+C / Ctrl+V / Delete |
 | Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
 | Drop / cancel floating pixels | Enter / Escape |
+| Lasso | L; drag around something and let go, or click point by point and press Enter (or click the first point). Escape gives up. Shift adds, Ctrl subtracts |
+| Feather selection | Shift+F6 |
+| Add a layer mask | Layers panel: Add Mask (from the selection, if there is one) |
+| Paint on the mask / on the layer | Ctrl+M, or Paint Mask in the Layers panel |
+| Switch a mask off, apply or remove it | Layers panel: the Mask tick box, Apply, Remove |
 | Magic wand | W; click selects similar colour, Shift+click adds, Ctrl+click subtracts |
 | Invert selection | Ctrl+Shift+I |
 | Grow / shrink selection | Edit > Grow Selection, Shrink Selection |
@@ -51,9 +60,9 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 
 ## Files
 
-Easeletch saves `.easeletch` documents: a zip with a `manifest.json` (canvas size and the layer list: name, group, visibility, lock, opacity, blend mode), a flattened `preview.png` (up to 2048 px) you can look at without Easeletch, and each layer's tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
+Easeletch saves `.easeletch` documents: a zip with a `manifest.json` (canvas size and the layer list: name, group, visibility, lock, opacity, blend mode, mask), a flattened `preview.png` (up to 2048 px) you can look at without Easeletch, and each layer's and mask's tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
 
-The app was called Easel before 0.2.0: `.easel` files from then still open, and saving one asks for a new `.easeletch` name. Documents saved before layers (format 1) open as a single layer. Documents saved now are format 2, which older builds decline to open.
+The app was called Easel before 0.2.0: `.easel` files from then still open, and saving one asks for a new `.easeletch` name. Documents saved before layers (format 1) open as a single layer. Documents saved now are format 3 (layers and masks), which older builds decline to open.
 
 ## Build
 

@@ -201,6 +201,45 @@ private slots:
         QVERIFY(preview.pixelColor(450, 10) == QColor(Qt::white));
     }
 
+    void masksRoundTrip()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("masks.easeletch"));
+        const QSize size(300, 200);
+        LayerStack stack;
+        stack.setSize(size);
+        Layer bg;
+        bg.name = QStringLiteral("Background");
+        bg.store = TileStore(Qt::white);
+        stack.insert(std::move(bg), 0, 0);
+        Layer top;
+        top.name = QStringLiteral("Top");
+        top.store.fillRect(QRect(0, 0, 300, 200), QColor(Qt::red));
+        const int topId = stack.insert(std::move(top), 0, 1);
+        stack.addMask(topId);
+        paintSomething(stack.layer(topId)->mask, QRect(QPoint(0, 0), size)); // soft-edged values
+        Layer off;
+        off.name = QStringLiteral("Off");
+        const int offId = stack.insert(std::move(off), 0, 2);
+        stack.addMask(offId);
+        stack.layer(offId)->mask = TileStore(Qt::black);
+        stack.layer(offId)->maskEnabled = false;
+        stack.recompositeAll();
+        QCOMPARE(saveNativeDocument(path, stack), QString());
+
+        const LoadedDocument doc = loadDocument(path);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        const LayerStack &in = *doc.stack;
+        QVERIFY(in.layer(topId)->hasMask);
+        QVERIFY(in.layer(topId)->maskEnabled);
+        QVERIFY(sameTiles(stack.layer(topId)->mask, in.layer(topId)->mask));
+        QVERIFY(in.layer(offId)->hasMask);
+        QVERIFY(!in.layer(offId)->maskEnabled);
+        QVERIFY(samePixel(in.layer(offId)->mask.defaultPixel(), pixelFromColor(Qt::black)));
+        QVERIFY(!in.layers().first().hasMask);
+        QVERIFY(sameTiles(stack.composite(), in.composite()));
+    }
+
     void opensVersion1Files()
     {
         // As written before layers: one unnamed-id layer, version 1.

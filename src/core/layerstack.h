@@ -50,7 +50,18 @@ struct Layer {
     double opacity = 1.0;
     BlendMode blend = BlendMode::Normal;
     TileStore store; // raster layers only
+
+    // A mask hides part of the layer (or group) without erasing it: where the
+    // mask is white the layer shows, where it's black it doesn't, and greys
+    // show it partly. Painted like any layer; what counts is how light the
+    // mask is, in linear light, so black at 50% brush opacity hides half.
+    bool hasMask = false;
+    bool maskEnabled = true;
+    TileStore mask{Qt::white};
 };
+
+// How much a mask pixel lets through, 0..1.
+float maskValue(const Pixel &p);
 
 // The document: layers bottom to top, the canvas size, and the flattened
 // picture the canvas draws.
@@ -117,6 +128,12 @@ public:
     bool mergeDown(int id);
     // Replaces a group by one raster layer showing the same thing.
     bool mergeGroup(int id);
+    // Gives a layer a mask that shows everything. False if it has one.
+    bool addMask(int id);
+    // Removes a layer's mask, leaving the layer whole again.
+    bool removeMask(int id);
+    // Erases what the mask hides and removes the mask (raster layers).
+    bool applyMask(int id);
     // Replaces everything by one layer holding the composite.
     void flatten(const QString &name);
     // Applies a new order: every layer once, bottom to top, as (id, parent).
@@ -146,6 +163,7 @@ public:
 
 private:
     bool contributes(const Layer &l, TileCoord c) const;
+    bool fetchLayer(const Layer &l, TileCoord c, std::vector<float> &out) const;
     bool compositeTile(int parent, TileCoord c, std::vector<float> &out) const;
     bool compositeDefault(int parent, float out[4]) const;
     QImage composedTile(TileCoord c) const;

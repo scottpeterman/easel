@@ -178,6 +178,28 @@ bool fetchTile(const TileStore &store, TileCoord c, std::vector<float> &out)
     return true;
 }
 
+// Scales a tile's pixels by a mask's values there.
+void multiplyByMask(const TileStore &mask, TileCoord c, std::vector<float> &pixels)
+{
+    const QImage tile = mask.tile(c);
+    if (tile.isNull()) {
+        const float v = maskValue(mask.defaultPixel());
+        if (v < 1.0f)
+            for (float &f : pixels)
+                f *= v;
+        return;
+    }
+    const auto *m = reinterpret_cast<const Pixel *>(tile.constBits());
+    float *p = pixels.data();
+    for (int i = 0; i < kTilePixels; ++i, p += 4) {
+        const float v = maskValue(m[i]);
+        p[0] *= v;
+        p[1] *= v;
+        p[2] *= v;
+        p[3] *= v;
+    }
+}
+
 QImage toTile(const std::vector<float> &pixels)
 {
     QImage tile(TileStore::TileSize, TileStore::TileSize, TileStore::TileFormat);
@@ -186,6 +208,12 @@ QImage toTile(const std::vector<float> &pixels)
 }
 
 } // namespace
+
+float maskValue(const Pixel &p)
+{
+    // Luminance of the premultiplied colour: opaque white 1, black or nothing 0.
+    return std::clamp(0.2126f * float(p.r) + 0.7152f * float(p.g) + 0.0722f * float(p.b), 0.0f, 1.0f);
+}
 
 QString blendModeKey(BlendMode mode)
 {
@@ -476,6 +504,14 @@ bool LayerStack::mergeDown(int id)
     if (!below || below->group)
         return false;
 
+    // The result keeps no mask: what each layer's mask hides is erased first.
+    if (below->hasMask)
+        applyMask(below->id);
+    if (top->hasMask)
+        applyMask(id);
+    top = layer(id);
+    below = layer(siblings.at(at - 1));
+
     const Layer src = *top; // the list may move under us
     QSet<TileCoord> coords;
     for (const TileCoord c : src.store.tileCoords())
@@ -506,6 +542,54 @@ bool LayerStack::mergeDown(int id)
     remove(id);
     m_active = keep;
     return true;
+}
+
+bool LayerStack::addMask(int id)
+{
+    Layer *l = layer(id);
+    if (!l || l->hasMask)
+        return false;
+    l->hasMask = true;
+    l->maskEnabled = true;
+    l->mask = TileStore(Qt::white);
+    return true;
+}
+
+bool LayerStack::removeMask(int id)
+{
+    Layer *l = layer(id);
+    if (!l || !l->hasMask)
+        return false;
+    l->hasMask = false;
+    l->maskEnabled = true;
+    l->mask = TileStore(Qt::white);
+    return true;
+}
+
+bool LayerStack::applyMask(int id)
+{
+    Layer *l = layer(id);
+    if (!l || !l->hasMask || l->group)
+        return false;
+    // Tiles the layer has, and where its default pixel shows, tiles the mask has.
+    QSet<TileCoord> coords;
+    for (const TileCoord c : l->store.tileCoords())
+        coords.insert(c);
+    const Pixel d = l->store.defaultPixel();
+    if (float(d.a) > 0.0f) {
+        for (const TileCoord c : l->mask.tileCoords())
+            coords.insert(c);
+    }
+    std::vector<float> pixels;
+    for (const TileCoord c : coords) {
+        if (!fetchTile(l->store, c, pixels))
+            continue;
+        multiplyByMask(l->mask, c, pixels);
+        l->store.setTile(c, toTile(pixels));
+    }
+    const float v = maskValue(l->mask.defaultPixel());
+    l->store.setDefaultPixel(makePixel(float(d.r) * v, float(d.g) * v, float(d.b) * v, float(d.a) * v));
+    return removeMask(id);
 }
 
 bool LayerStack::mergeGroup(int id)
@@ -571,12 +655,25 @@ bool LayerStack::contributes(const Layer &l, TileCoord c) const
 {
     if (!l.visible || l.opacity <= 0.0)
         return false;
+    // A mask tile changes what shows there even where the layer has no tile
+    // of its own (a background that is one flat colour, say).
+    if (l.hasMask && l.maskEnabled && l.mask.hasTile(c))
+        return true;
     if (!l.group)
         return l.store.hasTile(c);
     for (const Layer &child : m_layers)
         if (child.parent == l.id && contributes(child, c))
             return true;
     return false;
+}
+
+bool LayerStack::fetchLayer(const Layer &l, TileCoord c, std::vector<float> &out) const
+{
+    if (l.group ? !compositeTile(l.id, c, out) : !fetchTile(l.store, c, out))
+        return false;
+    if (l.hasMask && l.maskEnabled)
+        multiplyByMask(l.mask, c, out);
+    return true;
 }
 
 bool LayerStack::compositeTile(int parent, TileCoord c, std::vector<float> &out) const
@@ -586,7 +683,7 @@ bool LayerStack::compositeTile(int parent, TileCoord c, std::vector<float> &out)
     for (const Layer &l : m_layers) {
         if (l.parent != parent || !l.visible || l.opacity <= 0.0)
             continue;
-        if (l.group ? !compositeTile(l.id, c, src) : !fetchTile(l.store, c, src))
+        if (!fetchLayer(l, c, src))
             continue;
         if (!any) {
             out.assign(size_t(kTilePixels) * 4, 0.0f);
@@ -617,6 +714,11 @@ bool LayerStack::compositeDefault(int parent, float out[4]) const
             src[2] = float(d.b);
             src[3] = float(d.a);
         }
+        if (l.hasMask && l.maskEnabled) {
+            const float v = maskValue(l.mask.defaultPixel());
+            for (float &f : src)
+                f *= v;
+        }
         blendPixels(out, src, 1, float(l.opacity), l.blend);
         any = true;
     }
@@ -637,7 +739,7 @@ QImage LayerStack::composedTile(TileCoord c) const
     if (contributors == 0)
         return {};
     // One opaque layer and nothing behind it: share its tile.
-    if (contributors == 1 && !only->group && only->opacity >= 1.0) {
+    if (contributors == 1 && !only->group && only->opacity >= 1.0 && !(only->hasMask && only->maskEnabled)) {
         bool alone = true;
         for (const Layer &l : m_layers) {
             if (l.parent != 0 || &l == only || !l.visible || l.opacity <= 0.0)
@@ -687,10 +789,16 @@ QSet<TileCoord> LayerStack::tileCoordsUnder(int parent) const
 {
     QSet<TileCoord> coords;
     for (const Layer &l : m_layers) {
-        if (l.group || (parent != 0 && l.parent != parent && !isInside(l.id, parent)))
+        if (parent != 0 && l.parent != parent && !isInside(l.id, parent))
             continue;
-        for (const TileCoord c : l.store.tileCoords())
-            coords.insert(c);
+        if (!l.group) {
+            for (const TileCoord c : l.store.tileCoords())
+                coords.insert(c);
+        }
+        if (l.hasMask) {
+            for (const TileCoord c : l.mask.tileCoords())
+                coords.insert(c);
+        }
     }
     return coords;
 }
@@ -698,17 +806,22 @@ QSet<TileCoord> LayerStack::tileCoordsUnder(int parent) const
 void LayerStack::updateComposite()
 {
     QSet<TileCoord> dirty;
-    for (Layer &l : m_layers)
+    for (Layer &l : m_layers) {
         if (!l.group)
             dirty.unite(l.store.takeDirty());
+        if (l.hasMask)
+            dirty.unite(l.mask.takeDirty());
+    }
     if (!dirty.isEmpty())
         recomposite(dirty);
 }
 
 void LayerStack::recompositeAll()
 {
-    for (Layer &l : m_layers)
+    for (Layer &l : m_layers) {
         l.store.takeDirty();
+        l.mask.takeDirty();
+    }
     float d[4];
     compositeDefault(0, d);
     m_composite.setDefaultPixel(makePixel(d[0], d[1], d[2], d[3]));
@@ -737,7 +850,7 @@ qint64 LayerStack::memoryBytes() const
 {
     qint64 n = 0;
     for (const Layer &l : m_layers)
-        n += l.store.memoryBytes();
+        n += l.store.memoryBytes() + (l.hasMask ? l.mask.memoryBytes() : 0);
     return n;
 }
 
@@ -745,7 +858,7 @@ qsizetype LayerStack::tileCount() const
 {
     qsizetype n = 0;
     for (const Layer &l : m_layers)
-        n += l.store.tileCount();
+        n += l.store.tileCount() + (l.hasMask ? l.mask.tileCount() : 0);
     return n;
 }
 
@@ -773,12 +886,18 @@ qint64 LayerStack::bytesNotSharedWith(const LayerStack &live) const
 {
     qint64 bytes = 0;
     for (const Layer &l : m_layers) {
-        if (l.group)
-            continue;
         const Layer *other = live.layer(l.id);
-        for (const TileCoord c : l.store.tileCoords()) {
-            if (!other || other->group || other->store.tile(c).cacheKey() != l.store.tile(c).cacheKey())
-                bytes += TileStore::BytesPerTile;
+        if (!l.group) {
+            for (const TileCoord c : l.store.tileCoords()) {
+                if (!other || other->group || other->store.tile(c).cacheKey() != l.store.tile(c).cacheKey())
+                    bytes += TileStore::BytesPerTile;
+            }
+        }
+        if (l.hasMask) {
+            for (const TileCoord c : l.mask.tileCoords()) {
+                if (!other || !other->hasMask || other->mask.tile(c).cacheKey() != l.mask.tile(c).cacheKey())
+                    bytes += TileStore::BytesPerTile;
+            }
         }
     }
     return bytes;
