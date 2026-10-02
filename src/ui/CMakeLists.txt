@@ -23,6 +23,8 @@ add_library(easeletch_ui STATIC
     newdocumentdialog.cpp
     layerpanel.h
     layerpanel.cpp
+    textpanel.h
+    textpanel.cpp
     mainwindow.h
     mainwindow.cpp
 )

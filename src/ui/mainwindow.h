@@ -27,6 +27,8 @@ class MoveTool;
 class SelectTool;
 class WandTool;
 class LassoTool;
+class TextTool;
+class TextPanel;
 class QToolBar;
 class ColorPanel;
 class QAction;
@@ -68,6 +70,16 @@ public:
     MoveTool *moveTool() const { return m_move; }
     WandTool *wandTool() const { return m_wand; }
     LassoTool *lassoTool() const { return m_lasso; }
+    TextTool *textTool() const { return m_textTool; }
+    TextPanel *textPanel() const { return m_textPanel; }
+    // Text is being typed and hasn't been placed yet.
+    bool isTyping() const { return m_text.active; }
+    // Starts a block of text with its corner at a canvas point (what a click
+    // with the Text tool does). The words come from the text panel.
+    void beginText(const QPoint &pos);
+    // Places the text on its new layer (one undo step) / drops it.
+    void commitText();
+    void cancelText();
     // Painting and editing go to the active layer's mask, not its pixels.
     bool isEditingMask() const { return m_editMask; }
 
@@ -192,6 +204,14 @@ private:
     void showColorToAlphaDialog();
     void wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers);
     void lassoFinished(const QPolygonF &path, Qt::KeyboardModifiers modifiers);
+    // Redraws the text being typed from the panel's current settings.
+    void updateText();
+    void textPressed(const QPointF &pos);
+    void textDragged(const QPointF &pos);
+    void textReleased(const QPointF &pos);
+    void hideTextPanel();
+    // Marching ants around floating pixels where they are now.
+    void showFloatingOutline();
     void cropCanvasTo(const QRect &rect, const QString &label);
     // After undo / redo. stackChanged: layers or the canvas size may differ.
     void afterHistoryMove(const QSize &sizeBefore, bool stackChanged);
@@ -231,6 +251,21 @@ private:
     MoveTool *m_move = nullptr;
     WandTool *m_wand = nullptr;
     LassoTool *m_lasso = nullptr;
+    TextTool *m_textTool = nullptr;
+    TextPanel *m_textPanel = nullptr;
+    QAction *m_textAct = nullptr;
+    QPoint m_textPanelPos; // where the text panel was last left; null until it's first shown
+    // Text being typed. It lives on a layer made for it, floating like pasted
+    // pixels, until it's placed; "before" is the document without that layer.
+    struct TextSession {
+        bool active = false;
+        int layerId = 0;
+        easeletch::LayerStack before;
+        QPoint anchor;  // the point the text hangs from (its corner, or centre / right edge)
+        QPoint placed;  // where the floating image was last put
+        bool dragging = false;
+        bool clickStarts = false; // the press under way will start new text when it ends
+    } m_text;
     bool m_editMask = false;
     bool m_floatMask = false; // the floating pixels are on a mask
     QToolBar *m_wandOptions = nullptr;

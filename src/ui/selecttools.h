@@ -135,3 +135,24 @@ private:
     bool m_dragged = false; // ... and has moved since
     bool m_ignore = false;  // the press closed the path; skip its move and release
 };
+
+// Text: a click starts a block of text there; with one in progress, dragging
+// moves it. The window does the typing and the placing.
+class TextTool : public QObject, public CanvasTool
+{
+    Q_OBJECT
+
+public:
+    using QObject::QObject;
+
+    void press(const easeletch::StrokeSample &s) override { emit pressed(s.pos); }
+    void move(const easeletch::StrokeSample &s) override { emit dragged(s.pos); }
+    void release(const easeletch::StrokeSample &s) override { emit released(s.pos); }
+    double cursorDiameter() const override { return 0.0; }
+    Qt::CursorShape cursorShape() const override { return Qt::IBeamCursor; }
+
+signals:
+    void pressed(const QPointF &canvasPos);
+    void dragged(const QPointF &canvasPos);
+    void released(const QPointF &canvasPos);
+};

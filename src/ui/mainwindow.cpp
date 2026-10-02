@@ -11,6 +11,8 @@
 #include "layerpanel.h"
 #include "newdocumentdialog.h"
 #include "selecttools.h"
+#include "textpanel.h"
+#include "textrender.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -86,6 +88,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_move = new MoveTool(this);
     m_wand = new WandTool(this);
     connect(m_wand, &WandTool::clicked, this, &MainWindow::wandClicked);
+    m_textTool = new TextTool(this);
+    connect(m_textTool, &TextTool::pressed, this, &MainWindow::textPressed);
+    connect(m_textTool, &TextTool::dragged, this, &MainWindow::textDragged);
+    connect(m_textTool, &TextTool::released, this, &MainWindow::textReleased);
+    m_textPanel = new TextPanel(this);
+    connect(m_textPanel, &TextPanel::changed, this, &MainWindow::updateText);
+    connect(m_textPanel, &QDialog::accepted, this, &MainWindow::commitText);
+    connect(m_textPanel, &QDialog::rejected, this, &MainWindow::cancelText);
     m_lasso = new LassoTool(this);
     connect(m_lasso, &LassoTool::finished, this, &MainWindow::lassoFinished);
     // While it's being drawn, the path shows in place of the selection outline.
@@ -124,6 +134,7 @@ MainWindow::MainWindow(QWidget *parent)
     QSettings settings;
     m_lastDir = settings.value(QStringLiteral("lastDir")).toString();
     m_brush->loadSettings(settings);
+    m_textPanel->loadSettings(settings);
     m_color->loadSettings(settings);
     GridSettings grid;
     grid.load(settings);
@@ -281,7 +292,7 @@ void MainWindow::createActions()
     connect(escapeAct, &QAction::triggered, this, [this] {
         if (m_lasso->isOpen())
             m_lasso->cancel();
-        else if (m_floating.isActive())
+        else if (m_floating.isActive() || m_text.active)
             cancelFloating();
         else
             deselect();
@@ -389,12 +400,16 @@ void MainWindow::createToolBars()
     m_wandAct = tools->addAction(tr("Wand"), this, [this] { activateTool(m_wand, false); });
     m_wandAct->setShortcut(QKeySequence(Qt::Key_W));
     m_wandAct->setToolTip(tr("Magic wand (W): select by colour. Shift adds, Ctrl subtracts."));
+    m_textAct = tools->addAction(tr("Text"), this, [this] { activateTool(m_textTool, false); });
+    m_textAct->setShortcut(QKeySequence(Qt::Key_T));
+    m_textAct->setToolTip(tr("Text (T): click where it goes, type, drag to move it, then Place. "
+                             "It lands on a new layer."));
     m_moveAct = tools->addAction(tr("Move"), this, [this] { activateTool(m_move, false); });
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
     m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
                              "Enter drops, Escape cancels."));
     for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
-                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_moveAct}) {
+                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
@@ -498,6 +513,7 @@ void MainWindow::createDocks()
     colorDock->setWidget(m_color);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
     connect(m_color, &ColorPanel::colorChanged, m_brush, &BrushTool::setColor);
+    connect(m_color, &ColorPanel::colorChanged, this, &MainWindow::updateText);
     connect(m_color, &ColorPanel::colorChanged, m_eyedropper, &EyedropperTool::setCurrentColor);
     connect(m_eyedropper, &EyedropperTool::colorPicked, m_color, &ColorPanel::setColor);
     m_brush->setColor(m_color->color());
@@ -571,7 +587,8 @@ void MainWindow::selectEyedropper()
 
 void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
 {
-    if (tool != m_move)
+    // Text being typed is placed, unless the tool is one that can move it.
+    if (tool != m_move && !(tool == m_textTool && m_text.active))
         commitFloating();
     if (tool != m_lasso)
         m_lasso->cancel();
@@ -584,6 +601,7 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
                    : tool == m_move          ? m_moveAct
                    : tool == m_wand          ? m_wandAct
                    : tool == m_lasso         ? m_lassoAct
+                   : tool == m_textTool      ? m_textAct
                    : tool == m_eyedropper    ? m_eyedropperAct
                                              : nullptr;
     if (act)
@@ -757,6 +775,8 @@ bool MainWindow::liftForMove()
 {
     if (m_floating.isActive())
         return true;
+    if (m_text.active)
+        return false; // nothing typed yet: there's nothing to move
     easeletch::TileStore *store = m_stack ? editStore() : nullptr;
     if (!store)
         return false;
@@ -787,7 +807,7 @@ void MainWindow::moveDragged(const QPointF &pos)
         return;
     const QPointF d = pos - m_dragStart;
     m_floating.moveTo(m_dragOrigin + QPoint(int(std::lround(d.x())), int(std::lround(d.y()))));
-    setSelection(m_floating.selection());
+    showFloatingOutline();
     m_view->refresh();
 }
 
@@ -796,12 +816,26 @@ void MainWindow::nudge(const QPoint &delta)
     if (m_moveDragging || !liftForMove())
         return;
     m_floating.moveBy(delta);
-    setSelection(m_floating.selection());
+    showFloatingOutline();
     m_view->refresh();
+}
+
+void MainWindow::showFloatingOutline()
+{
+    // Text being typed isn't a selection: it only gets a frame.
+    if (m_text.active)
+        m_view->setSelectionOutline(
+            easeletch::Selection::rect(QRect(m_floating.position(), m_floating.content().size())).outlines());
+    else
+        setSelection(m_floating.selection());
 }
 
 void MainWindow::commitFloating()
 {
+    if (m_text.active) {
+        commitText();
+        return;
+    }
     if (!m_floating.isActive())
         return;
     if (m_floating.position() == m_floatStart) {
@@ -909,6 +943,181 @@ void MainWindow::growSelection(int pixels)
     const easeletch::Selection s = m_selection.grown(pixels, canvasRect());
     QApplication::restoreOverrideCursor();
     setSelection(s);
+}
+
+// --- Text -------------------------------------------------------------------------
+
+void MainWindow::beginText(const QPoint &pos)
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    commitFloating(); // places text already in progress, or anything else floating
+    m_text.before = m_stack->snapshot();
+
+    // Text gets a layer of its own, above the active one.
+    easeletch::Layer l;
+    l.name = m_stack->uniqueName(tr("Text"));
+    const easeletch::Layer *active = m_stack->active();
+    int id = 0;
+    if (active && active->group) {
+        id = m_stack->insert(std::move(l), active->id, INT_MAX);
+    } else {
+        const int parent = active ? active->parent : 0;
+        const int at = active ? int(m_stack->children(parent).indexOf(active->id)) + 1 : INT_MAX;
+        id = m_stack->insert(std::move(l), parent, at);
+    }
+    m_stack->setActive(id);
+    m_editMask = false;
+    m_text.active = true;
+    m_text.layerId = id;
+    m_text.anchor = pos;
+    m_text.placed = pos;
+    m_text.dragging = false;
+    layersChanged();
+
+    if (!m_textPanel->isVisible()) {
+        // Out of the way of the canvas: in a lower corner of it, the one
+        // further from where the text is going. After that it stays wherever
+        // it's dragged to.
+        if (m_textPanelPos.isNull()) {
+            m_textPanel->adjustSize();
+            const QRect view(m_view->mapToGlobal(QPoint(0, 0)), m_view->size());
+            const QPointF click = m_view->canvasToView().map(QPointF(pos));
+            const bool clickOnRight = click.x() > view.width() / 2.0;
+            const int x = clickOnRight ? view.left() + 16 : view.right() - m_textPanel->width() - 16;
+            m_textPanelPos = QPoint(x, view.bottom() - m_textPanel->height() - 48);
+        }
+        m_textPanel->move(m_textPanelPos);
+    }
+    m_textPanel->show();
+    m_textPanel->raise();
+    m_textPanel->activateWindow();
+    m_textPanel->focusText();
+    updateText();
+}
+
+void MainWindow::updateText()
+{
+    if (!m_text.active || !m_stack)
+        return;
+    easeletch::Layer *l = m_stack->layer(m_text.layerId);
+    if (!l)
+        return;
+    // The text may have been dragged since it was last drawn.
+    if (m_floating.isActive()) {
+        m_text.anchor += m_floating.position() - m_text.placed;
+        m_floating.cancel();
+    }
+    easeletch::TextSettings s = m_textPanel->settings();
+    s.color = m_color->color();
+    QPoint inset;
+    int width = 0;
+    const QImage image = easeletch::renderText(s, &inset, &width);
+    if (image.isNull()) {
+        m_view->setSelectionOutline(m_selection.outlines());
+        m_view->refresh();
+        return;
+    }
+    // Left-aligned text starts at the point clicked; centred text is centred
+    // on it; right-aligned text ends there.
+    QPoint corner = m_text.anchor;
+    if (s.align & Qt::AlignHCenter)
+        corner.rx() -= width / 2;
+    else if (s.align & Qt::AlignRight)
+        corner.rx() -= width;
+    m_text.placed = corner - inset;
+    m_floating.paste(&l->store, image, m_text.placed, {}, canvasRect());
+    m_floatLayer = l->id;
+    m_floatMask = false;
+    showFloatingOutline();
+    m_view->refresh();
+}
+
+void MainWindow::textPressed(const QPointF &pos)
+{
+    // A click starts new text, but only once the click is over: the canvas is
+    // still in the middle of it here.
+    m_text.clickStarts = !m_text.active;
+    if (!m_text.active)
+        return;
+    m_text.dragging = m_floating.isActive();
+    m_dragStart = pos;
+    m_dragOrigin = m_floating.position();
+}
+
+void MainWindow::textDragged(const QPointF &pos)
+{
+    if (!m_text.active || !m_text.dragging || !m_floating.isActive())
+        return;
+    const QPointF d = pos - m_dragStart;
+    m_floating.moveTo(m_dragOrigin + QPoint(int(std::lround(d.x())), int(std::lround(d.y()))));
+    showFloatingOutline();
+    m_view->refresh();
+}
+
+void MainWindow::textReleased(const QPointF &pos)
+{
+    m_text.dragging = false;
+    if (!m_text.clickStarts || m_text.active)
+        return;
+    m_text.clickStarts = false;
+    const QPoint at(int(std::floor(pos.x())), int(std::floor(pos.y())));
+    QTimer::singleShot(0, this, [this, at] {
+        if (!m_text.active && m_view->tool() == m_textTool)
+            beginText(at);
+    });
+}
+
+void MainWindow::commitText()
+{
+    if (!m_text.active)
+        return;
+    if (!m_floating.isActive()) {
+        cancelText(); // nothing was typed
+        return;
+    }
+    m_floating.commit(); // the pixels stay; the step recorded is "the document before the text layer"
+    m_text.active = false;
+    m_text.dragging = false;
+    m_moveDragging = false;
+    if (easeletch::Layer *l = m_stack->layer(m_text.layerId)) {
+        // Named after what it says.
+        QString name = m_textPanel->text().simplified();
+        if (name.size() > 24)
+            name = name.left(24) + QStringLiteral("…");
+        if (!name.isEmpty())
+            l->name = name;
+    }
+    m_history.pushState(tr("Text"), std::move(m_text.before), *m_stack);
+    m_text.before = easeletch::LayerStack();
+    m_view->setSelectionOutline(m_selection.outlines());
+    hideTextPanel();
+    layersChanged();
+}
+
+void MainWindow::hideTextPanel()
+{
+    if (m_textPanel->isVisible())
+        m_textPanelPos = m_textPanel->pos();
+    const QSignalBlocker block(m_textPanel);
+    m_textPanel->setText(QString());
+    m_textPanel->hide();
+}
+
+void MainWindow::cancelText()
+{
+    if (!m_text.active)
+        return;
+    m_floating.cancel();
+    m_text.active = false;
+    m_text.dragging = false;
+    m_moveDragging = false;
+    // Back to the document as it was before the text layer was made.
+    m_stack->swapState(m_text.before);
+    m_text.before = easeletch::LayerStack();
+    m_view->setSelectionOutline(m_selection.outlines());
+    hideTextPanel();
+    layersChanged();
 }
 
 void MainWindow::featherSelection(int pixels)
@@ -1055,6 +1264,10 @@ void MainWindow::showExportSelectionDialog()
 
 void MainWindow::cancelFloating()
 {
+    if (m_text.active) {
+        cancelText();
+        return;
+    }
     if (!m_floating.isActive())
         return;
     m_floating.cancel();
@@ -1630,6 +1843,11 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
     // Detach everything from the old document before it's freed.
     m_floating.cancel();
     m_lasso->cancel();
+    if (m_text.active) {
+        // The document it belonged to is going away.
+        m_text = TextSession();
+        hideTextPanel();
+    }
     m_moveDragging = false;
     setSelection({});
     m_brush->setDocument(nullptr, {}, nullptr);
@@ -1658,8 +1876,8 @@ void MainWindow::undo()
 {
     if (!m_stack || m_view->isStroking())
         return;
-    if (m_floating.isActive()) {
-        // Undoing an uncommitted move or paste is just putting it back.
+    if (m_floating.isActive() || m_text.active) {
+        // Undoing an uncommitted move, paste or text is just putting it back.
         cancelFloating();
         return;
     }
@@ -1671,7 +1889,7 @@ void MainWindow::undo()
 
 void MainWindow::redo()
 {
-    if (!m_stack || m_view->isStroking() || m_floating.isActive() || !m_history.canRedo())
+    if (!m_stack || m_view->isStroking() || m_floating.isActive() || m_text.active || !m_history.canRedo())
         return;
     const QSize before = canvasSize();
     afterHistoryMove(before, m_history.redo(*m_stack));
@@ -1830,6 +2048,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue(QStringLiteral("lastDir"), m_lastDir);
     m_color->saveSettings(settings);
     m_brush->saveSettings(settings);
+    m_textPanel->saveSettings(settings);
     m_grid.save(settings);
     settings.setValue(QStringLiteral("wand/tolerance"), m_wand->tolerance());
     settings.setValue(QStringLiteral("wand/contiguous"), m_wand->contiguous());

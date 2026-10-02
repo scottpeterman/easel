@@ -6,6 +6,7 @@
 #include "layerpanel.h"
 #include "mainwindow.h"
 #include "selecttools.h"
+#include "textpanel.h"
 
 #include <QSignalSpy>
 #include <QStatusBar>
@@ -667,6 +668,149 @@ private slots:
         w.undo();
         QCOMPARE(shown(w, 250, 150), QColor(Qt::blue));
         QCOMPARE(shown(w, 170, 70), QColor(Qt::white));
+    }
+
+    // --- Text ---
+
+    void textLandsOnItsOwnLayerAsOneUndoStep()
+    {
+        MainWindow w;
+        setupWindow(w);
+        const int bg = w.layers().activeId();
+        w.colorPanel()->setColor(Qt::black);
+        w.textPanel()->setPixelSize(60);
+        w.textPanel()->setBold(true);
+        w.textPanel()->setAlignment(Qt::AlignLeft);
+        w.textPanel()->setSmooth(true);
+
+        // A real click with the Text tool starts it, once the click is over.
+        w.canvasView()->setTool(w.textTool());
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {50, 100}));
+        QTRY_VERIFY(w.isTyping());
+        QVERIFY(w.textPanel()->isVisible());
+        QCOMPARE(w.layers().count(), 2);       // a layer is ready for it
+        QCOMPARE(w.history().count(), 0);      // but nothing is recorded yet
+        QCOMPARE(w.layerPanel()->tree()->topLevelItemCount(), 2);
+        QVERIFY(!w.isModified());
+
+        // Typing shows on the canvas straight away, on the new layer only.
+        w.textPanel()->setText(QStringLiteral("HELLO"));
+        const int text = w.layers().activeId();
+        const auto inkIn = [&](const QRect &r) {
+            int n = 0;
+            w.canvasView()->refresh();
+            for (int y = r.top(); y <= r.bottom(); ++y)
+                for (int x = r.left(); x <= r.right(); ++x)
+                    n += at(w.layers().composite(), x, y).red() < 128;
+            return n;
+        };
+        QVERIFY(inkIn(QRect(50, 100, 250, 70)) > 500);
+        QCOMPARE(inkIn(QRect(50, 200, 250, 70)), 0);
+        QCOMPARE(w.layers().layer(bg)->store.tileCount(), 0);
+        QVERIFY(w.selection().isEmpty()); // the frame around it isn't a selection
+
+        // The colour follows the Color panel; more text redraws it.
+        w.colorPanel()->setColor(Qt::red);
+        QCOMPARE(inkIn(QRect(50, 100, 250, 70)), 0); // red, not dark, now
+        w.colorPanel()->setColor(Qt::black);
+        const int before = inkIn(QRect(50, 100, 340, 70));
+        w.textPanel()->setText(QStringLiteral("HELLO!!"));
+        QVERIFY(inkIn(QRect(50, 100, 340, 70)) > before);
+
+        // Dragging on the canvas moves it.
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 120}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {100, 170}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {100, 220}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 220}));
+        QTest::qWait(20);
+        QVERIFY(w.isTyping()); // a drag moves the text; it doesn't start another
+        QCOMPARE(inkIn(QRect(50, 100, 250, 60)), 0);
+        QVERIFY(inkIn(QRect(50, 200, 250, 70)) > 500);
+        // ... and stays moved when the text changes again.
+        w.textPanel()->setText(QStringLiteral("HELLO"));
+        QCOMPARE(inkIn(QRect(50, 100, 250, 60)), 0);
+        QVERIFY(inkIn(QRect(50, 200, 250, 70)) > 500);
+
+        // Placing it is one undo step, and the layer is named after the words.
+        w.commitText();
+        QVERIFY(!w.isTyping());
+        QVERIFY(!w.textPanel()->isVisible());
+        QCOMPARE(w.history().count(), 1);
+        QCOMPARE(w.history().label(0), QStringLiteral("Text"));
+        QCOMPARE(w.layers().layer(text)->name, QStringLiteral("HELLO"));
+        QVERIFY(w.isModified());
+        QVERIFY(inkIn(QRect(50, 200, 250, 70)) > 500);
+        QVERIFY(w.layers().layer(text)->store.tileCount() > 0);
+
+        w.undo();
+        QCOMPARE(w.layers().count(), 1);
+        QCOMPARE(inkIn(QRect(50, 200, 250, 70)), 0);
+        QVERIFY(!w.isModified());
+        w.redo();
+        QCOMPARE(w.layers().count(), 2);
+        QVERIFY(inkIn(QRect(50, 200, 250, 70)) > 500);
+        // It's ordinary pixels now: the eraser works on it.
+        QVERIFY(w.layer() == &w.layers().layer(text)->store);
+    }
+
+    void textCanBeDroppedOrPlacedByOtherActions()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.textPanel()->setPixelSize(40);
+
+        // Cancel: no layer, no history.
+        w.beginText({50, 50});
+        w.textPanel()->setText(QStringLiteral("gone"));
+        QCOMPARE(w.layers().count(), 2);
+        w.cancelText();
+        QCOMPARE(w.layers().count(), 1);
+        QCOMPARE(w.history().count(), 0);
+        QVERIFY(!w.isModified());
+        QCOMPARE(shown(w, 60, 70), QColor(Qt::white));
+        QCOMPARE(w.layerPanel()->tree()->topLevelItemCount(), 1);
+
+        // Nothing typed, then placed: the same as cancel.
+        w.beginText({50, 50});
+        w.commitText();
+        QCOMPARE(w.layers().count(), 1);
+        QCOMPARE(w.history().count(), 0);
+
+        // Undo while typing drops the text and nothing else.
+        stroke(w, {50, 250}, {300, 250});
+        w.beginText({50, 50});
+        w.textPanel()->setText(QStringLiteral("typing"));
+        w.undo();
+        QVERIFY(!w.isTyping());
+        QCOMPARE(w.layers().count(), 1);
+        QCOMPARE(w.history().count(), 1);
+        QCOMPARE(w.history().position(), 1); // the stroke is still there
+        QCOMPARE(shown(w, 150, 250), QColor(Qt::red));
+
+        // Switching to another tool, or saving, places it.
+        w.beginText({50, 50});
+        w.textPanel()->setText(QStringLiteral("kept"));
+        w.setActiveLayer(w.layers().children(0).first());
+        QVERIFY(!w.isTyping());
+        QCOMPARE(w.layers().count(), 2);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Text"));
+
+        // Centred text is centred on the point clicked.
+        w.textPanel()->setAlignment(Qt::AlignHCenter);
+        w.colorPanel()->setColor(Qt::black);
+        w.beginText({200, 150});
+        w.textPanel()->setText(QStringLiteral("MMMM"));
+        w.commitText();
+        const TileStore &t = w.layers().active()->store;
+        int left = 400, right = 0;
+        for (int x = 0; x < 400; ++x)
+            for (int y = 150; y < 200; ++y)
+                if (at(t, x, y).alpha() > 128) {
+                    left = qMin(left, x);
+                    right = qMax(right, x);
+                }
+        QVERIFY(right > left);
+        QVERIFY(qAbs((left + right) / 2 - 200) <= 4);
     }
 };
 

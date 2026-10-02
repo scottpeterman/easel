@@ -10,6 +10,8 @@ Layers: raster layers and groups, each with visibility, lock, opacity and one of
 
 Selections: rectangle, ellipse, lasso (freehand or point by point) and magic wand, with add and subtract, invert, grow, shrink and feather. A feathered selection fades at its edge, and everything done through it (paint, delete, cut, copy, move, Color to Alpha) fades the same way.
 
+Text: the Text tool types with any font installed on the machine, in any size, bold or italic, left, centred or right, smooth or hard-edged for pixel art. The canvas shows it as you type and you can drag it into place. Placed text lands on a new layer of its own as ordinary pixels: it can be moved, faded, masked or erased like anything else, but not retyped.
+
 Layer masks: any layer or group can have a mask that hides part of it without erasing anything. Paint on the mask with the ordinary brush: black hides, white shows, and brush opacity gives the in-between. A mask added while something is selected shows only the selection. Masks can be switched off, applied (erasing what they hide) or removed.
 
 The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Transforms, adjustments and the rest arrive by milestone.
@@ -35,6 +37,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
 | Drop / cancel floating pixels | Enter / Escape |
 | Lasso | L; drag around something and let go, or click point by point and press Enter (or click the first point). Escape gives up. Shift adds, Ctrl subtracts |
+| Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
 | Feather selection | Shift+F6 |
 | Add a layer mask | Layers panel: Add Mask (from the selection, if there is one) |
 | Paint on the mask / on the layer | Ctrl+M, or Paint Mask in the Layers panel |

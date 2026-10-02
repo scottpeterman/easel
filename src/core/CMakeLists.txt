@@ -19,6 +19,8 @@ add_library(easeletch_core STATIC
     selection.cpp
     regionops.h
     regionops.cpp
+    textrender.h
+    textrender.cpp
 )
 
 # The layer compositor spreads tiles over std::thread workers.
