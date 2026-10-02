@@ -6,7 +6,7 @@
 #include <cstring>
 #include <vector>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 
@@ -489,4 +489,4 @@ void FloatingContent::reset()
     m_lifted = false;
 }
 
-} // namespace easel
+} // namespace easeletch

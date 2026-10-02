@@ -10,10 +10,10 @@
 
 #include <memory>
 
-namespace easel {
+namespace easeletch {
 
-// Native documents are .easel files: a zip holding
-//   mimetype                 "application/x-easel", stored first
+// Native documents are .easeletch files: a zip holding
+//   mimetype                 "application/x-easeletch", stored first
 //   manifest.json            canvas size, pixel format, and the layers bottom to top:
 //                            id, name, type (raster / group), parent (the group it's
 //                            in, 0 for none), visible, locked, opacity, blend
@@ -29,7 +29,10 @@ namespace easel {
 // one, so a failed save never damages the previous file. Limit: Qt's zip writer
 // is zip32, so one file must stay under 4 GB (roughly a fully painted
 // 20000 x 20000 canvas).
-inline constexpr char NativeSuffix[] = "easel";
+inline constexpr char NativeSuffix[] = "easeletch";
+// The app was first called Easel: its .easel files (manifest format "easel")
+// still open. They aren't written back to; saving one asks for a new name.
+inline constexpr char LegacySuffix[] = "easel";
 // Version 1 held a single layer; version 2 holds the layer stack.
 inline constexpr int FormatVersion = 2;
 inline constexpr int PreviewMaxSide = 2048;
@@ -42,22 +45,24 @@ struct LoadedDocument {
     std::unique_ptr<LayerStack> stack;
     TilePyramid pyramid; // built over stack->composite()
     QSize size;
-    bool native = false; // came from an .easel file (so Save can write back to it)
+    bool native = false; // came from an .easeletch file (so Save can write back to it)
     QString error;       // set when stack is null
 
     bool ok() const { return stack != nullptr; }
 };
 
+// An .easeletch file, or an .easel file from before the rename.
 bool isNativeDocument(const QString &path);
+bool isLegacyDocument(const QString &path);
 
-// Opens an .easel document, or decodes an image file (sRGB assumed) into a
+// Opens an .easeletch document, or decodes an image file (sRGB assumed) into a
 // single layer, and builds its pyramid. Slow for large images:
 // call from a worker thread.
 LoadedDocument loadDocument(const QString &path);
 LoadedDocument loadImageDocument(const QString &path);
 LoadedDocument loadNativeDocument(const QString &path);
 
-// Writes an .easel file. Returns an empty string on success, else the error.
+// Writes an .easeletch file. Returns an empty string on success, else the error.
 // Takes the stack by value: pass a copy (with its composite up to date) and
 // the call can run on a worker thread while painting continues.
 QString saveNativeDocument(const QString &path, LayerStack stack);
@@ -73,4 +78,4 @@ QString exportImage(const QString &path, const TileStore &store, const QSize &si
 // Writes an 8-bit image the same way (e.g. an exported selection).
 QString writeImageFile(const QString &path, QImage image, int quality = 92);
 
-} // namespace easel
+} // namespace easeletch

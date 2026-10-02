@@ -48,20 +48,21 @@
 #include <cmath>
 #include <memory>
 
-using easel::BrushMode;
+using easeletch::BrushMode;
 
 namespace {
 
 constexpr int kSettingsVersion = 2;
-constexpr char kClipMime[] = "application/x-easel-clip";
+constexpr char kClipMime[] = "application/x-easeletch-clip";
 
 QString openFilter()
 {
     QStringList images;
     for (const QByteArray &fmt : QImageReader::supportedImageFormats())
         images << QStringLiteral("*.") + QString::fromLatin1(fmt);
-    const QString native = QStringLiteral("*.") + QLatin1String(easel::NativeSuffix);
-    return QObject::tr("All supported (%1 %2);;Easel documents (%1);;Images (%2);;All files (*)")
+    const QString native = QStringLiteral("*.%1 *.%2").arg(QLatin1String(easeletch::NativeSuffix),
+                                                          QLatin1String(easeletch::LegacySuffix));
+    return QObject::tr("All supported (%1 %2);;Easeletch documents (%1);;Images (%2);;All files (*)")
         .arg(native, images.join(QLatin1Char(' ')));
 }
 
@@ -80,8 +81,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_brush = new BrushTool(this);
     m_eyedropper = new EyedropperTool(this);
-    m_rectSelect = new SelectTool(easel::Selection::Shape::Rect, this);
-    m_ellipseSelect = new SelectTool(easel::Selection::Shape::Ellipse, this);
+    m_rectSelect = new SelectTool(easeletch::Selection::Shape::Rect, this);
+    m_ellipseSelect = new SelectTool(easeletch::Selection::Shape::Ellipse, this);
     m_move = new MoveTool(this);
     m_wand = new WandTool(this);
     connect(m_wand, &WandTool::clicked, this, &MainWindow::wandClicked);
@@ -312,9 +313,9 @@ void MainWindow::createActions()
             m_viewMenu->addAction(bar->toggleViewAction());
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
-    auto *about = help->addAction(tr("&About Easel"), this, &MainWindow::showAbout);
+    auto *about = help->addAction(tr("&About Easeletch"), this, &MainWindow::showAbout);
     about->setMenuRole(QAction::AboutRole);
-    // Easel links Qt under the LGPL, which asks for Qt's own notice to be shown.
+    // Easeletch links Qt under the LGPL, which asks for Qt's own notice to be shown.
     auto *aboutQt = help->addAction(tr("About &Qt"), qApp, &QApplication::aboutQt);
     aboutQt->setMenuRole(QAction::AboutQtRole);
 }
@@ -544,9 +545,9 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
 
 // --- Selection, clipboard and moving ------------------------------------------
 
-void MainWindow::setSelection(const easel::Selection &selection)
+void MainWindow::setSelection(const easeletch::Selection &selection)
 {
-    const easel::Selection clipped = selection.isEmpty() ? easel::Selection() : selection;
+    const easeletch::Selection clipped = selection.isEmpty() ? easeletch::Selection() : selection;
     m_selection = clipped;
     m_view->setSelectionOutline(clipped.outlines());
     updateSelectionActions();
@@ -570,7 +571,7 @@ void MainWindow::updateSelectionActions()
 void MainWindow::selectAll()
 {
     commitFloating();
-    setSelection(easel::Selection::rect(canvasRect()));
+    setSelection(easeletch::Selection::rect(canvasRect()));
 }
 
 void MainWindow::deselect()
@@ -579,7 +580,7 @@ void MainWindow::deselect()
     setSelection({});
 }
 
-void MainWindow::storeClip(const QImage &content, const easel::Selection &shape, const QPoint &origin)
+void MainWindow::storeClip(const QImage &content, const easeletch::Selection &shape, const QPoint &origin)
 {
     m_clip.content = content;
     m_clip.shape = shape;
@@ -587,7 +588,7 @@ void MainWindow::storeClip(const QImage &content, const easel::Selection &shape,
     m_clip.token = QUuid::createUuid().toByteArray();
 
     auto *mime = new QMimeData;
-    mime->setImageData(easel::toClipboardImage(content));
+    mime->setImageData(easeletch::toClipboardImage(content));
     mime->setData(QString::fromLatin1(kClipMime), m_clip.token);
     QGuiApplication::clipboard()->setMimeData(mime);
 }
@@ -597,13 +598,13 @@ void MainWindow::copy()
     if (!m_stack || m_selection.isEmpty())
         return;
     if (m_floating.isActive()) {
-        const easel::Selection sel = m_floating.selection();
+        const easeletch::Selection sel = m_floating.selection();
         storeClip(m_floating.content(), sel.translated(-m_floating.position()), m_floating.position());
         return;
     }
-    const easel::Selection sel = m_selection;
+    const easeletch::Selection sel = m_selection;
     const QRect b = sel.bounds();
-    storeClip(easel::extractSelection(*readStore(), sel), sel.translated(-b.topLeft()), b.topLeft());
+    storeClip(easeletch::extractSelection(*readStore(), sel), sel.translated(-b.topLeft()), b.topLeft());
 }
 
 void MainWindow::cut()
@@ -625,24 +626,24 @@ void MainWindow::deleteSelection()
 
 void MainWindow::clearSelected(const QString &label)
 {
-    const easel::Selection target = m_selection;
-    QHash<easel::TileCoord, QImage> before;
+    const easeletch::Selection target = m_selection;
+    QHash<easeletch::TileCoord, QImage> before;
     int layerId = m_stack->activeId();
     if (m_floating.isActive()) {
         // Floating pixels just go away: for a paste that's no change at all,
         // for a lift it's the original area cleared.
         const bool lifted = m_floating.wasLifted();
-        const easel::Selection origin = m_selectionBeforeFloat;
+        const easeletch::Selection origin = m_selectionBeforeFloat;
         m_floating.cancel();
         layerId = m_floatLayer;
-        easel::Layer *l = m_stack->layer(layerId);
+        easeletch::Layer *l = m_stack->layer(layerId);
         if (lifted && l)
-            before = easel::clearSelection(l->store, origin, canvasRect());
+            before = easeletch::clearSelection(l->store, origin, canvasRect());
     } else {
-        easel::TileStore *store = editStore();
+        easeletch::TileStore *store = editStore();
         if (!store)
             return;
-        before = easel::clearSelection(*store, target, canvasRect());
+        before = easeletch::clearSelection(*store, target, canvasRect());
     }
     if (!before.isEmpty())
         m_history.push(label, layerId, std::move(before));
@@ -666,7 +667,7 @@ void MainWindow::paste()
     const bool ours = !m_clip.content.isNull() &&
                       (!mime || !mime->hasImage() || mime->data(QString::fromLatin1(kClipMime)) == m_clip.token);
     QImage content;
-    easel::Selection shape;
+    easeletch::Selection shape;
     QPoint pos;
     const QRect visible = visibleCanvasRect();
     if (ours) {
@@ -680,7 +681,7 @@ void MainWindow::paste()
         const QImage image = qvariant_cast<QImage>(mime->imageData());
         if (image.isNull())
             return;
-        content = easel::fromClipboardImage(image);
+        content = easeletch::fromClipboardImage(image);
         pos = visible.isEmpty() ? QPoint(0, 0)
                                 : visible.center() - QPoint(content.width() / 2, content.height() / 2);
     } else {
@@ -688,7 +689,7 @@ void MainWindow::paste()
     }
 
     commitFloating();
-    easel::TileStore *store = editStore();
+    easeletch::TileStore *store = editStore();
     if (!store)
         return;
     m_selectionBeforeFloat = m_selection;
@@ -705,11 +706,11 @@ bool MainWindow::liftForMove()
 {
     if (m_floating.isActive())
         return true;
-    easel::TileStore *store = m_stack ? editStore() : nullptr;
+    easeletch::TileStore *store = m_stack ? editStore() : nullptr;
     if (!store)
         return false;
     // With nothing selected, Move takes the whole layer.
-    const easel::Selection sel = m_selection.isEmpty() ? easel::Selection::rect(canvasRect()) : m_selection;
+    const easeletch::Selection sel = m_selection.isEmpty() ? easeletch::Selection::rect(canvasRect()) : m_selection;
     m_selectionBeforeFloat = m_selection;
     m_floatLayer = m_stack->activeId();
     m_floating.lift(store, sel, canvasRect());
@@ -756,7 +757,7 @@ void MainWindow::commitFloating()
         cancelFloating();
         return;
     }
-    const easel::Selection placed = m_floating.selection();
+    const easeletch::Selection placed = m_floating.selection();
     m_history.push(m_floatLabel, m_floatLayer, m_floating.commit());
     m_moveDragging = false;
     setSelection(placed);
@@ -810,7 +811,7 @@ void MainWindow::trim()
     commitFloating();
     // What you see decides: every visible layer counts.
     syncComposite();
-    const QRect rect = easel::opaqueBounds(m_stack->composite(), canvasRect());
+    const QRect rect = easeletch::opaqueBounds(m_stack->composite(), canvasRect());
     if (rect.isEmpty()) {
         statusBar()->showMessage(tr("Nothing to trim to: the canvas is fully transparent"), 4000);
         return;
@@ -826,10 +827,10 @@ void MainWindow::cropCanvasTo(const QRect &rect, const QString &label)
 {
     if (rect.isEmpty() || rect == canvasRect())
         return;
-    easel::LayerStack before = m_stack->snapshot();
-    for (const easel::Layer &l : m_stack->layers())
+    easeletch::LayerStack before = m_stack->snapshot();
+    for (const easeletch::Layer &l : m_stack->layers())
         if (!l.group)
-            easel::cropStore(m_stack->layer(l.id)->store, rect);
+            easeletch::cropStore(m_stack->layer(l.id)->store, rect);
     m_stack->setSize(rect.size());
     m_history.pushState(label, std::move(before), *m_stack);
     setSelection({});
@@ -850,7 +851,7 @@ void MainWindow::growSelection(int pixels)
         return;
     commitFloating();
     QApplication::setOverrideCursor(Qt::BusyCursor);
-    const easel::Selection s = m_selection.grown(pixels, canvasRect());
+    const easeletch::Selection s = m_selection.grown(pixels, canvasRect());
     QApplication::restoreOverrideCursor();
     setSelection(s);
 }
@@ -863,8 +864,8 @@ void MainWindow::wandClicked(const QPointF &pos, Qt::KeyboardModifiers modifiers
     if (!canvasRect().contains(seed))
         return;
     QApplication::setOverrideCursor(Qt::BusyCursor);
-    const easel::Selection picked =
-        easel::magicWand(*readStore(), canvasRect(), seed, m_wand->tolerance(), m_wand->contiguous());
+    const easeletch::Selection picked =
+        easeletch::magicWand(*readStore(), canvasRect(), seed, m_wand->tolerance(), m_wand->contiguous());
     QApplication::restoreOverrideCursor();
     if (modifiers & Qt::ShiftModifier)
         setSelection(m_selection.united(picked));
@@ -879,11 +880,11 @@ void MainWindow::colorToAlpha(const QColor &color, double threshold)
     if (!m_stack || m_view->isStroking())
         return;
     commitFloating();
-    easel::TileStore *store = editStore();
+    easeletch::TileStore *store = editStore();
     if (!store)
         return;
     QApplication::setOverrideCursor(Qt::BusyCursor);
-    auto before = easel::colorToAlpha(*store, m_selection, canvasRect(), color, threshold);
+    auto before = easeletch::colorToAlpha(*store, m_selection, canvasRect(), color, threshold);
     QApplication::restoreOverrideCursor();
     if (before.isEmpty())
         return;
@@ -896,7 +897,7 @@ void MainWindow::showColorToAlphaDialog()
 {
     if (!m_stack || !editStore())
         return;
-    const QColor corner = easel::pixelToColor(readStore()->pixel(0, 0));
+    const QColor corner = easeletch::pixelToColor(readStore()->pixel(0, 0));
     ColorToAlphaDialog dlg(m_brush->color(), corner.alpha() > 0 ? corner : QColor(), m_colorToAlphaThreshold, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -939,14 +940,14 @@ bool MainWindow::exportSelectionTo(const QString &path)
     if (!m_stack || m_selection.isEmpty())
         return false;
     syncComposite();
-    const easel::Selection sel = m_floating.isActive() ? m_floating.selection() : m_selection;
+    const easeletch::Selection sel = m_floating.isActive() ? m_floating.selection() : m_selection;
     const QRect b = sel.bounds();
     const QRect keep = b & canvasRect();
     if (keep.isEmpty())
         return false;
-    const QImage image = easel::toClipboardImage(easel::extractSelection(*readStore(), sel))
+    const QImage image = easeletch::toClipboardImage(easeletch::extractSelection(*readStore(), sel))
                              .copy(keep.translated(-b.topLeft()));
-    const QString error = easel::writeImageFile(path, image);
+    const QString error = easeletch::writeImageFile(path, image);
     if (!error.isEmpty()) {
         QMessageBox::warning(this, tr("Export Selection"),
                              tr("Could not export %1:\n%2").arg(QDir::toNativeSeparators(path), error));
@@ -984,15 +985,15 @@ void MainWindow::cancelFloating()
 
 // --- Layers ---------------------------------------------------------------------
 
-easel::TileStore *MainWindow::layer() const
+easeletch::TileStore *MainWindow::layer() const
 {
-    easel::Layer *l = m_stack ? m_stack->active() : nullptr;
+    easeletch::Layer *l = m_stack ? m_stack->active() : nullptr;
     return l && !l->group ? &l->store : nullptr;
 }
 
-easel::TileStore *MainWindow::editStore()
+easeletch::TileStore *MainWindow::editStore()
 {
-    easel::Layer *l = m_stack ? m_stack->active() : nullptr;
+    easeletch::Layer *l = m_stack ? m_stack->active() : nullptr;
     if (!l)
         return nullptr;
     QString why;
@@ -1009,9 +1010,9 @@ easel::TileStore *MainWindow::editStore()
     return &l->store;
 }
 
-const easel::TileStore *MainWindow::readStore() const
+const easeletch::TileStore *MainWindow::readStore() const
 {
-    if (const easel::TileStore *store = layer())
+    if (const easeletch::TileStore *store = layer())
         return store;
     syncComposite();
     return &m_stack->composite();
@@ -1020,7 +1021,7 @@ const easel::TileStore *MainWindow::readStore() const
 void MainWindow::bindTools()
 {
     const QRect bounds = canvasRect();
-    easel::Layer *l = m_stack->active();
+    easeletch::Layer *l = m_stack->active();
     const bool paintable = l && !l->group && !m_stack->isLocked(l->id) && m_stack->isShown(l->id);
     m_brush->setDocument(paintable ? &l->store : nullptr, bounds, &m_history, l ? l->id : 0);
     // The eyedropper picks what's on screen.
@@ -1035,7 +1036,7 @@ bool MainWindow::beginLayerChange()
     return true;
 }
 
-void MainWindow::finishLayerChange(const QString &label, easel::LayerStack before)
+void MainWindow::finishLayerChange(const QString &label, easeletch::LayerStack before)
 {
     m_history.pushState(label, std::move(before), *m_stack);
     layersChanged();
@@ -1065,10 +1066,10 @@ bool MainWindow::addLayer()
 {
     if (!beginLayerChange())
         return false;
-    easel::LayerStack before = m_stack->snapshot();
-    easel::Layer l;
+    easeletch::LayerStack before = m_stack->snapshot();
+    easeletch::Layer l;
     l.name = m_stack->uniqueName(tr("Layer"));
-    const easel::Layer *active = m_stack->active();
+    const easeletch::Layer *active = m_stack->active();
     int id = 0;
     if (active && active->group) {
         id = m_stack->insert(std::move(l), active->id, INT_MAX); // on top, inside the group
@@ -1086,10 +1087,10 @@ bool MainWindow::addGroup()
 {
     if (!beginLayerChange() || !m_stack->active())
         return false;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     const int activeId = m_stack->activeId();
     const int parent = m_stack->active()->parent;
-    easel::Layer g;
+    easeletch::Layer g;
     g.group = true;
     g.name = m_stack->uniqueName(tr("Group"));
     const int group = m_stack->insert(std::move(g), parent, int(m_stack->children(parent).indexOf(activeId)));
@@ -1103,7 +1104,7 @@ bool MainWindow::duplicateLayer()
 {
     if (!beginLayerChange() || !m_stack->active())
         return false;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     m_stack->setActive(m_stack->duplicate(m_stack->activeId()));
     finishLayerChange(tr("Duplicate Layer"), std::move(before));
     return true;
@@ -1118,7 +1119,7 @@ bool MainWindow::deleteLayer()
         statusBar()->showMessage(tr("A document needs at least one layer"), 4000);
         return false;
     }
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     m_stack->remove(id);
     finishLayerChange(tr("Delete Layer"), std::move(before));
     return true;
@@ -1128,7 +1129,7 @@ bool MainWindow::mergeDown()
 {
     if (!beginLayerChange() || !m_stack->active())
         return false;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     const bool group = m_stack->active()->group;
     QApplication::setOverrideCursor(Qt::BusyCursor);
     const bool ok = group ? m_stack->mergeGroup(m_stack->activeId()) : m_stack->mergeDown(m_stack->activeId());
@@ -1145,7 +1146,7 @@ bool MainWindow::flattenImage()
 {
     if (!beginLayerChange() || m_stack->count() < 2)
         return false;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     QApplication::setOverrideCursor(Qt::BusyCursor);
     m_stack->flatten(tr("Background"));
     QApplication::restoreOverrideCursor();
@@ -1157,17 +1158,17 @@ bool MainWindow::moveLayerBy(int step)
 {
     if (!beginLayerChange() || !m_stack->active())
         return false;
-    const easel::Layer *l = m_stack->active();
+    const easeletch::Layer *l = m_stack->active();
     const int id = l->id;
     const QList<int> siblings = m_stack->children(l->parent);
     const int at = int(siblings.indexOf(id));
     const int to = at + step;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     if (to >= 0 && to < siblings.size()) {
         m_stack->move(id, l->parent, to);
     } else if (l->parent != 0) {
         // Past the end of its group: out of it, just above or below the group.
-        const easel::Layer *group = m_stack->layer(l->parent);
+        const easeletch::Layer *group = m_stack->layer(l->parent);
         const int outer = group->parent;
         const int groupAt = int(m_stack->children(outer).indexOf(group->id));
         m_stack->move(id, outer, step > 0 ? groupAt + 1 : groupAt);
@@ -1192,10 +1193,10 @@ bool MainWindow::rearrangeLayers(const QList<QPair<int, int>> &order)
 {
     QList<QPair<int, int>> current;
     if (m_stack) {
-        for (const easel::Layer &l : m_stack->layers())
+        for (const easeletch::Layer &l : m_stack->layers())
             current.append({l.id, l.parent});
     }
-    easel::LayerStack before;
+    easeletch::LayerStack before;
     const bool ok = order != current && beginLayerChange()
                     && (before = m_stack->snapshot(), m_stack->rearrange(order));
     if (!ok) {
@@ -1211,7 +1212,7 @@ void MainWindow::setLayerVisible(int id, bool visible)
 {
     if (!beginLayerChange() || !m_stack->layer(id) || m_stack->layer(id)->visible == visible)
         return;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     m_stack->layer(id)->visible = visible;
     finishLayerChange(visible ? tr("Show Layer") : tr("Hide Layer"), std::move(before));
 }
@@ -1220,7 +1221,7 @@ void MainWindow::setLayerLocked(int id, bool locked)
 {
     if (!beginLayerChange() || !m_stack->layer(id) || m_stack->layer(id)->locked == locked)
         return;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     m_stack->layer(id)->locked = locked;
     finishLayerChange(locked ? tr("Lock Layer") : tr("Unlock Layer"), std::move(before));
 }
@@ -1229,16 +1230,16 @@ void MainWindow::renameLayer(int id, const QString &name)
 {
     if (!beginLayerChange() || !m_stack->layer(id) || name.isEmpty() || m_stack->layer(id)->name == name)
         return;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     m_stack->layer(id)->name = name;
     finishLayerChange(tr("Rename Layer"), std::move(before));
 }
 
-void MainWindow::setLayerBlend(int id, easel::BlendMode mode)
+void MainWindow::setLayerBlend(int id, easeletch::BlendMode mode)
 {
     if (!beginLayerChange() || !m_stack->layer(id) || m_stack->layer(id)->blend == mode)
         return;
-    easel::LayerStack before = m_stack->snapshot();
+    easeletch::LayerStack before = m_stack->snapshot();
     m_stack->layer(id)->blend = mode;
     finishLayerChange(tr("Blend Mode: %1").arg(LayerPanel::blendModeName(mode)), std::move(before));
 }
@@ -1250,7 +1251,7 @@ void MainWindow::setLayerOpacity(int id, double opacity)
         return;
     // Dragging the slider sends many values; they add up to one undo step.
     const bool continuing = m_opacityLayer == id && m_opacityState == m_history.stateId();
-    easel::LayerStack before;
+    easeletch::LayerStack before;
     if (!continuing)
         before = m_stack->snapshot();
     m_stack->layer(id)->opacity = opacity;
@@ -1286,8 +1287,8 @@ void MainWindow::syncComposite() const
 
 void MainWindow::newDocument(const QSize &size, const QColor &background)
 {
-    auto stack = std::make_unique<easel::LayerStack>(
-        easel::LayerStack::single(easel::TileStore(background), size, tr("Background")));
+    auto stack = std::make_unique<easeletch::LayerStack>(
+        easeletch::LayerStack::single(easeletch::TileStore(background), size, tr("Background")));
     setDocument(std::move(stack), tr("Untitled"), tr("New %1 × %2").arg(size.width()).arg(size.height()));
 }
 
@@ -1304,7 +1305,7 @@ void MainWindow::openDocument(const QString &path)
 
     QPointer<MainWindow> self(this);
     QThreadPool::globalInstance()->start([self, path, generation] {
-        auto doc = std::make_shared<easel::LoadedDocument>(easel::loadDocument(path));
+        auto doc = std::make_shared<easeletch::LoadedDocument>(easeletch::loadDocument(path));
         QMetaObject::invokeMethod(
             qApp,
             [self, path, generation, doc] {
@@ -1315,7 +1316,7 @@ void MainWindow::openDocument(const QString &path)
     });
 }
 
-void MainWindow::finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc)
+void MainWindow::finishOpen(const QString &path, quint64 generation, easeletch::LoadedDocument doc)
 {
     if (generation != m_openGeneration)
         return; // superseded by a later open
@@ -1335,7 +1336,7 @@ void MainWindow::finishOpen(const QString &path, quint64 generation, easel::Load
 
     const QFileInfo info(path);
     m_lastDir = info.absolutePath();
-    // Only an .easel file is saved back to; an opened image gets Save As.
+    // Only an .easeletch file is saved back to; an opened image gets Save As.
     setDocument(std::move(doc.stack), info.fileName(), tr("Open %1").arg(info.fileName()),
                 std::move(doc.pyramid), doc.native ? info.absoluteFilePath() : QString());
     emit documentOpened(path, true);
@@ -1361,12 +1362,12 @@ bool MainWindow::saveAs()
 
 QString MainWindow::askSavePath()
 {
-    const QString suffix = QLatin1String(easel::NativeSuffix);
+    const QString suffix = QLatin1String(easeletch::NativeSuffix);
     QString suggested = m_path;
     if (suggested.isEmpty())
         suggested = QDir(m_lastDir).filePath(QFileInfo(m_name).completeBaseName() + QLatin1Char('.') + suffix);
     const QString path = QFileDialog::getSaveFileName(this, tr("Save As"), suggested,
-                                                      tr("Easel documents (*.%1)").arg(suffix));
+                                                      tr("Easeletch documents (*.%1)").arg(suffix));
     return path.isEmpty() ? QString() : withSuffix(path, suffix);
 }
 
@@ -1379,14 +1380,14 @@ bool MainWindow::saveDocumentTo(const QString &path, bool wait)
     // painting can go on while it's written out.
     syncComposite();
     m_opacityLayer = 0; // a later opacity change is a change since this save
-    easel::LayerStack snapshot = *m_stack;
+    easeletch::LayerStack snapshot = *m_stack;
     const quint64 stateId = m_history.stateId();
     const quint64 docGeneration = m_docGeneration;
     m_lastDir = QFileInfo(path).absolutePath();
 
     if (wait) {
         QApplication::setOverrideCursor(Qt::BusyCursor);
-        const QString error = easel::saveNativeDocument(path, std::move(snapshot));
+        const QString error = easeletch::saveNativeDocument(path, std::move(snapshot));
         QApplication::restoreOverrideCursor();
         ++m_pendingJobs; // balanced in finishSave
         finishSave(path, stateId, docGeneration, error);
@@ -1396,9 +1397,9 @@ bool MainWindow::saveDocumentTo(const QString &path, bool wait)
     statusBar()->showMessage(tr("Saving %1…").arg(QFileInfo(path).fileName()));
     ++m_pendingJobs;
     QPointer<MainWindow> self(this);
-    auto shared = std::make_shared<easel::LayerStack>(std::move(snapshot));
+    auto shared = std::make_shared<easeletch::LayerStack>(std::move(snapshot));
     QThreadPool::globalInstance()->start([self, path, shared, stateId, docGeneration] {
-        const QString error = easel::saveNativeDocument(path, std::move(*shared));
+        const QString error = easeletch::saveNativeDocument(path, std::move(*shared));
         QMetaObject::invokeMethod(
             qApp,
             [self, path, stateId, docGeneration, error] {
@@ -1448,8 +1449,8 @@ bool MainWindow::maybeSave()
     return !path.isEmpty() && saveDocumentTo(path, true);
 }
 
-void MainWindow::setDocument(std::unique_ptr<easel::LayerStack> stack, const QString &name,
-                             const QString &historyLabel, easel::TilePyramid pyramid, const QString &path)
+void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const QString &name,
+                             const QString &historyLabel, easeletch::TilePyramid pyramid, const QString &path)
 {
     // Detach everything from the old document before it's freed.
     m_floating.cancel();
@@ -1538,7 +1539,7 @@ void MainWindow::historyChanged()
 void MainWindow::updateTitle()
 {
     // [*] shows as "*" when the document has unsaved changes.
-    setWindowTitle(tr("%1[*] (%2 × %3) — Easel").arg(m_name).arg(canvasSize().width()).arg(canvasSize().height()));
+    setWindowTitle(tr("%1[*] (%2 × %3) — Easeletch").arg(m_name).arg(canvasSize().width()).arg(canvasSize().height()));
     setWindowModified(isModified());
 }
 
@@ -1598,10 +1599,10 @@ void MainWindow::showExportDialog()
     ++m_pendingJobs;
     QPointer<MainWindow> self(this);
     syncComposite();
-    auto snapshot = std::make_shared<easel::TileStore>(m_stack->composite().snapshot());
+    auto snapshot = std::make_shared<easeletch::TileStore>(m_stack->composite().snapshot());
     const QSize size = canvasSize();
     QThreadPool::globalInstance()->start([self, path, snapshot, size] {
-        const QString error = easel::exportImage(path, *snapshot, size);
+        const QString error = easeletch::exportImage(path, *snapshot, size);
         QMetaObject::invokeMethod(
             qApp,
             [self, path, error] {
@@ -1623,13 +1624,13 @@ void MainWindow::showExportDialog()
 
 void MainWindow::showAbout()
 {
-    QMessageBox::about(this, tr("About Easel"),
-                       tr("<h3>Easel %1</h3>"
+    QMessageBox::about(this, tr("About Easeletch"),
+                       tr("<h3>Easeletch %1</h3>"
                           "<p>A balanced layered image editor.</p>"
                           "<p>Free software under the GNU General Public License, version 3.</p>"
                           "<p>Built with Qt %2, running on Qt %3.</p>"
                           "<p><a href=\"https://github.com/scottpeterman/easel\">github.com/scottpeterman/easel</a></p>")
-                           .arg(QStringLiteral(EASEL_VERSION), QStringLiteral(QT_VERSION_STR),
+                           .arg(QStringLiteral(EASELETCH_VERSION), QStringLiteral(QT_VERSION_STR),
                                 QString::fromLatin1(qVersion())));
 }
 

@@ -4,8 +4,8 @@
 
 #include <algorithm>
 
-using easel::BrushMode;
-using easel::BrushSettings;
+using easeletch::BrushMode;
+using easeletch::BrushSettings;
 
 namespace {
 
@@ -52,7 +52,7 @@ BrushTool::BrushTool(QObject *parent)
     m_smudge.spacing = 0.08;
 }
 
-void BrushTool::setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history, int layerId)
+void BrushTool::setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId)
 {
     m_layerId = layerId;
     if (m_stroke.isActive())
@@ -123,23 +123,23 @@ void BrushTool::saveSettings(QSettings &s) const
     save(s, QStringLiteral("smudge"), m_smudge);
 }
 
-void BrushTool::press(const easel::StrokeSample &s)
+void BrushTool::press(const easeletch::StrokeSample &s)
 {
     if (!m_store) {
         emit blocked();
         return;
     }
     m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s,
-                   m_selection ? *m_selection : easel::Selection());
+                   m_selection ? *m_selection : easeletch::Selection());
 }
 
-void BrushTool::move(const easel::StrokeSample &s)
+void BrushTool::move(const easeletch::StrokeSample &s)
 {
     if (m_stroke.isActive())
         m_stroke.moveTo(s);
 }
 
-void BrushTool::release(const easel::StrokeSample &s)
+void BrushTool::release(const easeletch::StrokeSample &s)
 {
     if (!m_stroke.isActive())
         return;

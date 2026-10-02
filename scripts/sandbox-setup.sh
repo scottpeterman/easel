@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare a fresh Linux sandbox to build Easel: prebuilt Qt from the
+# Prepare a fresh Linux sandbox to build Easeletch: prebuilt Qt from the
 # qt-toolchain release plus the system packages Qt Gui needs.
 #
 #   scripts/sandbox-setup.sh          install Qt to /opt/qt/gcc_64 and apt deps

@@ -16,7 +16,7 @@
 #include <deque>
 #include <vector>
 
-namespace easel {
+namespace easeletch {
 
 struct BrushSettings {
     double size = 24.0;      // diameter in canvas pixels at full pressure
@@ -133,4 +133,4 @@ private:
     int m_carryHalf = 0;
 };
 
-} // namespace easel
+} // namespace easeletch

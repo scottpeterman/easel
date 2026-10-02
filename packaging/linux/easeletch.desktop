@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Easel
+Name=Easeletch
 GenericName=Image Editor
 Comment=Balanced layered image editor
-Exec=easel %f
-Icon=easel
+Exec=easeletch %f
+Icon=easeletch
 Terminal=false
 Categories=Graphics;RasterGraphics;2DGraphics;
 MimeType=image/png;image/jpeg;image/webp;image/bmp;

@@ -4,7 +4,7 @@
 #include <QScrollBar>
 #include <QTest>
 
-using namespace easel;
+using namespace easeletch;
 
 class TestCanvasArea : public QObject
 {

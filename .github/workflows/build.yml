@@ -74,12 +74,12 @@ jobs:
           ctest --test-dir build --output-on-failure
           # Qt's deploy script (windeployqt) needs an absolute install prefix.
           cmake --install build --prefix "${{ github.workspace }}/dist/windows"
-          Compress-Archive -Path dist/windows/* -DestinationPath dist/Easel-windows-x64.zip
+          Compress-Archive -Path dist/windows/* -DestinationPath dist/Easeletch-windows-x64.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Easel-${{ runner.os }}
+          name: Easeletch-${{ runner.os }}
           path: |
             dist/*.AppImage
             dist/*.dmg

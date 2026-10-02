@@ -12,7 +12,7 @@
 #include <QTest>
 #include <QToolBar>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 

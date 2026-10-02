@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 
@@ -109,4 +109,4 @@ QRgb pixelToDisplay(const Pixel &p)
                  a8);
 }
 
-} // namespace easel
+} // namespace easeletch

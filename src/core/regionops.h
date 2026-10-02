@@ -9,7 +9,7 @@
 #include <QRect>
 #include <QSet>
 
-namespace easel {
+namespace easeletch {
 
 // Pixels of a selection as an image the size of its bounding box, in the tile
 // format (RGBA16F, linear, premultiplied). Pixels outside the shape are transparent.
@@ -94,4 +94,4 @@ private:
     bool m_lifted = false;
 };
 
-} // namespace easel
+} // namespace easeletch

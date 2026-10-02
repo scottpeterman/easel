@@ -14,7 +14,7 @@
 
 #include <cmath>
 
-using easel::BrushSettings;
+using easeletch::BrushSettings;
 
 namespace {
 
@@ -161,12 +161,12 @@ void BrushOptionsBar::syncFromTool()
 {
     m_syncing = true;
     const BrushSettings b = m_tool->settings();
-    const easel::BrushMode mode = m_tool->mode();
-    m_mode->setText(mode == easel::BrushMode::Erase    ? tr("Eraser")
-                    : mode == easel::BrushMode::Smudge ? tr("Smudge")
+    const easeletch::BrushMode mode = m_tool->mode();
+    m_mode->setText(mode == easeletch::BrushMode::Erase    ? tr("Eraser")
+                    : mode == easeletch::BrushMode::Smudge ? tr("Smudge")
                                                        : tr("Brush"));
     // For smudge, "opacity" is how far colour is dragged.
-    m_opacityLabel->setText(mode == easel::BrushMode::Smudge ? tr("Strength") : tr("Opacity"));
+    m_opacityLabel->setText(mode == easeletch::BrushMode::Smudge ? tr("Strength") : tr("Opacity"));
 
     const auto set = [](Control &c, int spinValue, int sliderValue) {
         const QSignalBlocker a(c.spin), s(c.slider);

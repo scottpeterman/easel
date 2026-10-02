@@ -8,10 +8,10 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("Easel"));
-    QApplication::setOrganizationName(QStringLiteral("Easel"));
-    QApplication::setApplicationVersion(QStringLiteral(EASEL_VERSION));
-    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/easel.png")));
+    QApplication::setApplicationName(QStringLiteral("Easeletch"));
+    QApplication::setOrganizationName(QStringLiteral("Easeletch"));
+    QApplication::setApplicationVersion(QStringLiteral(EASELETCH_VERSION));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/easeletch.png")));
 
     // Qt's default decode limit (a few hundred MB) rejects very large canvases. Allow 2 GB.
     QImageReader::setAllocationLimit(2048);
@@ -21,7 +21,7 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("file"),
-                                 QStringLiteral("Easel document or image to open (optional)."));
+                                 QStringLiteral("Easeletch document or image to open (optional)."));
     parser.process(app);
 
     MainWindow window;

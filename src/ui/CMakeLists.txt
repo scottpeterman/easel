@@ -1,4 +1,4 @@
-add_library(easel_ui STATIC
+add_library(easeletch_ui STATIC
     canvasview.h
     canvasview.cpp
     canvasarea.h
@@ -27,12 +27,12 @@ add_library(easel_ui STATIC
     mainwindow.cpp
 )
 
-target_include_directories(easel_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(easel_ui PUBLIC easel_core Qt6::Widgets Qt6::GuiPrivate)
-target_compile_definitions(easel_ui PUBLIC EASEL_VERSION="${PROJECT_VERSION}")
+target_include_directories(easeletch_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(easeletch_ui PUBLIC easeletch_core Qt6::Widgets Qt6::GuiPrivate)
+target_compile_definitions(easeletch_ui PUBLIC EASELETCH_VERSION="${PROJECT_VERSION}")
 
 # Compiled to .qsb packs (SPIR-V, GLSL, HLSL, MSL) at build time; loaded from :/shaders/.
-qt_add_shaders(easel_ui "easel_shaders"
+qt_add_shaders(easeletch_ui "easeletch_shaders"
     PREFIX "/"
     FILES
         shaders/tiles.vert

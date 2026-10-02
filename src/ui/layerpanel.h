@@ -45,11 +45,11 @@ public:
     explicit LayerPanel(QWidget *parent = nullptr);
 
     // Rebuilds the tree from the stack.
-    void setStack(const easel::LayerStack *stack);
+    void setStack(const easeletch::LayerStack *stack);
     // Selects the stack's active layer, without rebuilding the tree.
     void syncActive();
     LayerTree *tree() const { return m_tree; }
-    static QString blendModeName(easel::BlendMode mode);
+    static QString blendModeName(easeletch::BlendMode mode);
 
 signals:
     void activated(int id);
@@ -57,7 +57,7 @@ signals:
     void lockChanged(int id, bool locked);
     void renamed(int id, const QString &name);
     void opacityChanged(int id, double opacity);
-    void blendChanged(int id, easel::BlendMode mode);
+    void blendChanged(int id, easeletch::BlendMode mode);
     // The whole stack after a drag, bottom to top: (layer id, parent id).
     void rearranged(const QList<QPair<int, int>> &order);
     void addLayerRequested();
@@ -77,7 +77,7 @@ private:
     void collect(QTreeWidgetItem *parentItem, int parentId, QList<QPair<int, int>> &order) const;
     int idOf(const QTreeWidgetItem *item) const;
 
-    const easel::LayerStack *m_stack = nullptr;
+    const easeletch::LayerStack *m_stack = nullptr;
     LayerTree *m_tree = nullptr;
     QComboBox *m_blend = nullptr;
     QSlider *m_opacity = nullptr;

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace easel {
+namespace easeletch {
 
 TileAtlas::TileAtlas(int maxPages)
     : m_maxPages(std::max(1, maxPages))
@@ -190,4 +190,4 @@ FramePlan planFrame(const TilePyramid &pyramid, TileAtlas &atlas, const QRect &v
     return plan;
 }
 
-} // namespace easel
+} // namespace easeletch

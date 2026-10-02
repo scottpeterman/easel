@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace easel {
+namespace easeletch {
 
 // --- Settings -----------------------------------------------------------------
 
@@ -344,4 +344,4 @@ void BrushStroke::smudgeDab(const StrokeSample &dab)
     }
 }
 
-} // namespace easel
+} // namespace easeletch

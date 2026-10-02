@@ -7,7 +7,7 @@ EyedropperTool::EyedropperTool(QObject *parent)
 {
 }
 
-void EyedropperTool::setDocument(const easel::TileStore *store, const QRect &bounds)
+void EyedropperTool::setDocument(const easeletch::TileStore *store, const QRect &bounds)
 {
     m_store = store;
     m_bounds = bounds;
@@ -20,7 +20,7 @@ void EyedropperTool::setCurrentColor(const QColor &color)
         m_current = color;
 }
 
-void EyedropperTool::press(const easel::StrokeSample &s)
+void EyedropperTool::press(const easeletch::StrokeSample &s)
 {
     m_active = true;
     m_previous = m_current;
@@ -28,13 +28,13 @@ void EyedropperTool::press(const easel::StrokeSample &s)
     pick(s.pos);
 }
 
-void EyedropperTool::move(const easel::StrokeSample &s)
+void EyedropperTool::move(const easeletch::StrokeSample &s)
 {
     if (m_active)
         pick(s.pos);
 }
 
-void EyedropperTool::release(const easel::StrokeSample &s)
+void EyedropperTool::release(const easeletch::StrokeSample &s)
 {
     if (!m_active)
         return;
@@ -59,7 +59,7 @@ void EyedropperTool::pick(const QPointF &pos)
     const QPoint p(int(std::floor(pos.x())), int(std::floor(pos.y())));
     if (!m_bounds.contains(p))
         return;
-    const QColor raw = easel::pixelToColor(m_store->pixel(p.x(), p.y()));
+    const QColor raw = easeletch::pixelToColor(m_store->pixel(p.x(), p.y()));
     if (raw.alpha() == 0)
         return; // nothing there to pick
     const QColor c(raw.red(), raw.green(), raw.blue()); // opaque, 8-bit

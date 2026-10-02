@@ -12,7 +12,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 
@@ -256,7 +256,7 @@ private slots:
         w.addLayer();
         const int top = w.layers().activeId();
         w.setLayerOpacity(top, 0.8);
-        QVERIFY(w.saveDocumentTo(dir.filePath(QStringLiteral("a.easel")), true));
+        QVERIFY(w.saveDocumentTo(dir.filePath(QStringLiteral("a.easeletch")), true));
         QVERIFY(!w.isModified());
         w.setLayerOpacity(top, 0.6);
         QVERIFY(w.isModified());
@@ -434,7 +434,7 @@ private slots:
     void saveAndReopenKeepsTheLayers()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("layers.easel"));
+        const QString path = dir.filePath(QStringLiteral("layers.easeletch"));
         MainWindow w;
         setupWindow(w);
         w.addLayer();

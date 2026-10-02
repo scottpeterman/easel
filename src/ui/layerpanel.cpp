@@ -16,8 +16,8 @@
 
 #include <cmath>
 
-using easel::BlendMode;
-using easel::Layer;
+using easeletch::BlendMode;
+using easeletch::Layer;
 
 namespace {
 
@@ -76,7 +76,7 @@ LayerPanel::LayerPanel(QWidget *parent)
     auto *top = new QHBoxLayout;
     top->setSpacing(4);
     m_blend = new QComboBox(this);
-    for (int i = 0; i < easel::BlendModeCount; ++i)
+    for (int i = 0; i < easeletch::BlendModeCount; ++i)
         m_blend->addItem(blendModeName(BlendMode(i)));
     m_blend->setToolTip(tr("How this layer mixes with the ones below it"));
     m_opacity = new QSlider(Qt::Horizontal, this);
@@ -195,7 +195,7 @@ void LayerPanel::addItems(QTreeWidgetItem *parentItem, int parentId)
     }
 }
 
-void LayerPanel::setStack(const easel::LayerStack *stack)
+void LayerPanel::setStack(const easeletch::LayerStack *stack)
 {
     m_stack = stack;
     m_updating = true;

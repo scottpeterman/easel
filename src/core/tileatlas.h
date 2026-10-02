@@ -11,7 +11,7 @@
 
 #include <array>
 
-namespace easel {
+namespace easeletch {
 
 struct AtlasSlot {
     int page = -1;
@@ -105,4 +105,4 @@ struct FramePlan {
 FramePlan planFrame(const TilePyramid &pyramid, TileAtlas &atlas, const QRect &visibleCanvas,
                     int level, quint64 frame, int uploadBudget);
 
-} // namespace easel
+} // namespace easeletch

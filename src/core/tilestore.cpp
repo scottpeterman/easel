@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 
@@ -179,4 +179,4 @@ QImage TileStore::toDisplay(const QImage &tile)
     return out;
 }
 
-} // namespace easel
+} // namespace easeletch

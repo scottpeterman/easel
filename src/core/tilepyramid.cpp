@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 
@@ -184,4 +184,4 @@ qsizetype TilePyramid::cachedTileCount() const
     return n;
 }
 
-} // namespace easel
+} // namespace easeletch

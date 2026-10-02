@@ -9,7 +9,7 @@
 #include <cmath>
 #include <thread>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 
@@ -784,4 +784,4 @@ qint64 LayerStack::bytesNotSharedWith(const LayerStack &live) const
     return bytes;
 }
 
-} // namespace easel
+} // namespace easeletch

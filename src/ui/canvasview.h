@@ -30,9 +30,9 @@ class CanvasTool
 {
 public:
     virtual ~CanvasTool() = default;
-    virtual void press(const easel::StrokeSample &s) = 0;
-    virtual void move(const easel::StrokeSample &s) = 0;
-    virtual void release(const easel::StrokeSample &s) = 0;
+    virtual void press(const easeletch::StrokeSample &s) = 0;
+    virtual void move(const easeletch::StrokeSample &s) = 0;
+    virtual void release(const easeletch::StrokeSample &s) = 0;
     // Diameter of the cursor circle in canvas pixels; 0 hides it.
     virtual double cursorDiameter() const = 0;
     // A before/after colour ring to draw around the cursor (eyedropper).
@@ -78,9 +78,9 @@ public:
     explicit CanvasView(QWidget *parent = nullptr);
     ~CanvasView() override;
 
-    void setDocument(easel::TileStore *store, const QSize &canvasSize);
+    void setDocument(easeletch::TileStore *store, const QSize &canvasSize);
     // With a pyramid already built over store (e.g. on a loader thread).
-    void setDocument(easel::TileStore *store, const QSize &canvasSize, easel::TilePyramid pyramid);
+    void setDocument(easeletch::TileStore *store, const QSize &canvasSize, easeletch::TilePyramid pyramid);
     QSize canvasSize() const { return m_canvasSize; }
 
     double zoom() const { return m_zoom; }
@@ -166,26 +166,26 @@ private:
     void updateCursor();
     void emitViewChanged();
     bool cursorVisible() const;
-    easel::StrokeSample sampleAt(const QPointF &viewPos, double pressure) const;
-    void beginStroke(const easel::StrokeSample &s);
-    void continueStroke(const easel::StrokeSample &s);
-    void endStroke(const easel::StrokeSample &s);
+    easeletch::StrokeSample sampleAt(const QPointF &viewPos, double pressure) const;
+    void beginStroke(const easeletch::StrokeSample &s);
+    void continueStroke(const easeletch::StrokeSample &s);
+    void endStroke(const easeletch::StrokeSample &s);
     void trackCursor(const QPointF &viewPos);
     void startPan(const QPointF &viewPos);
     CanvasTool *activeTool() const;
     void setAltHeld(bool held);
 
-    easel::TileStore *m_store = nullptr;
+    easeletch::TileStore *m_store = nullptr;
     std::function<void()> m_beforeRefresh;
-    easel::Pixel m_shownDefault; // the store's default pixel as last drawn
+    easeletch::Pixel m_shownDefault; // the store's default pixel as last drawn
     QSize m_canvasSize;
     double m_zoom = 1.0;
     bool m_autoFit = true; // refit on resize until the user navigates
     double m_rotation = 0.0; // degrees, clockwise
     QPointF m_pan;           // canvas centre offset from view centre, view pixels
 
-    easel::TilePyramid m_pyramid;
-    easel::TileAtlas m_atlas;
+    easeletch::TilePyramid m_pyramid;
+    easeletch::TileAtlas m_atlas;
     int m_uploadBudget = 64;
     quint64 m_frame = 0;
     FrameStats m_stats;
@@ -219,7 +219,7 @@ private:
     CanvasTool *m_strokeTool = nullptr; // the tool that owns the current stroke
     bool m_altHeld = false;
     bool m_stroking = false;
-    easel::StrokeSample m_lastSample;
+    easeletch::StrokeSample m_lastSample;
     bool m_hovering = false;
     QPointF m_cursorCanvas;
 

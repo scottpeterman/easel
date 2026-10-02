@@ -2,7 +2,7 @@
 
 #include <QTest>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 

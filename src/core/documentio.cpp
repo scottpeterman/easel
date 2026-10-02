@@ -23,11 +23,11 @@
 #include <filesystem>
 #include <system_error>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 
-constexpr char kMimeType[] = "application/x-easel";
+constexpr char kMimeType[] = "application/x-easeletch";
 constexpr char kPixelFormat[] = "rgba16f-linear-premultiplied-le";
 constexpr qint64 kTileBytes = TileStore::BytesPerTile;
 
@@ -177,7 +177,13 @@ bool isTransientRenameError(const std::error_code &ec)
 
 bool isNativeDocument(const QString &path)
 {
-    return QFileInfo(path).suffix().compare(QLatin1String(NativeSuffix), Qt::CaseInsensitive) == 0;
+    return QFileInfo(path).suffix().compare(QLatin1String(NativeSuffix), Qt::CaseInsensitive) == 0
+           || isLegacyDocument(path);
+}
+
+bool isLegacyDocument(const QString &path)
+{
+    return QFileInfo(path).suffix().compare(QLatin1String(LegacySuffix), Qt::CaseInsensitive) == 0;
 }
 
 LoadedDocument loadDocument(const QString &path)
@@ -212,11 +218,12 @@ LoadedDocument loadNativeDocument(const QString &path)
     QJsonParseError parseError;
     const QJsonDocument json = QJsonDocument::fromJson(zip.fileData(QStringLiteral("manifest.json")), &parseError);
     const QJsonObject m = json.object();
-    if (json.isNull() || m.value(QLatin1String("format")).toString() != QLatin1String("easel"))
-        return failed(QObject::tr("This isn't an Easel document."));
+    const QString format = m.value(QLatin1String("format")).toString();
+    if (json.isNull() || (format != QLatin1String("easeletch") && format != QLatin1String(LegacySuffix)))
+        return failed(QObject::tr("This isn't an Easeletch document."));
     const int version = m.value(QLatin1String("version")).toInt();
     if (version < 1 || version > FormatVersion)
-        return failed(QObject::tr("This document was saved by a newer Easel (format %1).").arg(version));
+        return failed(QObject::tr("This document was saved by a newer Easeletch (format %1).").arg(version));
     if (m.value(QLatin1String("pixelFormat")).toString() != QLatin1String(kPixelFormat)
         || m.value(QLatin1String("tileSize")).toInt() != TileStore::TileSize)
         return failed(QObject::tr("Unsupported pixel format."));
@@ -296,7 +303,7 @@ LoadedDocument loadNativeDocument(const QString &path)
     stack->replaceLayers(std::move(list), m.value(QLatin1String("activeLayer")).toInt(0));
 
     LoadedDocument doc;
-    doc.native = true;
+    doc.native = !isLegacyDocument(path);
     finish(doc, std::move(stack));
     return doc;
 }
@@ -347,7 +354,7 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
             layerList.append(o);
         }
         const QJsonObject manifest{
-            {QLatin1String("format"), QLatin1String("easel")},
+            {QLatin1String("format"), QLatin1String("easeletch")},
             {QLatin1String("version"), FormatVersion},
             {QLatin1String("width"), size.width()},
             {QLatin1String("height"), size.height()},
@@ -483,4 +490,4 @@ QString writeImageFile(const QString &path, QImage image, int quality)
     return {};
 }
 
-} // namespace easel
+} // namespace easeletch

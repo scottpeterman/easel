@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build, test and package Easel on Linux and macOS.
+# Build, test and package Easeletch on Linux and macOS.
 #
 #   scripts/build.sh                  configure (if needed), build, test
 #   scripts/build.sh --run            ...then launch the app
-#   scripts/build.sh --appimage       ...then make dist/Easel-linux-x86_64.AppImage (Linux)
-#   scripts/build.sh --dmg            ...then make dist/Easel-macos.dmg (macOS)
+#   scripts/build.sh --appimage       ...then make dist/Easeletch-linux-x86_64.AppImage (Linux)
+#   scripts/build.sh --dmg            ...then make dist/Easeletch-macos.dmg (macOS)
 #   scripts/build.sh --clean          wipe the build directory first
 #   scripts/build.sh --qt DIR         Qt prefix, e.g. ~/Qt/6.10.3/gcc_64
 #   scripts/build.sh --debug          Debug build in build-debug/
@@ -149,7 +149,7 @@ if [[ $make_appimage -eq 1 ]]; then
     log "Packaging AppImage"
     appdir="$dist/AppDir"
     tools="$ROOT/.cache/tools"
-    output="$dist/Easel-linux-x86_64.AppImage"
+    output="$dist/Easeletch-linux-x86_64.AppImage"
     rm -rf "$appdir" "$output"
     mkdir -p "$dist" "$tools"
 
@@ -175,7 +175,7 @@ if [[ $make_appimage -eq 1 ]]; then
         export PATH="$tools:$PATH"
         export LDAI_OUTPUT="$output"
         export OUTPUT="$output"
-        "$tools/linuxdeploy-x86_64.AppImage" --appdir "$appdir" --plugin qt --output appimage --desktop-file "$appdir/usr/share/applications/easel.desktop" --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/easel.png"
+        "$tools/linuxdeploy-x86_64.AppImage" --appdir "$appdir" --plugin qt --output appimage --desktop-file "$appdir/usr/share/applications/easeletch.desktop" --icon-file "$appdir/usr/share/icons/hicolor/256x256/apps/easeletch.png"
     )
     echo "Wrote $output"
 fi
@@ -183,14 +183,14 @@ fi
 if [[ $make_dmg -eq 1 ]]; then
     log "Packaging dmg"
     stage="$dist/macos"
-    output="$dist/Easel-macos.dmg"
+    output="$dist/Easeletch-macos.dmg"
     rm -rf "$stage" "$output"
     mkdir -p "$stage"
 
     cmake --install "$build_dir" --prefix "$stage"
-    codesign --force --deep --sign - "$stage/Easel.app"
+    codesign --force --deep --sign - "$stage/Easeletch.app"
     ln -s /Applications "$stage/Applications"
-    hdiutil create -volname Easel -srcfolder "$stage" -ov -format UDZO "$output"
+    hdiutil create -volname Easeletch -srcfolder "$stage" -ov -format UDZO "$output"
     echo "Wrote $output"
 fi
 
@@ -199,8 +199,8 @@ fi
 if [[ $run_app -eq 1 ]]; then
     log "Launching"
     if [[ "$os" == "Darwin" ]]; then
-        open "$build_dir/src/app/Easel.app"
+        open "$build_dir/src/app/Easeletch.app"
     else
-        "$build_dir/src/app/easel"
+        "$build_dir/src/app/easeletch"
     fi
 fi

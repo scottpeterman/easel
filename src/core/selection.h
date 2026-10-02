@@ -6,7 +6,7 @@
 #include <QPolygonF>
 #include <QRect>
 
-namespace easel {
+namespace easeletch {
 
 // A rectangle, an ellipse, or any set of pixels (a mask, from the magic wand
 // or from combining selections). Membership is exact per pixel: a pixel is in
@@ -55,4 +55,4 @@ private:
     QImage m_mask; // Shape::Mask only
 };
 
-} // namespace easel
+} // namespace easeletch

@@ -17,14 +17,14 @@ class EyedropperTool : public QObject, public CanvasTool
 public:
     explicit EyedropperTool(QObject *parent = nullptr);
 
-    void setDocument(const easel::TileStore *store, const QRect &bounds);
+    void setDocument(const easeletch::TileStore *store, const QRect &bounds);
     // The colour before picking starts, shown in the preview ring.
     void setCurrentColor(const QColor &color);
 
     // CanvasTool
-    void press(const easel::StrokeSample &s) override;
-    void move(const easel::StrokeSample &s) override;
-    void release(const easel::StrokeSample &s) override;
+    void press(const easeletch::StrokeSample &s) override;
+    void move(const easeletch::StrokeSample &s) override;
+    void release(const easeletch::StrokeSample &s) override;
     double cursorDiameter() const override { return 0.0; }
     bool colorPreview(QColor *picked, QColor *previous) const override;
 
@@ -34,7 +34,7 @@ signals:
 private:
     void pick(const QPointF &pos);
 
-    const easel::TileStore *m_store = nullptr;
+    const easeletch::TileStore *m_store = nullptr;
     QRect m_bounds;
     QColor m_current = Qt::black;
     QColor m_previous;

@@ -17,13 +17,13 @@ QPoint corner(const QPointF &pos)
 
 } // namespace
 
-SelectTool::SelectTool(easel::Selection::Shape shape, QObject *parent)
+SelectTool::SelectTool(easeletch::Selection::Shape shape, QObject *parent)
     : QObject(parent)
     , m_shape(shape)
 {
 }
 
-easel::Selection SelectTool::selectionTo(const QPointF &pos) const
+easeletch::Selection SelectTool::selectionTo(const QPointF &pos) const
 {
     if (!m_cell.isEmpty()) {
         const auto cellOf = [this](const QPointF &p) {
@@ -35,8 +35,8 @@ easel::Selection SelectTool::selectionTo(const QPointF &pos) const
                           QPoint(std::max(a.x(), b.x()), std::max(a.y(), b.y())));
         const QRect r(m_cellOffset.x() + cells.x() * m_cell.width(), m_cellOffset.y() + cells.y() * m_cell.height(),
                       cells.width() * m_cell.width(), cells.height() * m_cell.height());
-        return m_shape == easel::Selection::Shape::Ellipse ? easel::Selection::ellipse(r)
-                                                           : easel::Selection::rect(r);
+        return m_shape == easeletch::Selection::Shape::Ellipse ? easeletch::Selection::ellipse(r)
+                                                           : easeletch::Selection::rect(r);
     }
     QPoint end = corner(pos);
     if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) {
@@ -50,25 +50,25 @@ easel::Selection SelectTool::selectionTo(const QPointF &pos) const
     if (x1 == x0 || y1 == y0)
         return {};
     const QRect r(x0, y0, x1 - x0, y1 - y0);
-    return m_shape == easel::Selection::Shape::Ellipse ? easel::Selection::ellipse(r)
-                                                       : easel::Selection::rect(r);
+    return m_shape == easeletch::Selection::Shape::Ellipse ? easeletch::Selection::ellipse(r)
+                                                       : easeletch::Selection::rect(r);
 }
 
-void SelectTool::press(const easel::StrokeSample &s)
+void SelectTool::press(const easeletch::StrokeSample &s)
 {
     m_anchor = corner(s.pos);
     m_anchorPos = s.pos;
     m_active = true;
-    emit selectionDragged(m_cell.isEmpty() ? easel::Selection() : selectionTo(s.pos));
+    emit selectionDragged(m_cell.isEmpty() ? easeletch::Selection() : selectionTo(s.pos));
 }
 
-void SelectTool::move(const easel::StrokeSample &s)
+void SelectTool::move(const easeletch::StrokeSample &s)
 {
     if (m_active)
         emit selectionDragged(selectionTo(s.pos));
 }
 
-void SelectTool::release(const easel::StrokeSample &s)
+void SelectTool::release(const easeletch::StrokeSample &s)
 {
     if (!m_active)
         return;
@@ -97,7 +97,7 @@ bool MoveTool::keyPress(QKeyEvent *event)
     }
 }
 
-void WandTool::press(const easel::StrokeSample &s)
+void WandTool::press(const easeletch::StrokeSample &s)
 {
     emit clicked(s.pos, QGuiApplication::keyboardModifiers());
 }

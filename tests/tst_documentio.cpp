@@ -13,7 +13,7 @@
 
 #include <cstring>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 
@@ -78,7 +78,7 @@ private slots:
     void nativeRoundTripIsExact()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("art.easel"));
+        const QString path = dir.filePath(QStringLiteral("art.easeletch"));
         const QSize size(1000, 700);
 
         TileStore s(Qt::white);
@@ -98,7 +98,7 @@ private slots:
     void transparentDefaultAndEmptyCanvas()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("empty.easel"));
+        const QString path = dir.filePath(QStringLiteral("empty.easeletch"));
         TileStore s(QColor(0, 0, 0, 0));
         QCOMPARE(saveNativeDocument(path, s, QSize(300, 200)), QString());
         const LoadedDocument doc = loadDocument(path);
@@ -110,7 +110,7 @@ private slots:
     void tilesOutsideTheCanvasAreNotSaved()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("clip.easel"));
+        const QString path = dir.filePath(QStringLiteral("clip.easeletch"));
         TileStore s(Qt::white);
         s.fillRect(QRect(0, 0, 10, 10), Qt::red);
         s.fillRect(QRect(900, 900, 10, 10), Qt::red); // outside a 200 x 200 canvas
@@ -122,13 +122,13 @@ private slots:
     void previewIsFlattenedAndCapped()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("wide.easel"));
+        const QString path = dir.filePath(QStringLiteral("wide.easeletch"));
         TileStore s(Qt::white);
         s.fillRect(QRect(0, 0, 5000, 500), Qt::red);
         QCOMPARE(saveNativeDocument(path, s, QSize(5000, 1000)), QString());
 
         QZipReader zip(path);
-        QCOMPARE(zip.fileData(QStringLiteral("mimetype")), QByteArray("application/x-easel"));
+        QCOMPARE(zip.fileData(QStringLiteral("mimetype")), QByteArray("application/x-easeletch"));
         QImage preview;
         QVERIFY(preview.loadFromData(zip.fileData(QStringLiteral("preview.png")), "PNG"));
         QCOMPARE(preview.width(), PreviewMaxSide);
@@ -140,7 +140,7 @@ private slots:
     void layersRoundTrip()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("layers.easel"));
+        const QString path = dir.filePath(QStringLiteral("layers.easeletch"));
         const QSize size(500, 300);
 
         LayerStack stack;
@@ -205,8 +205,8 @@ private slots:
     {
         // As written before layers: one unnamed-id layer, version 1.
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("old.easel"));
-        const QString v1 = dir.filePath(QStringLiteral("v1.easel"));
+        const QString path = dir.filePath(QStringLiteral("old.easeletch"));
+        const QString v1 = dir.filePath(QStringLiteral("v1.easeletch"));
         TileStore s(Qt::white);
         s.fillRect(QRect(10, 10, 50, 50), Qt::red);
         QCOMPARE(saveNativeDocument(path, s, QSize(200, 100)), QString());
@@ -238,13 +238,49 @@ private slots:
         QCOMPARE(pixelToColor(doc.stack->composite().pixel(20, 20)), QColor(Qt::red));
     }
 
+    void opensFilesFromBeforeTheRename()
+    {
+        // Saved as "Easel": an .easel file whose manifest says format "easel".
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("new.easeletch"));
+        const QString old = dir.filePath(QStringLiteral("old.easel"));
+        TileStore s(Qt::white);
+        s.fillRect(QRect(10, 10, 50, 50), Qt::red);
+        QCOMPARE(saveNativeDocument(path, s, QSize(200, 100)), QString());
+        {
+            QZipReader in(path);
+            QZipWriter out(old);
+            for (const QZipReader::FileInfo &info : in.fileInfoList()) {
+                QByteArray data = in.fileData(info.filePath);
+                if (info.filePath == QLatin1String("manifest.json")) {
+                    QJsonObject m = QJsonDocument::fromJson(data).object();
+                    QCOMPARE(m.value(QStringLiteral("format")).toString(), QStringLiteral("easeletch"));
+                    m.insert(QStringLiteral("format"), QStringLiteral("easel"));
+                    data = QJsonDocument(m).toJson();
+                }
+                if (info.filePath == QLatin1String("mimetype"))
+                    data = "application/x-easel";
+                out.addFile(info.filePath, data);
+            }
+            out.close();
+        }
+        QVERIFY(isNativeDocument(old));
+        QVERIFY(isLegacyDocument(old));
+        QVERIFY(!isLegacyDocument(path));
+        const LoadedDocument doc = loadDocument(old);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QVERIFY(!doc.native); // Save asks for a new .easeletch name
+        QVERIFY(sameTiles(s, doc.stack->layers().first().store));
+        QVERIFY(loadDocument(path).native);
+    }
+
     void rejectsNewerAndForeignFiles()
     {
         QTemporaryDir dir;
-        const QString newer = dir.filePath(QStringLiteral("newer.easel"));
+        const QString newer = dir.filePath(QStringLiteral("newer.easeletch"));
         {
             QZipWriter zip(newer);
-            const QJsonObject m{{QStringLiteral("format"), QStringLiteral("easel")},
+            const QJsonObject m{{QStringLiteral("format"), QStringLiteral("easeletch")},
                                 {QStringLiteral("version"), FormatVersion + 1}};
             zip.addFile(QStringLiteral("manifest.json"), QJsonDocument(m).toJson());
             zip.close();
@@ -253,7 +289,7 @@ private slots:
         QVERIFY(!doc.ok());
         QVERIFY(doc.error.contains(QStringLiteral("newer")));
 
-        const QString junk = dir.filePath(QStringLiteral("junk.easel"));
+        const QString junk = dir.filePath(QStringLiteral("junk.easeletch"));
         QFile f(junk);
         QVERIFY(f.open(QIODevice::WriteOnly));
         f.write("not a zip");
@@ -265,14 +301,14 @@ private slots:
     void saveErrorsAreReported()
     {
         TileStore s(Qt::white);
-        const QString error = saveNativeDocument(QStringLiteral("/no/such/dir/x.easel"), s, QSize(10, 10));
+        const QString error = saveNativeDocument(QStringLiteral("/no/such/dir/x.easeletch"), s, QSize(10, 10));
         QVERIFY(!error.isEmpty());
     }
 
     void failedSaveLeavesTheOldFile()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("keep.easel"));
+        const QString path = dir.filePath(QStringLiteral("keep.easeletch"));
         TileStore s(Qt::white);
         s.fillRect(QRect(0, 0, 10, 10), Qt::blue);
         QCOMPARE(saveNativeDocument(path, s, QSize(100, 100)), QString());

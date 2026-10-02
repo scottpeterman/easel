@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace easel {
+namespace easeletch {
 
 enum class BlendMode {
     Normal,
@@ -29,7 +29,7 @@ enum class BlendMode {
 };
 inline constexpr int BlendModeCount = 12;
 
-// Name used in .easel files ("normal", "soft-light", ...).
+// Name used in .easeletch files ("normal", "soft-light", ...).
 QString blendModeKey(BlendMode mode);
 BlendMode blendModeFromKey(const QString &key, bool *ok = nullptr);
 
@@ -159,4 +159,4 @@ private:
     TileStore m_composite;
 };
 
-} // namespace easel
+} // namespace easeletch

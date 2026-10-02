@@ -13,7 +13,7 @@
 
 #include <memory>
 
-namespace easel {
+namespace easeletch {
 struct LoadedDocument;
 }
 
@@ -43,10 +43,10 @@ public:
     ~MainWindow() override;
 
     void newDocument(const QSize &size, const QColor &background);
-    // Opens an .easel document or an image in the background; documentOpened()
+    // Opens an .easeletch document or an image in the background; documentOpened()
     // reports the outcome.
     void openDocument(const QString &path);
-    // Writes an .easel file. With wait, returns once written (true on success);
+    // Writes an .easeletch file. With wait, returns once written (true on success);
     // otherwise saves in the background and documentSaved() reports the outcome.
     bool saveDocumentTo(const QString &path, bool wait = false);
 
@@ -55,20 +55,20 @@ public:
 
     CanvasView *canvasView() const { return m_view; }
     // The active layer's pixels (null while a group is active).
-    easel::TileStore *layer() const;
-    const easel::LayerStack &layers() const { return *m_stack; }
+    easeletch::TileStore *layer() const;
+    const easeletch::LayerStack &layers() const { return *m_stack; }
     LayerPanel *layerPanel() const { return m_layerPanel; }
     BrushTool *brushTool() const { return m_brush; }
     EyedropperTool *eyedropperTool() const { return m_eyedropper; }
     ColorPanel *colorPanel() const { return m_color; }
-    const easel::History &history() const { return m_history; }
+    const easeletch::History &history() const { return m_history; }
     SelectTool *rectSelectTool() const { return m_rectSelect; }
     SelectTool *ellipseSelectTool() const { return m_ellipseSelect; }
     MoveTool *moveTool() const { return m_move; }
     WandTool *wandTool() const { return m_wand; }
 
-    const easel::Selection &selection() const { return m_selection; }
-    void setSelection(const easel::Selection &selection);
+    const easeletch::Selection &selection() const { return m_selection; }
+    void setSelection(const easeletch::Selection &selection);
     // Pasted or lifted pixels not yet committed.
     bool isFloating() const { return m_floating.isActive(); }
     QPoint floatingPosition() const { return m_floating.position(); }
@@ -121,7 +121,7 @@ public slots:
     void setLayerLocked(int id, bool locked);
     void renameLayer(int id, const QString &name);
     void setLayerOpacity(int id, double opacity);
-    void setLayerBlend(int id, easel::BlendMode mode);
+    void setLayerBlend(int id, easeletch::BlendMode mode);
     // The whole stack in a new order, bottom to top: (layer id, parent id).
     bool rearrangeLayers(const QList<QPair<int, int>> &order);
 
@@ -150,20 +150,20 @@ private:
     void nudge(const QPoint &delta);
     // Clears the selected pixels, or discards floating ones, as one undo step.
     void clearSelected(const QString &label);
-    void storeClip(const QImage &content, const easel::Selection &shape, const QPoint &origin);
+    void storeClip(const QImage &content, const easeletch::Selection &shape, const QPoint &origin);
     QRect visibleCanvasRect() const;
     QRect canvasRect() const { return QRect(QPoint(0, 0), canvasSize()); }
     // The active layer's pixels if they can be changed now; otherwise null,
     // with the reason in the status bar.
-    easel::TileStore *editStore();
+    easeletch::TileStore *editStore();
     // What copy, the wand and export read: the active layer, or the whole
     // picture while a group is active.
-    const easel::TileStore *readStore() const;
+    const easeletch::TileStore *readStore() const;
     // Points the tools at the active layer.
     void bindTools();
     // Before a change to the stack: false if it can't happen now.
     bool beginLayerChange();
-    void finishLayerChange(const QString &label, easel::LayerStack before);
+    void finishLayerChange(const QString &label, easeletch::LayerStack before);
     // After the stack changed: recomposite, rebind, refresh the panel.
     void layersChanged();
     bool moveLayerBy(int step);
@@ -188,22 +188,22 @@ private:
     bool maybeSave();
     void finishSave(const QString &path, quint64 stateId, quint64 docGeneration, const QString &error);
     void showAbout();
-    void setDocument(std::unique_ptr<easel::LayerStack> stack, const QString &name, const QString &historyLabel,
-                     easel::TilePyramid pyramid = {}, const QString &path = {});
-    void finishOpen(const QString &path, quint64 generation, easel::LoadedDocument doc);
+    void setDocument(std::unique_ptr<easeletch::LayerStack> stack, const QString &name, const QString &historyLabel,
+                     easeletch::TilePyramid pyramid = {}, const QString &path = {});
+    void finishOpen(const QString &path, quint64 generation, easeletch::LoadedDocument doc);
     void historyChanged();
     void historyItemClicked(QListWidgetItem *item);
     void updateTitle();
     void updateMemoryLabel();
 
-    std::unique_ptr<easel::LayerStack> m_stack;
+    std::unique_ptr<easeletch::LayerStack> m_stack;
     QString m_name;
     QString m_lastDir;
-    QString m_path;           // the .easel file this document saves to; empty if none
+    QString m_path;           // the .easeletch file this document saves to; empty if none
     quint64 m_cleanId = 0;    // history state last saved (or opened)
     quint64 m_docGeneration = 0;
     int m_pendingJobs = 0;    // background saves and exports in flight
-    easel::History m_history;
+    easeletch::History m_history;
 
     CanvasView *m_view = nullptr;
     BrushTool *m_brush = nullptr;
@@ -219,9 +219,9 @@ private:
     QToolBar *m_wandOptions = nullptr;
     double m_colorToAlphaThreshold = 0.04;
 
-    easel::Selection m_selection;
-    easel::FloatingContent m_floating;
-    easel::Selection m_selectionBeforeFloat; // restored on cancel
+    easeletch::Selection m_selection;
+    easeletch::FloatingContent m_floating;
+    easeletch::Selection m_selectionBeforeFloat; // restored on cancel
     QString m_floatLabel;                    // history label when committed
     int m_floatLayer = 0;                    // the layer the pixels float over
     // Dragging the opacity slider is one undo step: the layer and history
@@ -238,7 +238,7 @@ private:
     // 8-bit copy tagged with m_clip.token so a paste can tell it's ours.
     struct Clip {
         QImage content;          // RGBA16F, transparent outside the shape
-        easel::Selection shape;  // relative to the content's top-left
+        easeletch::Selection shape;  // relative to the content's top-left
         QPoint origin;           // where it was copied from
         QByteArray token;
     } m_clip;

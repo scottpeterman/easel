@@ -5,7 +5,7 @@
 
 #include <cmath>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 

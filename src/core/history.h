@@ -11,7 +11,7 @@
 
 #include <memory>
 
-namespace easel {
+namespace easeletch {
 
 // Undo history built on tile snapshots.
 //
@@ -106,4 +106,4 @@ private:
     quint64 m_baseId = 0; // state before the first remaining entry
 };
 
-} // namespace easel
+} // namespace easeletch

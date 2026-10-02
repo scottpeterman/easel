@@ -21,16 +21,16 @@ public:
 
     // store: the layer strokes go to; null when there's nothing to paint on
     // (a locked or hidden layer, a group). layerId names it in the history.
-    void setDocument(easel::TileStore *store, const QRect &bounds, easel::History *history, int layerId = 0);
+    void setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId = 0);
     // Strokes stay inside this selection when it isn't empty.
-    void setSelection(const easel::Selection *selection) { m_selection = selection; }
+    void setSelection(const easeletch::Selection *selection) { m_selection = selection; }
 
-    easel::BrushMode mode() const { return m_mode; }
-    void setMode(easel::BrushMode mode);
+    easeletch::BrushMode mode() const { return m_mode; }
+    void setMode(easeletch::BrushMode mode);
 
     // Settings of the current mode.
-    easel::BrushSettings settings() const;
-    void setSettings(const easel::BrushSettings &settings);
+    easeletch::BrushSettings settings() const;
+    void setSettings(const easeletch::BrushSettings &settings);
     void scaleSize(double factor);
 
     QColor color() const { return m_color; }
@@ -40,31 +40,31 @@ public:
     void saveSettings(QSettings &s) const;
 
     // CanvasTool
-    void press(const easel::StrokeSample &s) override;
-    void move(const easel::StrokeSample &s) override;
-    void release(const easel::StrokeSample &s) override;
+    void press(const easeletch::StrokeSample &s) override;
+    void move(const easeletch::StrokeSample &s) override;
+    void release(const easeletch::StrokeSample &s) override;
     double cursorDiameter() const override;
 
 signals:
-    void modeChanged(easel::BrushMode mode);
+    void modeChanged(easeletch::BrushMode mode);
     void settingsChanged();
     void strokeCommitted();
     // A stroke was started with nothing to paint on.
     void blocked();
 
 private:
-    easel::BrushSettings &current();
+    easeletch::BrushSettings &current();
 
-    easel::TileStore *m_store = nullptr;
+    easeletch::TileStore *m_store = nullptr;
     QRect m_bounds;
-    easel::History *m_history = nullptr;
+    easeletch::History *m_history = nullptr;
     int m_layerId = 0;
 
-    easel::BrushMode m_mode = easel::BrushMode::Paint;
-    easel::BrushSettings m_paint;
-    easel::BrushSettings m_erase;
-    easel::BrushSettings m_smudge;
-    const easel::Selection *m_selection = nullptr;
+    easeletch::BrushMode m_mode = easeletch::BrushMode::Paint;
+    easeletch::BrushSettings m_paint;
+    easeletch::BrushSettings m_erase;
+    easeletch::BrushSettings m_smudge;
+    const easeletch::Selection *m_selection = nullptr;
     QColor m_color = Qt::black;
-    easel::BrushStroke m_stroke;
+    easeletch::BrushStroke m_stroke;
 };

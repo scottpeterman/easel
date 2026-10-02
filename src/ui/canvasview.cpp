@@ -15,13 +15,13 @@
 #include <cstring>
 #include <iterator>
 
-using easel::AtlasSlot;
-using easel::FramePlan;
-using easel::LevelTile;
-using easel::TileAtlas;
-using easel::TileInstance;
-using easel::TilePyramid;
-using easel::TileStore;
+using easeletch::AtlasSlot;
+using easeletch::FramePlan;
+using easeletch::LevelTile;
+using easeletch::TileAtlas;
+using easeletch::TileInstance;
+using easeletch::TilePyramid;
+using easeletch::TileStore;
 
 namespace {
 
@@ -192,7 +192,7 @@ void CanvasView::refresh()
     if (m_beforeRefresh)
         m_beforeRefresh();
     // A new default pixel changes every tile that doesn't exist, at every level.
-    if (!easel::samePixel(m_store->defaultPixel(), m_shownDefault)) {
+    if (!easeletch::samePixel(m_store->defaultPixel(), m_shownDefault)) {
         reloadDocument();
         return;
     }
@@ -404,15 +404,15 @@ void CanvasView::render(QRhiCommandBuffer *cb)
         xf.inverted().mapRect(QRectF(rect())).toAlignedRect().adjusted(-1, -1, 1, 1) & canvasRect;
     const int level = TilePyramid::levelForZoom(m_zoom * dpr, m_pyramid.topLevel());
 
-    const FramePlan plan = easel::planFrame(m_pyramid, m_atlas, visible, level, m_frame, m_uploadBudget);
+    const FramePlan plan = easeletch::planFrame(m_pyramid, m_atlas, visible, level, m_frame, m_uploadBudget);
     ensurePages(m_atlas.pageCount());
 
     // Default-pixel slot: a whole tile of the store's default, in page 0.
     if (m_defaultSlotDirty) {
         QImage def(TileStore::TileSize, TileStore::TileSize, TileStore::TileFormat);
-        const easel::Pixel p = m_store->defaultPixel();
+        const easeletch::Pixel p = m_store->defaultPixel();
         for (int y = 0; y < def.height(); ++y) {
-            auto *line = reinterpret_cast<easel::Pixel *>(def.scanLine(y));
+            auto *line = reinterpret_cast<easeletch::Pixel *>(def.scanLine(y));
             std::fill(line, line + def.width(), p);
         }
         QRhiTextureSubresourceUploadDescription d(def.constBits(), quint32(def.sizeInBytes()));
@@ -424,7 +424,7 @@ void CanvasView::render(QRhiCommandBuffer *cb)
 
     // Tile uploads, batched per page.
     std::vector<std::vector<QRhiTextureUploadEntry>> perPage(m_pages.size());
-    for (const easel::TileUpload &up : plan.uploads) {
+    for (const easeletch::TileUpload &up : plan.uploads) {
         QRhiTextureSubresourceUploadDescription d(up.image.constBits(), quint32(up.image.sizeInBytes()));
         d.setSourceSize(up.image.size());
         d.setDestinationTopLeft(TileAtlas::slotOrigin(up.slot));
@@ -868,12 +868,12 @@ bool CanvasView::cursorVisible() const
     return t && m_hovering && !m_spaceHeld && !m_panning && t->cursorDiameter() > 0.0;
 }
 
-easel::StrokeSample CanvasView::sampleAt(const QPointF &viewPos, double pressure) const
+easeletch::StrokeSample CanvasView::sampleAt(const QPointF &viewPos, double pressure) const
 {
     return {viewToCanvas(viewPos), pressure};
 }
 
-void CanvasView::beginStroke(const easel::StrokeSample &s)
+void CanvasView::beginStroke(const easeletch::StrokeSample &s)
 {
     CanvasTool *tool = activeTool();
     if (!tool)
@@ -887,14 +887,14 @@ void CanvasView::beginStroke(const easel::StrokeSample &s)
     update();
 }
 
-void CanvasView::continueStroke(const easel::StrokeSample &s)
+void CanvasView::continueStroke(const easeletch::StrokeSample &s)
 {
     m_lastSample = s;
     m_strokeTool->move(s);
     refresh();
 }
 
-void CanvasView::endStroke(const easel::StrokeSample &s)
+void CanvasView::endStroke(const easeletch::StrokeSample &s)
 {
     CanvasTool *tool = m_strokeTool;
     m_stroking = false;

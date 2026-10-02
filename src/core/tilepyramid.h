@@ -9,7 +9,7 @@
 #include <QSet>
 #include <QSize>
 
-namespace easel {
+namespace easeletch {
 
 struct LevelTile {
     int level = 0;
@@ -85,4 +85,4 @@ private:
     mutable QHash<LevelTile, bool> m_exists;
 };
 
-} // namespace easel
+} // namespace easeletch

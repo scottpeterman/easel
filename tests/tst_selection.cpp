@@ -5,7 +5,7 @@
 
 #include <cstring>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 

@@ -4,7 +4,7 @@
 #include <cmath>
 #include <vector>
 
-namespace easel {
+namespace easeletch {
 
 namespace {
 constexpr double kTwoPi = 6.283185307179586;
@@ -255,4 +255,4 @@ bool operator==(const Selection &a, const Selection &b)
     return a.m_shape != Selection::Shape::Mask || a.m_mask == b.m_mask;
 }
 
-} // namespace easel
+} // namespace easeletch

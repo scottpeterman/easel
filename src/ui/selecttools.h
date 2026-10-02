@@ -15,9 +15,9 @@ class SelectTool : public QObject, public CanvasTool
     Q_OBJECT
 
 public:
-    explicit SelectTool(easel::Selection::Shape shape, QObject *parent = nullptr);
+    explicit SelectTool(easeletch::Selection::Shape shape, QObject *parent = nullptr);
 
-    easel::Selection::Shape shape() const { return m_shape; }
+    easeletch::Selection::Shape shape() const { return m_shape; }
     // An empty cell size turns snapping off.
     void setSnapGrid(const QSize &cell, const QPoint &offset)
     {
@@ -25,20 +25,20 @@ public:
         m_cellOffset = offset;
     }
 
-    void press(const easel::StrokeSample &s) override;
-    void move(const easel::StrokeSample &s) override;
-    void release(const easel::StrokeSample &s) override;
+    void press(const easeletch::StrokeSample &s) override;
+    void move(const easeletch::StrokeSample &s) override;
+    void release(const easeletch::StrokeSample &s) override;
     double cursorDiameter() const override { return 0.0; }
 
 signals:
     // While dragging (for the live outline), and when the drag ends.
-    void selectionDragged(const easel::Selection &selection);
-    void selectionFinished(const easel::Selection &selection);
+    void selectionDragged(const easeletch::Selection &selection);
+    void selectionFinished(const easeletch::Selection &selection);
 
 private:
-    easel::Selection selectionTo(const QPointF &pos) const;
+    easeletch::Selection selectionTo(const QPointF &pos) const;
 
-    easel::Selection::Shape m_shape;
+    easeletch::Selection::Shape m_shape;
     QPoint m_anchor;
     QPointF m_anchorPos;
     QSize m_cell;
@@ -55,9 +55,9 @@ class MoveTool : public QObject, public CanvasTool
 public:
     using QObject::QObject;
 
-    void press(const easel::StrokeSample &s) override { emit dragStarted(s.pos); }
-    void move(const easel::StrokeSample &s) override { emit dragged(s.pos); }
-    void release(const easel::StrokeSample &s) override { emit dragEnded(s.pos); }
+    void press(const easeletch::StrokeSample &s) override { emit dragStarted(s.pos); }
+    void move(const easeletch::StrokeSample &s) override { emit dragged(s.pos); }
+    void release(const easeletch::StrokeSample &s) override { emit dragEnded(s.pos); }
     double cursorDiameter() const override { return 0.0; }
     Qt::CursorShape cursorShape() const override { return Qt::SizeAllCursor; }
     bool keyPress(QKeyEvent *event) override;
@@ -83,9 +83,9 @@ public:
     bool contiguous() const { return m_contiguous; }
     void setContiguous(bool on) { m_contiguous = on; }
 
-    void press(const easel::StrokeSample &s) override;
-    void move(const easel::StrokeSample &) override {}
-    void release(const easel::StrokeSample &) override {}
+    void press(const easeletch::StrokeSample &s) override;
+    void move(const easeletch::StrokeSample &) override {}
+    void release(const easeletch::StrokeSample &) override {}
     double cursorDiameter() const override { return 0.0; }
 
 signals:

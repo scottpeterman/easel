@@ -1,11 +1,11 @@
 @echo off
 REM scripts\build-windows.bat
 REM
-REM Build, test and package Easel on Windows (MSVC x64, Ninja).
+REM Build, test and package Easeletch on Windows (MSVC x64, Ninja).
 REM
 REM   scripts\build-windows.bat                 configure (if needed), build, test
 REM   scripts\build-windows.bat --run           ...then launch the app
-REM   scripts\build-windows.bat --zip           ...then make dist\Easel-windows-x64.zip
+REM   scripts\build-windows.bat --zip           ...then make dist\Easeletch-windows-x64.zip
 REM   scripts\build-windows.bat --clean         wipe the build directory first
 REM   scripts\build-windows.bat --qt DIR        Qt prefix, e.g. C:\Qt\6.10.3\msvc2022_64
 REM   scripts\build-windows.bat --debug         Debug build in build-debug\
@@ -208,7 +208,7 @@ if "%MAKE_ZIP%"=="0" goto run
 echo.
 echo ==^> Packaging zip
 set "STAGE=%ROOT%\dist\windows"
-set "OUTPUT=%ROOT%\dist\Easel-windows-x64.zip"
+set "OUTPUT=%ROOT%\dist\Easeletch-windows-x64.zip"
 if exist "%STAGE%" rmdir /s /q "%STAGE%"
 if exist "%OUTPUT%" del /q "%OUTPUT%"
 if not exist "%ROOT%\dist" mkdir "%ROOT%\dist"
@@ -223,7 +223,7 @@ REM --- Run --------------------------------------------------------------------
 if "%RUN_APP%"=="0" goto done
 echo.
 echo ==^> Launching
-start "" "%BUILD_DIR%\src\app\easel.exe"
+start "" "%BUILD_DIR%\src\app\easeletch.exe"
 
 :done
 endlocal

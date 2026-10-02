@@ -11,7 +11,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
-using namespace easel;
+using namespace easeletch;
 
 namespace {
 
@@ -191,7 +191,7 @@ private slots:
     void saveReopenAndUnsavedState()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("drawing.easel"));
+        const QString path = dir.filePath(QStringLiteral("drawing.easeletch"));
         MainWindow w;
         setupWindow(w);
         CanvasView *view = w.canvasView();
@@ -204,7 +204,7 @@ private slots:
         QVERIFY(w.saveDocumentTo(path, true));
         QVERIFY(!w.isModified());
         QCOMPARE(w.documentPath(), QFileInfo(path).absoluteFilePath());
-        QVERIFY(w.windowTitle().startsWith(QStringLiteral("drawing.easel")));
+        QVERIFY(w.windowTitle().startsWith(QStringLiteral("drawing.easeletch")));
 
         QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 100}));
         QVERIFY(w.isModified());
@@ -231,7 +231,7 @@ private slots:
     void backgroundSaveLetsYouKeepPainting()
     {
         QTemporaryDir dir;
-        const QString path = dir.filePath(QStringLiteral("bg.easel"));
+        const QString path = dir.filePath(QStringLiteral("bg.easeletch"));
         MainWindow w;
         setupWindow(w);
         CanvasView *view = w.canvasView();

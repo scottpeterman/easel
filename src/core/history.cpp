@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace easel {
+namespace easeletch {
 
 History::History(qint64 budgetBytes)
     : m_budget(std::max<qint64>(budgetBytes, 0))
@@ -175,4 +175,4 @@ void History::enforceBudget()
     }
 }
 
-} // namespace easel
+} // namespace easeletch

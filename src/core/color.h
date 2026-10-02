@@ -4,7 +4,7 @@
 #include <QRgb>
 #include <QtGui/qrgbafloat.h>
 
-namespace easel {
+namespace easeletch {
 
 // Internal pixel: linear-light, premultiplied RGBA, 16-bit half-float per channel.
 // Memory layout matches QImage::Format_RGBA16FPx4_Premultiplied.
@@ -27,4 +27,4 @@ QColor pixelToColor(const Pixel &p);
 // Premultiplied 8-bit sRGB, ready for QImage::Format_ARGB32_Premultiplied.
 QRgb pixelToDisplay(const Pixel &p);
 
-} // namespace easel
+} // namespace easeletch

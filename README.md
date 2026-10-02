@@ -1,4 +1,4 @@
-# Easel
+# Easeletch
 
 A balanced layered image editor: Paint.NET approachability with Photoshop's layer model. C++20, Qt 6.
 
@@ -14,7 +14,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 
 | Action | Input |
 | --- | --- |
-| New / Open | Ctrl+N / Ctrl+O (Easel documents and images) |
+| New / Open | Ctrl+N / Ctrl+O (Easeletch documents and images) |
 | Save / Save As | Ctrl+S / Ctrl+Shift+S |
 | Export PNG, JPEG or WebP | Ctrl+Shift+E |
 | Paint | Left-drag or pen |
@@ -51,9 +51,9 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 
 ## Files
 
-Easel saves `.easel` documents: a zip with a `manifest.json` (canvas size and the layer list: name, group, visibility, lock, opacity, blend mode), a flattened `preview.png` (up to 2048 px) you can look at without Easel, and each layer's tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
+Easeletch saves `.easeletch` documents: a zip with a `manifest.json` (canvas size and the layer list: name, group, visibility, lock, opacity, blend mode), a flattened `preview.png` (up to 2048 px) you can look at without Easeletch, and each layer's tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
 
-Documents saved before layers (format 1) open as a single layer. Documents saved now are format 2, which older builds decline to open.
+The app was called Easel before 0.2.0: `.easel` files from then still open, and saving one asks for a new `.easeletch` name. Documents saved before layers (format 1) open as a single layer. Documents saved now are format 2, which older builds decline to open.
 
 ## Build
 
@@ -70,7 +70,7 @@ scripts/build.sh --appimage
 scripts/build.sh --dmg
 ```
 
-`--appimage` writes `dist/Easel-linux-x86_64.AppImage`; `--dmg` writes `dist/Easel-macos.dmg`. CI runs the same script. `--debug` builds into `build-debug/` and `--no-tests` skips ctest.
+`--appimage` writes `dist/Easeletch-linux-x86_64.AppImage`; `--dmg` writes `dist/Easeletch-macos.dmg`. CI runs the same script. `--debug` builds into `build-debug/` and `--no-tests` skips ctest.
 
 If Qt reports no Shader Tools module, add it:
 
@@ -78,7 +78,7 @@ If Qt reports no Shader Tools module, add it:
 aqt install-qt linux desktop 6.10.3 linux_gcc_64 --noarchives -m qtshadertools -O ~/Qt
 ```
 
-On Windows, `scripts\build-windows.bat` takes the same options, with `--zip` (writes `dist\Easel-windows-x64.zip`) in place of `--appimage`/`--dmg`. It runs from a plain cmd prompt: it loads the x64 MSVC environment itself through vswhere, finds Qt at `C:\Qt\6.10.3\msvc2022_64` (or the newest `C:\Qt\6.*\msvc*_64`), and takes Ninja and CMake from PATH, Visual Studio or `C:\Qt\Tools`. Needs Visual Studio 2022 or its Build Tools with "Desktop development with C++".
+On Windows, `scripts\build-windows.bat` takes the same options, with `--zip` (writes `dist\Easeletch-windows-x64.zip`) in place of `--appimage`/`--dmg`. It runs from a plain cmd prompt: it loads the x64 MSVC environment itself through vswhere, finds Qt at `C:\Qt\6.10.3\msvc2022_64` (or the newest `C:\Qt\6.*\msvc*_64`), and takes Ninja and CMake from PATH, Visual Studio or `C:\Qt\Tools`. Needs Visual Studio 2022 or its Build Tools with "Desktop development with C++".
 
 ```
 scripts\build-windows.bat
@@ -112,21 +112,21 @@ git push origin v0.2.0
 
 | Platform | Package |
 | --- | --- |
-| Linux x86_64 | `Easel-linux-x86_64.AppImage` |
-| Windows x64 | `Easel-windows-x64.zip` (run `bin/easel.exe`) |
-| macOS (Apple Silicon + Intel) | `Easel-macos.dmg` |
+| Linux x86_64 | `Easeletch-linux-x86_64.AppImage` |
+| Windows x64 | `Easeletch-windows-x64.zip` (run `bin/easeletch.exe`) |
+| macOS (Apple Silicon + Intel) | `Easeletch-macos.dmg` |
 
 The macOS build is ad-hoc signed, not notarized. After copying it to Applications, clear the quarantine flag once or macOS reports it as damaged:
 
 ```
-xattr -dr com.apple.quarantine /Applications/Easel.app
+xattr -dr com.apple.quarantine /Applications/Easeletch.app
 ```
 
 ## Layout
 
 ```
-src/core   tile store and color math, no widgets (easel_core)
-src/ui     canvas view, main window, panels (easel_ui)
+src/core   tile store and color math, no widgets (easeletch_core)
+src/ui     canvas view, main window, panels (easeletch_ui)
 src/app    executable, icon, install and deploy rules
 scripts    build.sh (Linux, macOS) and build-windows.bat: build, test and package
 tests      Qt Test suites; CPU tests run offscreen, GPU tests need a display

@@ -9,7 +9,7 @@
 #include <QRect>
 #include <QSet>
 
-namespace easel {
+namespace easeletch {
 
 struct TileCoord {
     int x = 0;
@@ -83,4 +83,4 @@ private:
     QSet<TileCoord> m_dirty;
 };
 
-} // namespace easel
+} // namespace easeletch

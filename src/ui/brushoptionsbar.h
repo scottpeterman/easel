@@ -30,7 +30,7 @@ private:
     Control addControl(QWidget *host, const QString &label, int min, int max, const QString &suffix,
                        std::function<int(int)> spinToSlider, std::function<int(int)> sliderToSpin,
                        QLabel **labelOut = nullptr);
-    void apply(const std::function<void(easel::BrushSettings &)> &change);
+    void apply(const std::function<void(easeletch::BrushSettings &)> &change);
     void syncFromTool();
 
     BrushTool *m_tool;
