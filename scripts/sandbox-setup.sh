@@ -24,3 +24,4 @@ apt-get install -y ninja-build xvfb libxcb-cursor0 libgl1-mesa-dev libopengl-dev
 
 "$QT_DIR/bin/qmake" -query QT_VERSION
 echo "Qt ready at $QT_DIR. Build with: LC_ALL=C.UTF-8 scripts/build.sh --qt $QT_DIR"
+# make executble
