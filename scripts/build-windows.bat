@@ -223,7 +223,16 @@ REM --- Run --------------------------------------------------------------------
 if "%RUN_APP%"=="0" goto done
 echo.
 echo ==^> Launching
-start "" "%BUILD_DIR%\src\app\easeletch.exe"
+REM Where the exe lands depends on the generator and on Qt's project setup, so
+REM look for it rather than assume.
+set "APP_EXE="
+for /f "delims=" %%F in ('dir /s /b "%BUILD_DIR%\easeletch.exe" 2^>nul') do if not defined APP_EXE set "APP_EXE=%%F"
+if not defined APP_EXE (
+    echo Could not find easeletch.exe under %BUILD_DIR%
+    exit /b 1
+)
+echo %APP_EXE%
+start "" "%APP_EXE%"
 
 :done
 endlocal
