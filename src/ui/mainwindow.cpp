@@ -98,6 +98,18 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_textPanel, &TextPanel::changed, this, &MainWindow::updateText);
     connect(m_textPanel, &QDialog::accepted, this, &MainWindow::commitText);
     connect(m_textPanel, &QDialog::rejected, this, &MainWindow::cancelText);
+    m_fillTool = new FillTool(this);
+    connect(m_fillTool, &FillTool::clicked, this, [this](const QPointF &pos) {
+        fillAt(QPoint(int(std::floor(pos.x())), int(std::floor(pos.y()))));
+    });
+    m_gradientTool = new GradientTool(this);
+    // While it's dragged, a line shows where the gradient will run.
+    connect(m_gradientTool, &GradientTool::dragged, this, [this](const QPointF &from, const QPointF &to) {
+        QList<QPolygonF> lines = m_selection.outlines();
+        lines << QPolygonF({from, to});
+        m_view->setSelectionOutline(lines);
+    });
+    connect(m_gradientTool, &GradientTool::finished, this, &MainWindow::drawGradient);
     m_transformTool = new TransformTool(this);
     connect(m_transformTool, &TransformTool::pressed, this, &MainWindow::transformPressed);
     connect(m_transformTool, &TransformTool::dragged, this, &MainWindow::transformDragged);
@@ -155,6 +167,19 @@ MainWindow::MainWindow(QWidget *parent)
     restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
     m_wandOptions->hide(); // shown with the wand
     m_transformOptions->hide(); // ... and with a transform
+    m_fillOptions->hide();
+    m_gradientOptions->hide();
+    m_fill.tolerance = settings.value(QStringLiteral("fill/tolerance"), m_fill.tolerance).toDouble();
+    m_fill.contiguous = settings.value(QStringLiteral("fill/contiguous"), m_fill.contiguous).toBool();
+    m_fill.allLayers = settings.value(QStringLiteral("fill/allLayers"), m_fill.allLayers).toBool();
+    syncFillOptions();
+    m_gradient.radial = settings.value(QStringLiteral("gradient/radial"), m_gradient.radial).toBool();
+    m_gradient.toTransparent = settings.value(QStringLiteral("gradient/toTransparent"), m_gradient.toTransparent).toBool();
+    m_gradient.reverse = settings.value(QStringLiteral("gradient/reverse"), m_gradient.reverse).toBool();
+    const QColor end(settings.value(QStringLiteral("gradient/end"), m_gradient.end.name()).toString());
+    if (end.isValid())
+        m_gradient.end = end;
+    syncGradientOptions();
     setTransformSmooth(settings.value(QStringLiteral("transform/smooth"), true).toBool());
     m_options->show();
     m_wand->setTolerance(settings.value(QStringLiteral("wand/tolerance"), m_wand->tolerance()).toDouble());
@@ -212,6 +237,9 @@ void MainWindow::createActions()
     pasteAct->setShortcut(QKeySequence::Paste);
     m_deleteAct = edit->addAction(tr("&Delete"), this, &MainWindow::deleteSelection);
     m_deleteAct->setShortcuts({QKeySequence::Delete, QKeySequence(Qt::Key_Backspace)});
+    auto *fillAct = edit->addAction(tr("&Fill with Colour"), this, &MainWindow::fillSelection);
+    fillAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
+    fillAct->setToolTip(tr("Fill the selection, or the whole layer, with the current colour"));
     edit->addSeparator();
     auto *selectAllAct = edit->addAction(tr("Select &All"), this, &MainWindow::selectAll);
     selectAllAct->setShortcut(QKeySequence::SelectAll);
@@ -376,7 +404,8 @@ void MainWindow::createActions()
     for (QDockWidget *dock : findChildren<QDockWidget *>())
         m_viewMenu->addAction(dock->toggleViewAction());
     for (QToolBar *bar : findChildren<QToolBar *>())
-        if (bar != m_wandOptions && bar != m_options && bar != m_transformOptions) // these follow the tool
+        if (bar != m_wandOptions && bar != m_options && bar != m_transformOptions && bar != m_fillOptions
+            && bar != m_gradientOptions) // these follow the tool
             m_viewMenu->addAction(bar->toggleViewAction());
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
@@ -430,6 +459,15 @@ void MainWindow::createToolBars()
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
     m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
                              "Enter drops, Escape cancels."));
+    tools->addSeparator();
+    m_fillAct = tools->addAction(tr("Fill"), this, [this] { activateTool(m_fillTool, false); });
+    m_fillAct->setShortcut(QKeySequence(Qt::Key_G));
+    m_fillAct->setToolTip(tr("Fill (G): click to flood an area of similar colour with the current colour. "
+                             "Stays inside the selection."));
+    m_gradientAct = tools->addAction(tr("Gradient"), this, [this] { activateTool(m_gradientTool, false); });
+    m_gradientAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_G));
+    m_gradientAct->setToolTip(tr("Gradient (Shift+G): drag from where it starts to where it ends. "
+                                 "Fills the selection, or the whole layer. Shift keeps the line to 45° steps."));
     m_transformAct = tools->addAction(tr("Transform"), this, [this] {
         // Nothing to transform: the button of the tool still in use stays down.
         if (!beginTransform())
@@ -440,7 +478,8 @@ void MainWindow::createToolBars()
     m_transformAct->setToolTip(tr("Free transform (Ctrl+T): scale, rotate and move the selection, or the whole layer. "
                                   "Enter applies, Escape cancels."));
     for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
-                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct, m_transformAct}) {
+                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct, m_transformAct, m_fillAct,
+                       m_gradientAct}) {
         a->setCheckable(true);
         group->addAction(a);
     }
@@ -505,6 +544,8 @@ void MainWindow::createToolBars()
     }
     addToolBar(Qt::TopToolBarArea, m_wandOptions);
     createTransformOptions();
+    createFillOptions();
+    createGradientOptions();
 
     // The cursor circle follows size changes immediately.
     connect(m_brush, &BrushTool::settingsChanged, m_view, qOverload<>(&QWidget::update));
@@ -633,6 +674,8 @@ QAction *MainWindow::actionFor(CanvasTool *tool) const
            : tool == m_textTool      ? m_textAct
            : tool == m_eyedropper    ? m_eyedropperAct
            : tool == m_transformTool ? m_transformAct
+           : tool == m_fillTool      ? m_fillAct
+           : tool == m_gradientTool  ? m_gradientAct
                                      : nullptr;
 }
 
@@ -653,9 +696,11 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
     // shown: with two in the row, even for a moment, the window widens to
     // fit both and stays that wide.
     const std::pair<QToolBar *, bool> bars[] = {
-        {m_options, tool != m_wand && tool != m_transformTool},
+        {m_options, tool != m_wand && tool != m_transformTool && tool != m_fillTool && tool != m_gradientTool},
         {m_wandOptions, tool == m_wand},
         {m_transformOptions, tool == m_transformTool},
+        {m_fillOptions, tool == m_fillTool},
+        {m_gradientOptions, tool == m_gradientTool},
     };
     for (const auto &[bar, on] : bars)
         if (!on)
@@ -2175,6 +2220,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_textPanel->saveSettings(settings);
     m_grid.save(settings);
     settings.setValue(QStringLiteral("transform/smooth"), m_transformSmooth);
+    settings.setValue(QStringLiteral("fill/tolerance"), m_fill.tolerance);
+    settings.setValue(QStringLiteral("fill/contiguous"), m_fill.contiguous);
+    settings.setValue(QStringLiteral("fill/allLayers"), m_fill.allLayers);
+    settings.setValue(QStringLiteral("gradient/radial"), m_gradient.radial);
+    settings.setValue(QStringLiteral("gradient/toTransparent"), m_gradient.toTransparent);
+    settings.setValue(QStringLiteral("gradient/reverse"), m_gradient.reverse);
+    settings.setValue(QStringLiteral("gradient/end"), m_gradient.end.name());
     settings.setValue(QStringLiteral("wand/tolerance"), m_wand->tolerance());
     settings.setValue(QStringLiteral("wand/contiguous"), m_wand->contiguous());
     event->accept();

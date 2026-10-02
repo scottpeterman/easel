@@ -9,6 +9,7 @@
 #include "tilestore.h"
 #include "transform.h"
 
+#include <QColor>
 #include <QMainWindow>
 #include <QSize>
 
@@ -31,7 +32,12 @@ class LassoTool;
 class TextTool;
 class TextPanel;
 class TransformTool;
+class FillTool;
+class GradientTool;
 class QCheckBox;
+class QComboBox;
+class QSpinBox;
+class QToolButton;
 class QDoubleSpinBox;
 class QToolBar;
 class ColorPanel;
@@ -85,6 +91,28 @@ public:
     void commitText();
     void cancelText();
     TransformTool *transformTool() const { return m_transformTool; }
+    FillTool *fillTool() const { return m_fillTool; }
+    GradientTool *gradientTool() const { return m_gradientTool; }
+    // How the Fill tool finds the area to fill, as the magic wand does.
+    // allLayers: it looks at the whole picture, not just the active layer
+    // (line art on one layer, colour on another).
+    struct FillOptions {
+        double tolerance = 0.12;
+        bool contiguous = true;
+        bool allLayers = false;
+    };
+    const FillOptions &fillOptions() const { return m_fill; }
+    void setFillOptions(const FillOptions &options);
+    // The gradient goes from the painting colour to transparent, or to the
+    // end colour; reverse swaps the two ends.
+    struct GradientOptions {
+        bool radial = false;
+        bool toTransparent = true;
+        QColor end = Qt::white;
+        bool reverse = false;
+    };
+    const GradientOptions &gradientOptions() const { return m_gradient; }
+    void setGradientOptions(const GradientOptions &options);
     // A free transform is under way: the pixels float with a box round them.
     bool isTransforming() const { return m_xf.active; }
     const easeletch::FreeTransform &transformBox() const { return m_xf.box; }
@@ -129,6 +157,16 @@ public slots:
     void featherSelection(int pixels);
     // Color to Alpha in the selection, or everywhere without one.
     void colorToAlpha(const QColor &color, double threshold);
+
+    // Floods the area of similar colour around a canvas point with the
+    // painting colour, inside the selection if there is one (what a click
+    // with the Fill tool does). One undo step.
+    void fillAt(const QPoint &pos);
+    // Fills the selection, or the whole layer, with the painting colour.
+    void fillSelection();
+    // Draws a gradient between two canvas points over the selection, or the
+    // whole layer (what a drag with the Gradient tool does). One undo step.
+    void drawGradient(const QPointF &from, const QPointF &to);
 
     // Free transform of the selected pixels, or of everything on the layer
     // when nothing is selected. Enter (commitFloating) applies it as one undo
@@ -190,6 +228,10 @@ private:
     void createDocks();
     void createStatusBar();
     void createTransformOptions();
+    void createFillOptions();
+    void createGradientOptions();
+    void syncFillOptions();
+    void syncGradientOptions();
     QAction *actionFor(CanvasTool *tool) const;
     // interactive: switches to the Transform tool and shows the box.
     bool startTransform(bool interactive);
@@ -308,6 +350,21 @@ private:
         bool movingLayer = false; // ... or it became a drag, and is moving the layer
         easeletch::Selection selectionBeforeMove;
     } m_text;
+    FillTool *m_fillTool = nullptr;
+    GradientTool *m_gradientTool = nullptr;
+    QAction *m_fillAct = nullptr;
+    QAction *m_gradientAct = nullptr;
+    QToolBar *m_fillOptions = nullptr;
+    QToolBar *m_gradientOptions = nullptr;
+    FillOptions m_fill;
+    GradientOptions m_gradient;
+    QSpinBox *m_fillTolerance = nullptr;
+    QCheckBox *m_fillContiguous = nullptr;
+    QCheckBox *m_fillAllLayers = nullptr;
+    QComboBox *m_gradientShape = nullptr;
+    QCheckBox *m_gradientTransparent = nullptr;
+    QCheckBox *m_gradientReverse = nullptr;
+    QToolButton *m_gradientEnd = nullptr;
     TransformTool *m_transformTool = nullptr;
     QAction *m_transformAct = nullptr;
     QToolBar *m_transformOptions = nullptr;

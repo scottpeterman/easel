@@ -1,20 +1,28 @@
-// MainWindow: free transform, flips and quarter turns.
+// MainWindow: free transform, flips and quarter turns; fill and gradient.
 
 #include "mainwindow.h"
 
 #include "brushtool.h"
 #include "canvasview.h"
+#include "colorpanel.h"
 #include "edittools.h"
+#include "fillops.h"
 #include "selecttools.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineF>
+#include <QPixmap>
 #include <QSignalBlocker>
+#include <QSlider>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QToolButton>
@@ -360,4 +368,232 @@ void MainWindow::transformReleased(const QPointF &pos)
     // A click that moved nothing isn't a change.
     if (m_xf.changed || !(m_xf.box.isIdentity() && m_xf.box.center == m_xf.start.center))
         applyTransform(true);
+}
+
+// --- Fill and gradient ------------------------------------------------------------
+
+void MainWindow::createFillOptions()
+{
+    m_fillOptions = new QToolBar(tr("Fill Options"), this);
+    m_fillOptions->setObjectName(QStringLiteral("FillOptionsBar"));
+    m_fillOptions->setMovable(false);
+
+    auto *host = new QWidget(m_fillOptions);
+    auto *row = new QHBoxLayout(host);
+    row->setContentsMargins(6, 2, 6, 2);
+    row->setSpacing(6);
+    auto *title = new QLabel(tr("Fill"), host);
+    title->setStyleSheet(QStringLiteral("font-weight: 600;"));
+    row->addWidget(title);
+    row->addSpacing(8);
+    row->addWidget(new QLabel(tr("Tolerance"), host));
+    auto *slider = new QSlider(Qt::Horizontal, host);
+    slider->setRange(0, 100);
+    slider->setFixedWidth(120);
+    m_fillTolerance = new QSpinBox(host);
+    m_fillTolerance->setRange(0, 100);
+    m_fillTolerance->setSuffix(tr("%"));
+    m_fillTolerance->setKeyboardTracking(false);
+    m_fillTolerance->setToolTip(tr("How different a colour can be and still be filled. Raise it to reach "
+                                   "into soft edges."));
+    m_fillContiguous = new QCheckBox(tr("Contiguous"), host);
+    m_fillContiguous->setToolTip(tr("Only the area connected to the pixel clicked; off fills that colour everywhere"));
+    m_fillAllLayers = new QCheckBox(tr("All layers"), host);
+    m_fillAllLayers->setToolTip(tr("Find the area in the whole picture, not just this layer: "
+                                   "fill under line art that's on another layer"));
+    auto *hint = new QLabel(tr("Fills with the current colour, inside the selection"), host);
+    hint->setEnabled(false);
+    row->addWidget(slider);
+    row->addWidget(m_fillTolerance);
+    row->addWidget(m_fillContiguous);
+    row->addWidget(m_fillAllLayers);
+    row->addSpacing(12);
+    row->addWidget(hint);
+    row->addStretch(1);
+    m_fillOptions->addWidget(host);
+
+    connect(slider, &QSlider::valueChanged, m_fillTolerance, &QSpinBox::setValue);
+    connect(m_fillTolerance, &QSpinBox::valueChanged, this, [this, slider](int v) {
+        const QSignalBlocker block(slider);
+        slider->setValue(v);
+        m_fill.tolerance = v / 100.0;
+    });
+    connect(m_fillContiguous, &QCheckBox::toggled, this, [this](bool on) { m_fill.contiguous = on; });
+    connect(m_fillAllLayers, &QCheckBox::toggled, this, [this](bool on) { m_fill.allLayers = on; });
+    addToolBar(Qt::TopToolBarArea, m_fillOptions);
+    syncFillOptions();
+}
+
+void MainWindow::syncFillOptions()
+{
+    if (!m_fillTolerance)
+        return;
+    const FillOptions o = m_fill; // the widgets write back as they're set
+    m_fillTolerance->setValue(int(std::lround(o.tolerance * 100.0)));
+    m_fillContiguous->setChecked(o.contiguous);
+    m_fillAllLayers->setChecked(o.allLayers);
+    m_fill = o;
+}
+
+void MainWindow::setFillOptions(const FillOptions &options)
+{
+    m_fill = options;
+    m_fill.tolerance = std::clamp(m_fill.tolerance, 0.0, 1.0);
+    syncFillOptions();
+}
+
+void MainWindow::createGradientOptions()
+{
+    m_gradientOptions = new QToolBar(tr("Gradient Options"), this);
+    m_gradientOptions->setObjectName(QStringLiteral("GradientOptionsBar"));
+    m_gradientOptions->setMovable(false);
+
+    auto *host = new QWidget(m_gradientOptions);
+    auto *row = new QHBoxLayout(host);
+    row->setContentsMargins(6, 2, 6, 2);
+    row->setSpacing(6);
+    auto *title = new QLabel(tr("Gradient"), host);
+    title->setStyleSheet(QStringLiteral("font-weight: 600;"));
+    row->addWidget(title);
+    row->addSpacing(8);
+    m_gradientShape = new QComboBox(host);
+    m_gradientShape->addItems({tr("Linear"), tr("Radial")});
+    m_gradientShape->setToolTip(tr("Linear runs along the line you drag. Radial spreads out from where you start."));
+    row->addWidget(m_gradientShape);
+    m_gradientTransparent = new QCheckBox(tr("To transparent"), host);
+    m_gradientTransparent->setToolTip(tr("Fade the current colour out to nothing. Untick to blend into the end colour."));
+    row->addWidget(m_gradientTransparent);
+    m_gradientEnd = new QToolButton(host);
+    m_gradientEnd->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_gradientEnd->setText(tr("End colour"));
+    m_gradientEnd->setFocusPolicy(Qt::NoFocus);
+    m_gradientEnd->setToolTip(tr("The colour the gradient ends on. Click to set it to the current colour, "
+                                 "then pick the colour it starts with."));
+    row->addWidget(m_gradientEnd);
+    m_gradientReverse = new QCheckBox(tr("Reverse"), host);
+    m_gradientReverse->setToolTip(tr("Swap the two ends"));
+    row->addWidget(m_gradientReverse);
+    auto *hint = new QLabel(tr("Drag from start to end · Shift for 45° steps"), host);
+    hint->setEnabled(false);
+    row->addSpacing(12);
+    row->addWidget(hint);
+    row->addStretch(1);
+    m_gradientOptions->addWidget(host);
+
+    connect(m_gradientShape, &QComboBox::currentIndexChanged, this, [this](int i) { m_gradient.radial = i == 1; });
+    connect(m_gradientTransparent, &QCheckBox::toggled, this, [this](bool on) {
+        m_gradient.toTransparent = on;
+        m_gradientEnd->setEnabled(!on);
+    });
+    connect(m_gradientReverse, &QCheckBox::toggled, this, [this](bool on) { m_gradient.reverse = on; });
+    connect(m_gradientEnd, &QToolButton::clicked, this, [this] {
+        m_gradient.end = m_color->color();
+        syncGradientOptions();
+    });
+    addToolBar(Qt::TopToolBarArea, m_gradientOptions);
+    syncGradientOptions();
+}
+
+void MainWindow::syncGradientOptions()
+{
+    if (!m_gradientShape)
+        return;
+    const GradientOptions o = m_gradient; // the widgets write back as they're set
+    m_gradientShape->setCurrentIndex(o.radial ? 1 : 0);
+    m_gradientTransparent->setChecked(o.toTransparent);
+    m_gradientReverse->setChecked(o.reverse);
+    m_gradientEnd->setEnabled(!o.toTransparent);
+    QPixmap swatch(14, 14);
+    swatch.fill(o.end);
+    m_gradientEnd->setIcon(swatch);
+    m_gradient = o;
+}
+
+void MainWindow::setGradientOptions(const GradientOptions &options)
+{
+    m_gradient = options;
+    if (!m_gradient.end.isValid())
+        m_gradient.end = Qt::white;
+    syncGradientOptions();
+}
+
+void MainWindow::fillAt(const QPoint &pos)
+{
+    if (!m_stack) // called from the tool's press, so a stroke is under way
+        return;
+    commitFloating();
+    easeletch::TileStore *store = editStore();
+    if (!store || !canvasRect().contains(pos))
+        return;
+    if (!m_selection.isEmpty() && !m_selection.contains(pos.x(), pos.y())) {
+        statusBar()->showMessage(tr("That's outside the selection: Ctrl+D deselects"), 4000);
+        return;
+    }
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    const easeletch::TileStore *look = store;
+    if (m_fill.allLayers && !m_editMask) {
+        syncComposite();
+        look = &m_stack->composite();
+    }
+    const easeletch::Selection area =
+        easeletch::magicWand(*look, canvasRect(), pos, m_fill.tolerance, m_fill.contiguous);
+    auto before = easeletch::fillRegion(*store, area, m_selection, canvasRect(), m_color->color());
+    QApplication::restoreOverrideCursor();
+    if (before.isEmpty())
+        return; // already that colour
+    m_history.push(tr("Fill"), m_stack->activeId(), std::move(before), m_editMask);
+    m_color->noteUsed(m_color->color());
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::fillSelection()
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    commitFloating();
+    easeletch::TileStore *store = editStore();
+    if (!store)
+        return;
+    const easeletch::Selection area = m_selection.isEmpty() ? easeletch::Selection::rect(canvasRect()) : m_selection;
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    auto before = easeletch::fillRegion(*store, area, {}, canvasRect(), m_color->color());
+    QApplication::restoreOverrideCursor();
+    if (before.isEmpty())
+        return;
+    m_history.push(tr("Fill"), m_stack->activeId(), std::move(before), m_editMask);
+    m_color->noteUsed(m_color->color());
+    m_view->refresh();
+    historyChanged();
+}
+
+void MainWindow::drawGradient(const QPointF &from, const QPointF &to)
+{
+    if (!m_stack)
+        return;
+    m_view->setSelectionOutline(m_selection.outlines()); // the guide line goes
+    // Less than two screen pixels is a click, not a drag.
+    if (QLineF(from, to).length() * m_view->zoom() < 2.0)
+        return;
+    commitFloating();
+    easeletch::TileStore *store = editStore();
+    if (!store)
+        return;
+    easeletch::Gradient g;
+    g.from = from;
+    g.to = to;
+    g.radial = m_gradient.radial;
+    g.start = m_color->color();
+    g.end = m_gradient.toTransparent ? QColor(Qt::transparent) : m_gradient.end;
+    if (m_gradient.reverse)
+        std::swap(g.start, g.end);
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    auto before = easeletch::fillGradient(*store, m_selection, canvasRect(), g);
+    QApplication::restoreOverrideCursor();
+    if (before.isEmpty())
+        return;
+    m_history.push(tr("Gradient"), m_stack->activeId(), std::move(before), m_editMask);
+    m_color->noteUsed(m_color->color());
+    m_view->refresh();
+    historyChanged();
 }
