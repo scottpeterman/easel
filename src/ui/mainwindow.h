@@ -265,6 +265,8 @@ private:
         QPoint placed;  // where the floating image was last put
         bool dragging = false;
         bool clickStarts = false; // the press under way will start new text when it ends
+        bool movingLayer = false; // ... or it became a drag, and is moving the layer
+        easeletch::Selection selectionBeforeMove;
     } m_text;
     bool m_editMask = false;
     bool m_floatMask = false; // the floating pixels are on a mask

@@ -6,6 +6,7 @@
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -34,6 +35,32 @@ void LayerTree::dropEvent(QDropEvent *event)
     QTreeWidget::dropEvent(event);
     // Let the view finish moving its items before anyone rebuilds it.
     QMetaObject::invokeMethod(this, &LayerTree::rearranged, Qt::QueuedConnection);
+}
+
+bool LayerTree::event(QEvent *event)
+{
+    // The window's Delete shortcut clears selected pixels. With the layer
+    // list focused, Delete means the layer: claim the key so it arrives here
+    // as a key press instead. (Not while a name is being edited: then the
+    // editor has the focus, not the list.)
+    if (event->type() == QEvent::ShortcutOverride) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Delete && key->modifiers() == Qt::NoModifier) {
+            event->accept();
+            return true;
+        }
+    }
+    return QTreeWidget::event(event);
+}
+
+void LayerTree::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Delete && event->modifiers() == Qt::NoModifier) {
+        emit deletePressed();
+        event->accept();
+        return;
+    }
+    QTreeWidget::keyPressEvent(event);
 }
 
 QString LayerPanel::blendModeName(BlendMode mode)
@@ -126,7 +153,8 @@ LayerPanel::LayerPanel(QWidget *parent)
     m_merge = button(tr("Merge"), tr("Merge into the layer below, or merge a group into one layer (Ctrl+E)"),
                      &LayerPanel::mergeRequested);
     buttons->addStretch(1);
-    m_delete = button(tr("Delete"), tr("Delete this layer"), &LayerPanel::deleteRequested);
+    m_delete = button(tr("Delete"), tr("Delete this layer (the Delete key, with the layer list clicked)"),
+                      &LayerPanel::deleteRequested);
     column->addLayout(buttons);
 
     // Mask commands for the active layer.
@@ -167,6 +195,7 @@ LayerPanel::LayerPanel(QWidget *parent)
     // user choosing a layer.
     connect(m_tree, &LayerTree::dropStarted, this, [this] { m_updating = true; });
     connect(m_tree, &LayerTree::rearranged, this, &LayerPanel::readTree);
+    connect(m_tree, &LayerTree::deletePressed, this, &LayerPanel::deleteRequested);
 
     connect(m_opacity, &QSlider::valueChanged, m_opacitySpin, &QSpinBox::setValue);
     connect(m_opacitySpin, &QSpinBox::valueChanged, this, [this](int v) {

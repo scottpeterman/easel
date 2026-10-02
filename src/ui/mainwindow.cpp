@@ -30,6 +30,7 @@
 #include <QImageWriter>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineF>
 #include <QListWidget>
 #include <QLocale>
 #include <QMenuBar>
@@ -780,8 +781,18 @@ bool MainWindow::liftForMove()
     easeletch::TileStore *store = m_stack ? editStore() : nullptr;
     if (!store)
         return false;
-    // With nothing selected, Move takes the whole layer.
-    const easeletch::Selection sel = m_selection.isEmpty() ? easeletch::Selection::rect(canvasRect()) : m_selection;
+    // With nothing selected, Move takes the whole layer: the part of it that
+    // has anything in it, so a small piece of text on a big canvas doesn't
+    // turn into a canvas-sized block of empty tiles.
+    easeletch::Selection sel = m_selection;
+    if (sel.isEmpty()) {
+        const QRect content = easeletch::opaqueBounds(*store, canvasRect());
+        if (content.isEmpty()) {
+            statusBar()->showMessage(tr("There's nothing on this layer to move"), 4000);
+            return false;
+        }
+        sel = easeletch::Selection::rect(content);
+    }
     m_selectionBeforeFloat = m_selection;
     m_floatLayer = m_stack->activeId();
     m_floatMask = m_editMask;
@@ -1036,8 +1047,10 @@ void MainWindow::updateText()
 void MainWindow::textPressed(const QPointF &pos)
 {
     // A click starts new text, but only once the click is over: the canvas is
-    // still in the middle of it here.
+    // still in the middle of it here. A drag instead moves what's on the
+    // layer, so placed text can be shifted without changing tools.
     m_text.clickStarts = !m_text.active;
+    m_dragStart = pos;
     if (!m_text.active)
         return;
     m_text.dragging = m_floating.isActive();
@@ -1047,7 +1060,21 @@ void MainWindow::textPressed(const QPointF &pos)
 
 void MainWindow::textDragged(const QPointF &pos)
 {
-    if (!m_text.active || !m_text.dragging || !m_floating.isActive())
+    if (!m_text.active) {
+        if (m_text.clickStarts) {
+            // Four screen pixels of travel make it a drag, not a click.
+            if (QLineF(pos, m_dragStart).length() * m_view->zoom() < 4.0)
+                return;
+            m_text.clickStarts = false;
+            m_text.movingLayer = true;
+            m_text.selectionBeforeMove = m_selection;
+            moveDragStarted(m_dragStart);
+        }
+        if (m_text.movingLayer)
+            moveDragged(pos);
+        return;
+    }
+    if (!m_text.dragging || !m_floating.isActive())
         return;
     const QPointF d = pos - m_dragStart;
     m_floating.moveTo(m_dragOrigin + QPoint(int(std::lround(d.x())), int(std::lround(d.y()))));
@@ -1058,6 +1085,17 @@ void MainWindow::textDragged(const QPointF &pos)
 void MainWindow::textReleased(const QPointF &pos)
 {
     m_text.dragging = false;
+    if (m_text.movingLayer) {
+        // The drag moved the layer: drop it where it is, as one undo step.
+        m_text.movingLayer = false;
+        moveDragged(pos);
+        m_moveDragging = false;
+        const bool hadSelection = !m_text.selectionBeforeMove.isEmpty();
+        commitFloating();
+        if (!hadSelection)
+            setSelection({}); // it was the whole layer, not a selection
+        return;
+    }
     if (!m_text.clickStarts || m_text.active)
         return;
     m_text.clickStarts = false;

@@ -812,6 +812,111 @@ private slots:
         QVERIFY(right > left);
         QVERIFY(qAbs((left + right) / 2 - 200) <= 4);
     }
+
+    void textToolDragMovesPlacedText()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorPanel()->setColor(Qt::black);
+        w.textPanel()->setPixelSize(60);
+        w.textPanel()->setBold(true);
+        w.textPanel()->setAlignment(Qt::AlignLeft);
+        w.canvasView()->setTool(w.textTool());
+        w.beginText({50, 50});
+        w.textPanel()->setText(QStringLiteral("MOVE"));
+        w.commitText();
+        const int text = w.layers().activeId();
+        const auto inkIn = [&](const QRect &r) {
+            int n = 0;
+            for (int y = r.top(); y <= r.bottom(); ++y)
+                for (int x = r.left(); x <= r.right(); ++x)
+                    n += at(w.layers().layer(text)->store, x, y).alpha() > 128;
+            return n;
+        };
+        const int ink = inkIn(QRect(50, 50, 250, 70));
+        QVERIFY(ink > 500);
+        const qsizetype steps = w.history().count();
+
+        // Dragging with the Text tool moves the layer; it doesn't start new text.
+        CanvasView *view = w.canvasView();
+        QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 80}));
+        QTest::mouseMove(view, viewPos(w, {100, 130}));
+        QTest::mouseMove(view, viewPos(w, {100, 180}));
+        QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 180}));
+        QTest::qWait(30);
+        QVERIFY(!w.isTyping());
+        QVERIFY(!w.isFloating());
+        QCOMPARE(inkIn(QRect(50, 50, 250, 60)), 0);
+        QCOMPARE(inkIn(QRect(50, 150, 250, 70)), ink); // the same pixels, 100 lower
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Move"));
+        QVERIFY(w.selection().isEmpty());
+        // Only the tiles under the text exist: moving didn't fill the canvas.
+        QVERIFY(!w.layers().layer(text)->store.hasTile(TileStore::tileAt(390, 290)));
+        QVERIFY(!w.layers().layer(text)->store.hasTile(TileStore::tileAt(390, 10)));
+        QCOMPARE(w.layers().count(), 2);
+        w.undo();
+        QCOMPARE(inkIn(QRect(50, 50, 250, 70)), ink);
+
+        // A click still starts new text.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 220}));
+        QTRY_VERIFY(w.isTyping());
+        w.cancelText();
+        QCOMPARE(w.layers().count(), 2);
+
+        // A locked layer doesn't move.
+        w.setLayerLocked(text, true);
+        const qsizetype locked = w.history().count();
+        QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 80}));
+        QTest::mouseMove(view, viewPos(w, {100, 180}));
+        QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 180}));
+        QTest::qWait(30);
+        QCOMPARE(w.history().count(), locked);
+        QCOMPARE(inkIn(QRect(50, 50, 250, 70)), ink);
+        QVERIFY(!w.isTyping());
+    }
+
+    void deleteKeyInTheLayerListDeletesTheLayer()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.addLayer();
+        w.addLayer();
+        QCOMPARE(w.layers().count(), 3);
+        QTreeWidget *tree = w.layerPanel()->tree();
+
+        // With the canvas focused and nothing selected, Delete does nothing.
+        w.canvasView()->setFocus();
+        QTest::keyClick(w.canvasView(), Qt::Key_Delete);
+        QCOMPARE(w.layers().count(), 3);
+
+        // With the layer list focused, it deletes the active layer. That holds
+        // with a selection too, when Delete would otherwise clear pixels.
+        stroke(w, {50, 100}, {300, 100});
+        const int painted = w.layers().activeId();
+        w.setActiveLayer(w.layers().children(0).at(1));
+        w.setSelection(Selection::rect(QRect(0, 0, 400, 300)));
+        tree->setFocus();
+        QTRY_VERIFY(tree->hasFocus());
+        QTest::keyClick(tree, Qt::Key_Delete);
+        QCOMPARE(w.layers().count(), 2);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Delete Layer"));
+        QCOMPARE(at(w.layers().layer(painted)->store, 150, 100), QColor(Qt::red)); // no pixels were cleared
+        w.deselect();
+        // Backspace doesn't: it stays the pixel-clearing key.
+        QTest::keyClick(tree, Qt::Key_Backspace);
+        QCOMPARE(w.layers().count(), 2);
+        // The last layer stays.
+        tree->setFocus();
+        QTest::keyClick(tree, Qt::Key_Delete);
+        QCOMPARE(w.layers().count(), 1);
+        QTest::keyClick(tree, Qt::Key_Delete);
+        QCOMPARE(w.layers().count(), 1);
+        w.undo();
+        QCOMPARE(w.layers().count(), 2);
+    }
 };
 
 QTEST_MAIN(TestLayerUi)

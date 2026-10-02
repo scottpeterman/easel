@@ -29,7 +29,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Merge down (or merge a group) | Ctrl+E |
 | Show, lock, rename, reorder a layer | Layers panel: tick the box, tick Lock, double-click the name, drag the row (onto a group to put it inside) |
 | Layer blend mode and opacity | Top of the Layers panel |
-| Delete layer, move up / down, flatten | Layers panel buttons, or the Layer menu |
+| Delete layer | Delete key with the layer list clicked, the panel's Delete button, or the Layer menu |
+| Move layer up / down, flatten | Layers panel buttons, or the Layer menu |
 | Hard 1 px pixels (sprites) | Tick **Pixel** in the tool options |
 | Rectangle / ellipse select | M / Shift+M; drag, Shift for square or circle, click to deselect |
 | Select all / deselect | Ctrl+A / Ctrl+D |
@@ -38,6 +39,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Drop / cancel floating pixels | Enter / Escape |
 | Lasso | L; drag around something and let go, or click point by point and press Enter (or click the first point). Escape gives up. Shift adds, Ctrl subtracts |
 | Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
+| Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |
 | Feather selection | Shift+F6 |
 | Add a layer mask | Layers panel: Add Mask (from the selection, if there is one) |
 | Paint on the mask / on the layer | Ctrl+M, or Paint Mask in the Layers panel |

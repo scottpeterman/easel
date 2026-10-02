@@ -25,9 +25,13 @@ signals:
     // Around a drop: the view is about to move its items / has moved them.
     void dropStarted();
     void rearranged();
+    // Delete was pressed with the list focused.
+    void deletePressed();
 
 protected:
     void dropEvent(QDropEvent *event) override;
+    bool event(QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 };
 
 // The Layers panel: the stack as a tree, top layer first, with the active
