@@ -84,7 +84,9 @@ private slots:
         QCOMPARE(wTwo, w40); // the longest line sets the width
         QVERIFY(two.height() > a.height() * 3 / 2);
 
-        // Right-aligned, the short line's ink moves to the right.
+        // Alignment moves the short line by the difference between the two
+        // lines' widths (measured, so this holds for any font): all of it for
+        // right, half of it for centre.
         const auto inkLeft = [](const QImage &img, int y0, int y1) {
             for (int x = 0; x < img.width(); ++x)
                 for (int y = y0; y < y1; ++y)
@@ -92,11 +94,23 @@ private slots:
                         return x;
             return -1;
         };
-        const int lower = two.height() * 6 / 10;
-        const int left = inkLeft(two, lower, two.height());
+        int wShort = 0;
+        s.text = QStringLiteral("it");
+        renderText(s, nullptr, &wShort);
+        const int slack = w40 - wShort;
+        QVERIFY(slack > 20);
+        s.text = QStringLiteral("Easeletch\nit");
+        const QImage leftImg = renderText(s);
+        // The second line's rows: the lower 40% of a two-line image.
+        const int lower = leftImg.height() * 6 / 10;
+        const int left = inkLeft(leftImg, lower, leftImg.height());
+        QVERIFY(left >= 0);
         s.align = Qt::AlignRight;
-        const QImage right = renderText(s);
-        QVERIFY(inkLeft(right, lower, right.height()) > left + 10);
+        const QImage rightImg = renderText(s);
+        QVERIFY(qAbs(inkLeft(rightImg, lower, rightImg.height()) - (left + slack)) <= 3);
+        s.align = Qt::AlignHCenter;
+        const QImage centreImg = renderText(s);
+        QVERIFY(qAbs(inkLeft(centreImg, lower, centreImg.height()) - (left + slack / 2)) <= 3);
 
         // Nothing to draw.
         s.text = QStringLiteral("  \n ");
