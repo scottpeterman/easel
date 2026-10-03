@@ -130,8 +130,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 | Platform | Package |

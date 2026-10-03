@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Easeletch VERSION 0.2.0 DESCRIPTION "Balanced layered image editor" LANGUAGES CXX)
+project(Easeletch VERSION 0.3.0 DESCRIPTION "Balanced layered image editor" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
