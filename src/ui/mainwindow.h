@@ -1,5 +1,6 @@
 #pragma once
 
+#include "documentio.h"
 #include "fillops.h"
 #include "filters.h"
 #include "griddialog.h"
@@ -18,10 +19,6 @@
 #include <memory>
 #include <vector>
 
-namespace easeletch {
-struct LoadedDocument;
-struct LoadedPage;
-}
 
 class BrushOptionsBar;
 class BrushTool;
