@@ -173,13 +173,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_fill.contiguous = settings.value(QStringLiteral("fill/contiguous"), m_fill.contiguous).toBool();
     m_fill.allLayers = settings.value(QStringLiteral("fill/allLayers"), m_fill.allLayers).toBool();
     syncFillOptions();
-    m_gradient.radial = settings.value(QStringLiteral("gradient/radial"), m_gradient.radial).toBool();
-    m_gradient.toTransparent = settings.value(QStringLiteral("gradient/toTransparent"), m_gradient.toTransparent).toBool();
+    m_gradient.shape = easeletch::gradientShapeFromKey(settings.value(QStringLiteral("gradient/shape")).toString());
+    m_gradient.preset = settings.value(QStringLiteral("gradient/preset"), m_gradient.preset).toString();
+    m_gradient.custom = easeletch::stopsFromString(settings.value(QStringLiteral("gradient/custom")).toString());
+    for (const QString &entry : settings.value(QStringLiteral("gradient/saved")).toStringList()) {
+        // "name<tab>stops"
+        const qsizetype tab = entry.indexOf(QLatin1Char('\t'));
+        if (tab > 0)
+            saveUserGradient(entry.left(tab), easeletch::stopsFromString(entry.mid(tab + 1)));
+    }
     m_gradient.reverse = settings.value(QStringLiteral("gradient/reverse"), m_gradient.reverse).toBool();
     const QColor end(settings.value(QStringLiteral("gradient/end"), m_gradient.end.name()).toString());
     if (end.isValid())
         m_gradient.end = end;
-    syncGradientOptions();
+    setGradientOptions(m_gradient);
     setTransformSmooth(settings.value(QStringLiteral("transform/smooth"), true).toBool());
     m_options->show();
     m_wand->setTolerance(settings.value(QStringLiteral("wand/tolerance"), m_wand->tolerance()).toDouble());
@@ -2223,8 +2230,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue(QStringLiteral("fill/tolerance"), m_fill.tolerance);
     settings.setValue(QStringLiteral("fill/contiguous"), m_fill.contiguous);
     settings.setValue(QStringLiteral("fill/allLayers"), m_fill.allLayers);
-    settings.setValue(QStringLiteral("gradient/radial"), m_gradient.radial);
-    settings.setValue(QStringLiteral("gradient/toTransparent"), m_gradient.toTransparent);
+    settings.setValue(QStringLiteral("gradient/shape"), easeletch::gradientShapeKey(m_gradient.shape));
+    settings.setValue(QStringLiteral("gradient/preset"), m_gradient.preset);
+    settings.setValue(QStringLiteral("gradient/custom"), easeletch::stopsToString(m_gradient.custom));
+    QStringList saved;
+    for (const easeletch::GradientPreset &g : std::as_const(m_userGradients))
+        saved << g.name + QLatin1Char('\t') + easeletch::stopsToString(g.stops);
+    settings.setValue(QStringLiteral("gradient/saved"), saved);
     settings.setValue(QStringLiteral("gradient/reverse"), m_gradient.reverse);
     settings.setValue(QStringLiteral("gradient/end"), m_gradient.end.name());
     settings.setValue(QStringLiteral("wand/tolerance"), m_wand->tolerance());

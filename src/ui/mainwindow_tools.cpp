@@ -7,6 +7,7 @@
 #include "colorpanel.h"
 #include "edittools.h"
 #include "fillops.h"
+#include "gradienteditor.h"
 #include "selecttools.h"
 
 #include <QAction>
@@ -442,6 +443,17 @@ void MainWindow::setFillOptions(const FillOptions &options)
     syncFillOptions();
 }
 
+namespace {
+
+const QSize kGradientSwatch(56, 14);
+const QString kColourTransparent = QStringLiteral("colour-transparent");
+const QString kColourEnd = QStringLiteral("colour-end");
+const QString kColourShaded = QStringLiteral("colour-shaded");
+const QString kCustom = QStringLiteral("custom");
+const QString kUserPrefix = QStringLiteral("user:");
+
+} // namespace
+
 void MainWindow::createGradientOptions()
 {
     m_gradientOptions = new QToolBar(tr("Gradient Options"), this);
@@ -456,41 +468,120 @@ void MainWindow::createGradientOptions()
     title->setStyleSheet(QStringLiteral("font-weight: 600;"));
     row->addWidget(title);
     row->addSpacing(8);
+
+    m_gradientPreset = new QComboBox(host);
+    m_gradientPreset->setIconSize(kGradientSwatch);
+    m_gradientPreset->setMaxVisibleItems(24);
+    m_gradientPreset->setToolTip(tr("The colours. The first three use the current colour; "
+                                    "the metals are light and dark bands that read as reflections."));
+    row->addWidget(m_gradientPreset);
+    auto *edit = new QToolButton(host);
+    edit->setText(tr("Edit…"));
+    edit->setFocusPolicy(Qt::NoFocus);
+    edit->setToolTip(tr("Change this gradient's colours, or build your own and save it"));
+    row->addWidget(edit);
+    m_gradientRemove = new QToolButton(host);
+    m_gradientRemove->setText(tr("Remove"));
+    m_gradientRemove->setFocusPolicy(Qt::NoFocus);
+    m_gradientRemove->setToolTip(tr("Remove this saved gradient from the list"));
+    row->addWidget(m_gradientRemove);
+
+    row->addSpacing(8);
     m_gradientShape = new QComboBox(host);
-    m_gradientShape->addItems({tr("Linear"), tr("Radial")});
-    m_gradientShape->setToolTip(tr("Linear runs along the line you drag. Radial spreads out from where you start."));
+    m_gradientShape->addItems({tr("Linear"), tr("Radial"), tr("Reflected"), tr("Conical")});
+    m_gradientShape->setItemData(0, tr("Along the line you drag"), Qt::ToolTipRole);
+    m_gradientShape->setItemData(1, tr("Outward from where you start: with a highlight, a ball"), Qt::ToolTipRole);
+    m_gradientShape->setItemData(2, tr("Along the line and mirrored behind it: a band, a rod or pipe"),
+                                 Qt::ToolTipRole);
+    m_gradientShape->setItemData(3, tr("Swept round where you start: a disc, a knob, a cone from above"),
+                                 Qt::ToolTipRole);
+    m_gradientShape->setToolTip(tr("How the colours spread from the line you drag"));
     row->addWidget(m_gradientShape);
-    m_gradientTransparent = new QCheckBox(tr("To transparent"), host);
-    m_gradientTransparent->setToolTip(tr("Fade the current colour out to nothing. Untick to blend into the end colour."));
-    row->addWidget(m_gradientTransparent);
+
     m_gradientEnd = new QToolButton(host);
     m_gradientEnd->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_gradientEnd->setText(tr("End colour"));
     m_gradientEnd->setFocusPolicy(Qt::NoFocus);
-    m_gradientEnd->setToolTip(tr("The colour the gradient ends on. Click to set it to the current colour, "
-                                 "then pick the colour it starts with."));
+    m_gradientEnd->setToolTip(tr("For \"Colour to end colour\": the colour it ends on. Click to set it to the "
+                                 "current colour, then pick the colour it starts with."));
     row->addWidget(m_gradientEnd);
     m_gradientReverse = new QCheckBox(tr("Reverse"), host);
     m_gradientReverse->setToolTip(tr("Swap the two ends"));
     row->addWidget(m_gradientReverse);
-    auto *hint = new QLabel(tr("Drag from start to end · Shift for 45° steps"), host);
-    hint->setEnabled(false);
-    row->addSpacing(12);
-    row->addWidget(hint);
     row->addStretch(1);
     m_gradientOptions->addWidget(host);
 
-    connect(m_gradientShape, &QComboBox::currentIndexChanged, this, [this](int i) { m_gradient.radial = i == 1; });
-    connect(m_gradientTransparent, &QCheckBox::toggled, this, [this](bool on) {
-        m_gradient.toTransparent = on;
-        m_gradientEnd->setEnabled(!on);
+    connect(m_gradientPreset, &QComboBox::activated, this, [this](int i) {
+        m_gradient.preset = m_gradientPreset->itemData(i).toString();
+        syncGradientOptions();
     });
+    connect(edit, &QToolButton::clicked, this, &MainWindow::editGradient);
+    connect(m_gradientRemove, &QToolButton::clicked, this, [this] { removeUserGradient(m_gradient.preset); });
+    connect(m_gradientShape, &QComboBox::activated, this,
+            [this](int i) { m_gradient.shape = easeletch::GradientShape(i); });
     connect(m_gradientReverse, &QCheckBox::toggled, this, [this](bool on) { m_gradient.reverse = on; });
     connect(m_gradientEnd, &QToolButton::clicked, this, [this] {
         m_gradient.end = m_color->color();
-        syncGradientOptions();
+        m_gradient.preset = kColourEnd;
+        rebuildGradientPresets();
+    });
+    // The first three follow the painting colour.
+    connect(m_color, &ColorPanel::colorChanged, this, [this] {
+        for (int i = 0; i < m_gradientPreset->count(); ++i) {
+            const QString id = m_gradientPreset->itemData(i).toString();
+            if (id.startsWith(QLatin1String("colour-")))
+                m_gradientPreset->setItemIcon(i, GradientBar::swatch(presetStops(id), kGradientSwatch));
+        }
     });
     addToolBar(Qt::TopToolBarArea, m_gradientOptions);
+    rebuildGradientPresets();
+}
+
+easeletch::GradientStops MainWindow::presetStops(const QString &id) const
+{
+    const QColor colour = m_color ? m_color->color() : QColor(Qt::black);
+    if (id == kColourEnd)
+        return easeletch::twoStops(colour, m_gradient.end);
+    if (id == kColourShaded)
+        return easeletch::shadedStops(colour);
+    if (id == kCustom && m_gradient.custom.size() >= 2)
+        return m_gradient.custom;
+    for (const easeletch::GradientPreset &g : easeletch::gradientPresets())
+        if (g.id == id)
+            return g.stops;
+    for (const easeletch::GradientPreset &g : m_userGradients)
+        if (g.id == id)
+            return g.stops;
+    return easeletch::twoStops(colour, Qt::transparent);
+}
+
+easeletch::GradientStops MainWindow::currentGradientStops() const
+{
+    const easeletch::GradientStops stops = presetStops(m_gradient.preset);
+    return m_gradient.reverse ? easeletch::reversedStops(stops) : stops;
+}
+
+void MainWindow::rebuildGradientPresets()
+{
+    if (!m_gradientPreset)
+        return;
+    const QSignalBlocker block(m_gradientPreset);
+    m_gradientPreset->clear();
+    const auto add = [this](const QString &id, const QString &name) {
+        m_gradientPreset->addItem(GradientBar::swatch(presetStops(id), kGradientSwatch), name, id);
+    };
+    add(kColourTransparent, tr("Colour to transparent"));
+    add(kColourEnd, tr("Colour to end colour"));
+    add(kColourShaded, tr("Colour, shaded"));
+    m_gradientPreset->insertSeparator(m_gradientPreset->count());
+    for (const easeletch::GradientPreset &g : easeletch::gradientPresets())
+        add(g.id, g.name);
+    if (!m_userGradients.isEmpty() || m_gradient.custom.size() >= 2)
+        m_gradientPreset->insertSeparator(m_gradientPreset->count());
+    for (const easeletch::GradientPreset &g : std::as_const(m_userGradients))
+        add(g.id, g.name);
+    if (m_gradient.custom.size() >= 2)
+        add(kCustom, tr("Custom"));
     syncGradientOptions();
 }
 
@@ -498,15 +589,23 @@ void MainWindow::syncGradientOptions()
 {
     if (!m_gradientShape)
         return;
-    const GradientOptions o = m_gradient; // the widgets write back as they're set
-    m_gradientShape->setCurrentIndex(o.radial ? 1 : 0);
-    m_gradientTransparent->setChecked(o.toTransparent);
-    m_gradientReverse->setChecked(o.reverse);
-    m_gradientEnd->setEnabled(!o.toTransparent);
+    int at = m_gradientPreset->findData(m_gradient.preset);
+    if (at < 0) {
+        // A preset that's gone (removed, or from other settings).
+        m_gradient.preset = kColourTransparent;
+        at = m_gradientPreset->findData(m_gradient.preset);
+    }
+    {
+        const QSignalBlocker b1(m_gradientPreset), b2(m_gradientShape), b3(m_gradientReverse);
+        m_gradientPreset->setCurrentIndex(at);
+        m_gradientShape->setCurrentIndex(int(m_gradient.shape));
+        m_gradientReverse->setChecked(m_gradient.reverse);
+    }
+    m_gradientEnd->setEnabled(m_gradient.preset == kColourEnd);
+    m_gradientRemove->setVisible(m_gradient.preset.startsWith(kUserPrefix));
     QPixmap swatch(14, 14);
-    swatch.fill(o.end);
+    swatch.fill(m_gradient.end);
     m_gradientEnd->setIcon(swatch);
-    m_gradient = o;
 }
 
 void MainWindow::setGradientOptions(const GradientOptions &options)
@@ -514,7 +613,56 @@ void MainWindow::setGradientOptions(const GradientOptions &options)
     m_gradient = options;
     if (!m_gradient.end.isValid())
         m_gradient.end = Qt::white;
-    syncGradientOptions();
+    if (m_gradient.custom.size() >= 2)
+        m_gradient.custom = easeletch::normalizedStops(m_gradient.custom);
+    rebuildGradientPresets();
+}
+
+QString MainWindow::saveUserGradient(const QString &name, const easeletch::GradientStops &stops)
+{
+    const QString trimmed = name.simplified();
+    if (trimmed.isEmpty() || stops.size() < 2)
+        return {};
+    easeletch::GradientPreset g;
+    g.id = kUserPrefix + trimmed;
+    g.name = trimmed;
+    g.stops = easeletch::normalizedStops(stops);
+    bool replaced = false;
+    for (easeletch::GradientPreset &old : m_userGradients) {
+        if (old.id == g.id) {
+            old = g;
+            replaced = true;
+        }
+    }
+    if (!replaced)
+        m_userGradients.append(g);
+    rebuildGradientPresets();
+    return g.id;
+}
+
+bool MainWindow::removeUserGradient(const QString &id)
+{
+    const qsizetype removed =
+        m_userGradients.removeIf([&id](const easeletch::GradientPreset &g) { return g.id == id; });
+    if (removed == 0)
+        return false;
+    rebuildGradientPresets(); // the selection falls back if it was this one
+    return true;
+}
+
+void MainWindow::editGradient()
+{
+    GradientDialog dlg(presetStops(m_gradient.preset), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    if (!dlg.presetName().isEmpty()) {
+        m_gradient.preset = saveUserGradient(dlg.presetName(), dlg.stops());
+        statusBar()->showMessage(tr("Saved gradient \"%1\"").arg(dlg.presetName()), 4000);
+    } else {
+        m_gradient.custom = dlg.stops();
+        m_gradient.preset = kCustom;
+    }
+    rebuildGradientPresets();
 }
 
 void MainWindow::fillAt(const QPoint &pos)
@@ -582,18 +730,16 @@ void MainWindow::drawGradient(const QPointF &from, const QPointF &to)
     easeletch::Gradient g;
     g.from = from;
     g.to = to;
-    g.radial = m_gradient.radial;
-    g.start = m_color->color();
-    g.end = m_gradient.toTransparent ? QColor(Qt::transparent) : m_gradient.end;
-    if (m_gradient.reverse)
-        std::swap(g.start, g.end);
+    g.shape = m_gradient.shape;
+    g.stops = currentGradientStops();
     QApplication::setOverrideCursor(Qt::BusyCursor);
     auto before = easeletch::fillGradient(*store, m_selection, canvasRect(), g);
     QApplication::restoreOverrideCursor();
     if (before.isEmpty())
         return;
     m_history.push(tr("Gradient"), m_stack->activeId(), std::move(before), m_editMask);
-    m_color->noteUsed(m_color->color());
+    if (m_gradient.preset.startsWith(QLatin1String("colour-")))
+        m_color->noteUsed(m_color->color());
     m_view->refresh();
     historyChanged();
 }

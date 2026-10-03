@@ -79,22 +79,20 @@ private slots:
     void gradientRampMixesAsSrgb()
     {
         Gradient g;
-        g.start = Qt::black;
-        g.end = Qt::white;
-        QCOMPARE(pixelToColor(gradientPixel(g, 0.0)), QColor(Qt::black));
-        QCOMPARE(pixelToColor(gradientPixel(g, 1.0)), QColor(Qt::white));
+        g.stops = twoStops(Qt::black, Qt::white);
+        QCOMPARE(pixelToColor(gradientPixel(g.stops, 0.0)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(gradientPixel(g.stops, 1.0)), QColor(Qt::white));
         // Halfway is mid grey as other editors show it, not the linear-light middle (188).
-        const QColor mid = pixelToColor(gradientPixel(g, 0.5));
+        const QColor mid = pixelToColor(gradientPixel(g.stops, 0.5));
         QVERIFY2(std::abs(mid.red() - 128) <= 1, qPrintable(mid.name()));
 
         // To transparent: the same colour all the way, fading out.
-        g.start = Qt::red;
-        g.end = Qt::transparent;
-        const Pixel half = gradientPixel(g, 0.5);
+        g.stops = twoStops(Qt::red, Qt::transparent);
+        const Pixel half = gradientPixel(g.stops, 0.5);
         QVERIFY(std::abs(float(half.a) - 0.5f) < 0.01f);
         QVERIFY(std::abs(float(half.r) - 0.5f) < 0.01f); // red, premultiplied by a half
         QVERIFY(float(half.g) == 0.0f && float(half.b) == 0.0f);
-        QVERIFY(float(gradientPixel(g, 1.0).a) == 0.0f);
+        QVERIFY(float(gradientPixel(g.stops, 1.0).a) == 0.0f);
     }
 
     void linearGradientRunsAlongTheLine()
@@ -104,8 +102,7 @@ private slots:
         Gradient g;
         g.from = QPointF(50, 50);
         g.to = QPointF(150, 50);
-        g.start = Qt::black;
-        g.end = Qt::white;
+        g.stops = twoStops(Qt::black, Qt::white);
         const auto before = fillGradient(store, {}, canvas, g);
         QCOMPARE(before.size(), 8); // every tile of the canvas (4 x 2)
         QCOMPARE(colorAt(store, 10, 10), QColor(Qt::black)); // before the start: the start colour
@@ -132,9 +129,8 @@ private slots:
         Gradient g;
         g.from = QPointF(100, 100);
         g.to = QPointF(150, 100);
-        g.start = Qt::white;
-        g.end = Qt::black;
-        g.radial = true;
+        g.stops = twoStops(Qt::white, Qt::black);
+        g.shape = GradientShape::Radial;
         fillGradient(store, {}, canvas, g);
         QVERIFY(colorAt(store, 100, 100).red() > 250);
         QCOMPARE(colorAt(store, 160, 100), QColor(Qt::black));
@@ -151,8 +147,7 @@ private slots:
         Gradient g;
         g.from = QPointF(0, 50);
         g.to = QPointF(200, 50);
-        g.start = Qt::red;
-        g.end = Qt::transparent;
+        g.stops = twoStops(Qt::red, Qt::transparent);
         fillGradient(store, Selection::rect(QRect(0, 0, 200, 50)), canvas, g);
         QCOMPARE(colorAt(store, 100, 80), QColor(Qt::white)); // outside the selection
         const QColor left = colorAt(store, 2, 20), right = colorAt(store, 197, 20);
@@ -160,6 +155,149 @@ private slots:
         QVERIFY2(left.green() < 40 && left.red() == 255, qPrintable(left.name()));
         QVERIFY2(right.green() > 243, qPrintable(right.name()));                   // nearly untouched white
         QCOMPARE(colorAt(store, 100, 20).alpha(), 255); // laid over the white, not replacing it
+    }
+
+    void stopsMixBetweenNeighboursOnly()
+    {
+        const GradientStops stops = {{0.0, Qt::red}, {0.5, Qt::green}, {1.0, Qt::blue}};
+        QCOMPARE(pixelToColor(gradientPixel(stops, 0.0)), QColor(Qt::red));
+        QCOMPARE(pixelToColor(gradientPixel(stops, 0.5)), QColor(Qt::green));
+        QCOMPARE(pixelToColor(gradientPixel(stops, 1.0)), QColor(Qt::blue));
+        const QColor a = pixelToColor(gradientPixel(stops, 0.25));
+        QVERIFY2(std::abs(a.red() - 128) <= 1 && std::abs(a.green() - 128) <= 1 && a.blue() == 0, qPrintable(a.name()));
+        const QColor b = pixelToColor(gradientPixel(stops, 0.75));
+        QVERIFY2(b.red() == 0 && std::abs(b.green() - 128) <= 1 && std::abs(b.blue() - 128) <= 1, qPrintable(b.name()));
+        // Before the first stop and after the last, their colours hold.
+        const GradientStops inner = {{0.2, Qt::red}, {0.8, Qt::blue}};
+        QCOMPARE(pixelToColor(gradientPixel(inner, 0.1)), QColor(Qt::red));
+        QCOMPARE(pixelToColor(gradientPixel(inner, 0.95)), QColor(Qt::blue));
+    }
+
+    void twoStopsAtOnePlaceMakeAHardEdge()
+    {
+        const GradientStops stops = {{0.0, Qt::black}, {0.5, Qt::black}, {0.5, Qt::white}, {1.0, Qt::white}};
+        QCOMPARE(pixelToColor(gradientPixel(stops, 0.499)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(gradientPixel(stops, 0.5)), QColor(Qt::white));
+    }
+
+    void aTransparentStopTakesItsNeighboursColour()
+    {
+        // Red, clear in the middle, blue: no black or white creeps in as it fades.
+        const GradientStops stops = {{0.0, Qt::red}, {0.5, Qt::transparent}, {1.0, Qt::blue}};
+        const Pixel left = gradientPixel(stops, 0.25), right = gradientPixel(stops, 0.75);
+        QVERIFY(std::abs(float(left.a) - 0.5f) < 0.01f && float(left.g) == 0.0f && float(left.b) == 0.0f);
+        QVERIFY(std::abs(float(right.a) - 0.5f) < 0.01f && float(right.r) == 0.0f && float(right.g) == 0.0f);
+    }
+
+    void stopsNormalizeReverseAndSurviveText()
+    {
+        GradientStops messy = {{1.4, Qt::blue}, {0.5, Qt::green}, {-0.2, Qt::red}, {0.7, QColor()}};
+        messy = normalizedStops(messy);
+        QCOMPARE(messy.size(), 3);
+        QCOMPARE(messy.at(0).position, 0.0);
+        QCOMPARE(messy.at(0).color, QColor(Qt::red));
+        QCOMPARE(messy.at(2).position, 1.0);
+        QCOMPARE(normalizedStops({}).size(), 2);
+        QCOMPARE(normalizedStops({{0.3, Qt::red}}).size(), 2);
+
+        const GradientStops back = reversedStops({{0.0, Qt::red}, {0.25, Qt::green}, {1.0, Qt::blue}});
+        QCOMPARE(back.at(0).color, QColor(Qt::blue));
+        QCOMPARE(back.at(1).position, 0.75);
+        QCOMPARE(back.at(2).color, QColor(Qt::red));
+
+        const GradientStops stops = {{0.0, QColor(255, 0, 0, 128)}, {0.375, QColor("#12ab34")}, {1.0, Qt::transparent}};
+        QCOMPARE(stopsFromString(stopsToString(stops)), stops);
+        QVERIFY(stopsFromString(QStringLiteral("nonsense")).isEmpty());
+        QVERIFY(stopsFromString(QString()).isEmpty());
+    }
+
+    void presetsAreWellFormed()
+    {
+        QStringList ids;
+        for (const GradientPreset &p : gradientPresets()) {
+            QVERIFY2(p.stops.size() >= 2, qPrintable(p.id));
+            QVERIFY(!p.name.isEmpty());
+            QVERIFY(!ids.contains(p.id));
+            ids << p.id;
+            QCOMPARE(p.stops, normalizedStops(p.stops)); // in order, in range, valid colours
+            QCOMPARE(p.stops.first().position, 0.0);
+            QCOMPARE(p.stops.last().position, 1.0);
+        }
+        QVERIFY(ids.contains(QStringLiteral("chrome")) && ids.contains(QStringLiteral("gold")));
+        // Spun metal ends as it starts, so a conical sweep has no seam.
+        for (const GradientPreset &p : gradientPresets())
+            if (p.id == QLatin1String("spun-metal"))
+                QCOMPARE(p.stops.first().color, p.stops.last().color);
+
+        // Shaded: a highlight lighter than the colour, a shadow darker, the colour between.
+        const GradientStops shaded = shadedStops(QColor(200, 40, 40));
+        QVERIFY(shaded.first().color.lightness() > QColor(200, 40, 40).lightness());
+        QVERIFY(shaded.last().color.lightness() < QColor(200, 40, 40).lightness());
+        QCOMPARE(shaded.at(1).color, QColor(200, 40, 40));
+    }
+
+    void reflectedGradientMirrorsAboutTheStart()
+    {
+        TileStore store;
+        const QRect canvas(0, 0, 200, 100);
+        Gradient g;
+        g.from = QPointF(100, 50);
+        g.to = QPointF(150, 50);
+        g.stops = twoStops(Qt::white, Qt::black);
+        g.shape = GradientShape::Reflected;
+        fillGradient(store, {}, canvas, g);
+        QVERIFY(colorAt(store, 100, 50).red() > 245); // lightest along the middle
+        QCOMPARE(colorAt(store, 120, 50), colorAt(store, 79, 50)); // the same either side
+        QCOMPARE(colorAt(store, 140, 10), colorAt(store, 59, 90));
+        QCOMPARE(colorAt(store, 160, 50), QColor(Qt::black));
+        QCOMPARE(colorAt(store, 30, 50), QColor(Qt::black));
+        QVERIFY(colorAt(store, 120, 50).red() < colorAt(store, 105, 50).red());
+    }
+
+    void conicalGradientSweepsClockwiseFromTheLine()
+    {
+        Gradient g;
+        g.from = QPointF(100, 100);
+        g.to = QPointF(150, 100); // pointing right
+        g.shape = GradientShape::Conical;
+        // Pixel centres: a quarter turn clockwise on screen is straight down.
+        QVERIFY(std::abs(gradientPosition(g, 99, 139) - 0.25) < 0.02);
+        QVERIFY(std::abs(gradientPosition(g, 60, 99) - 0.5) < 0.02);
+        QVERIFY(std::abs(gradientPosition(g, 99, 60) - 0.75) < 0.02);
+        QVERIFY(gradientPosition(g, 140, 100) < 0.02);
+        QVERIFY(gradientPosition(g, 140, 98) > 0.98); // just before a full turn
+        // The distance from the centre makes no difference.
+        QVERIFY(std::abs(gradientPosition(g, 110, 110) - gradientPosition(g, 180, 180)) < 0.01);
+        // The line can point anywhere: straight down, a quarter turn on is to the left.
+        g.to = QPointF(100, 150);
+        QVERIFY(std::abs(gradientPosition(g, 60, 99) - 0.25) < 0.02);
+
+        // Drawn with a gradient that ends as it starts: no seam along the line.
+        TileStore store;
+        g.to = QPointF(150, 100);
+        for (const GradientPreset &p : gradientPresets())
+            if (p.id == QLatin1String("spun-metal"))
+                g.stops = p.stops;
+        fillGradient(store, {}, QRect(0, 0, 200, 200), g);
+        const QColor above = colorAt(store, 160, 99), below = colorAt(store, 160, 100);
+        QVERIFY2(std::abs(above.red() - below.red()) <= 3, qPrintable(above.name() + below.name()));
+        QVERIFY(colorAt(store, 100, 30) != colorAt(store, 150, 50)); // and it does vary round the centre
+    }
+
+    void aMetalPresetDrawsItsBands()
+    {
+        TileStore store;
+        Gradient g;
+        g.from = QPointF(0, 0);
+        g.to = QPointF(0, 100);
+        for (const GradientPreset &p : gradientPresets())
+            if (p.id == QLatin1String("chrome"))
+                g.stops = p.stops;
+        fillGradient(store, {}, QRect(0, 0, 20, 100), g);
+        // Chrome's horizon: nearly black just above the middle, bright just below it.
+        QVERIFY(colorAt(store, 10, 49).lightness() < 60);
+        QVERIFY(colorAt(store, 10, 53).lightness() > 200);
+        QVERIFY(colorAt(store, 10, 1).lightness() > 230);
     }
 
     void aZeroLengthGradientDoesNothing()

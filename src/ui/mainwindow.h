@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fillops.h"
 #include "griddialog.h"
 #include "history.h"
 #include "layerstack.h"
@@ -103,16 +104,30 @@ public:
     };
     const FillOptions &fillOptions() const { return m_fill; }
     void setFillOptions(const FillOptions &options);
-    // The gradient goes from the painting colour to transparent, or to the
-    // end colour; reverse swaps the two ends.
+    // Which gradient the Gradient tool draws, and how it spreads.
+    // preset: "colour-transparent" (the painting colour fading out),
+    // "colour-end" (the painting colour to the end colour), "colour-shaded"
+    // (the painting colour with a highlight and a shadow), "custom" (the stops
+    // last edited), the id of a built-in (easeletch::gradientPresets()), or of
+    // one saved by the user ("user:" + its name).
     struct GradientOptions {
-        bool radial = false;
-        bool toTransparent = true;
+        easeletch::GradientShape shape = easeletch::GradientShape::Linear;
+        QString preset = QStringLiteral("colour-transparent");
         QColor end = Qt::white;
         bool reverse = false;
+        easeletch::GradientStops custom;
     };
     const GradientOptions &gradientOptions() const { return m_gradient; }
     void setGradientOptions(const GradientOptions &options);
+    // The stops a drag would draw now: the preset, with the painting colour
+    // where it uses it, reversed if asked.
+    easeletch::GradientStops currentGradientStops() const;
+    // Gradients saved from the editor. Saving under a name already there replaces it.
+    const QList<easeletch::GradientPreset> &userGradients() const { return m_userGradients; }
+    QString saveUserGradient(const QString &name, const easeletch::GradientStops &stops);
+    bool removeUserGradient(const QString &id);
+    // Opens the stop editor on the current gradient.
+    void editGradient();
     // A free transform is under way: the pixels float with a box round them.
     bool isTransforming() const { return m_xf.active; }
     const easeletch::FreeTransform &transformBox() const { return m_xf.box; }
@@ -232,6 +247,8 @@ private:
     void createGradientOptions();
     void syncFillOptions();
     void syncGradientOptions();
+    void rebuildGradientPresets();
+    easeletch::GradientStops presetStops(const QString &id) const;
     QAction *actionFor(CanvasTool *tool) const;
     // interactive: switches to the Transform tool and shows the box.
     bool startTransform(bool interactive);
@@ -362,7 +379,9 @@ private:
     QCheckBox *m_fillContiguous = nullptr;
     QCheckBox *m_fillAllLayers = nullptr;
     QComboBox *m_gradientShape = nullptr;
-    QCheckBox *m_gradientTransparent = nullptr;
+    QComboBox *m_gradientPreset = nullptr;
+    QToolButton *m_gradientRemove = nullptr;
+    QList<easeletch::GradientPreset> m_userGradients;
     QCheckBox *m_gradientReverse = nullptr;
     QToolButton *m_gradientEnd = nullptr;
     TransformTool *m_transformTool = nullptr;

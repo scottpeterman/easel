@@ -15,6 +15,8 @@ add_library(easeletch_ui STATIC
     eyedroppertool.cpp
     selecttools.h
     selecttools.cpp
+    gradienteditor.h
+    gradienteditor.cpp
     edittools.h
     edittools.cpp
     colortoalphadialog.h

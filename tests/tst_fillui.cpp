@@ -3,9 +3,14 @@
 #include "color.h"
 #include "colorpanel.h"
 #include "edittools.h"
+#include "fillops.h"
+#include "gradienteditor.h"
 #include "mainwindow.h"
 
+#include <QComboBox>
 #include <QGuiApplication>
+#include <QLineEdit>
+#include <QSpinBox>
 #include <QMouseEvent>
 #include <QTest>
 
@@ -202,7 +207,7 @@ private slots:
         setupWindow(w);
         w.colorPanel()->setColor(Qt::red);
         MainWindow::GradientOptions o;
-        o.toTransparent = false;
+        o.preset = QStringLiteral("colour-end");
         o.end = Qt::blue;
         w.setGradientOptions(o);
         w.setSelection(Selection::rect(QRect(0, 0, 400, 50)));
@@ -226,13 +231,190 @@ private slots:
         setupWindow(w);
         w.colorPanel()->setColor(Qt::black);
         MainWindow::GradientOptions o;
-        o.radial = true;
+        o.shape = GradientShape::Radial;
         w.setGradientOptions(o);
         w.drawGradient({300, 150}, {340, 150});
         QVERIFY(pixel(w, 300, 150).red() < 50);
         QCOMPARE(pixel(w, 345, 150), QColor(Qt::white));
         QCOMPARE(pixel(w, 300, 195), QColor(Qt::white));
         QCOMPARE(pixel(w, 320, 150), pixel(w, 300, 170));
+    }
+
+    void metalPresetsAndShapes()
+    {
+        MainWindow w;
+        setupWindow(w);
+        MainWindow::GradientOptions o;
+        o.preset = QStringLiteral("chrome");
+        w.setGradientOptions(o);
+        auto *presets = w.findChild<QWidget *>(QStringLiteral("GradientOptionsBar"))->findChildren<QComboBox *>().value(0);
+        QVERIFY(presets);
+        QCOMPARE(presets->currentText(), QStringLiteral("Chrome"));
+        QVERIFY(presets->findData(QStringLiteral("gold")) > 0);
+        QVERIFY(!presets->itemIcon(presets->currentIndex()).isNull());
+
+        // A chrome bar: bright at the top, the dark horizon in the middle.
+        w.setSelection(Selection::rect(QRect(20, 20, 200, 60)));
+        w.drawGradient({0, 20}, {0, 80});
+        QVERIFY(pixel(w, 100, 21).lightness() > 230);
+        QVERIFY(pixel(w, 100, 49).lightness() < 70);
+        QVERIFY(pixel(w, 100, 52).lightness() > 200);
+        QCOMPARE(pixel(w, 100, 90), QColor(Qt::white));
+        QCOMPARE(w.history().label(0), QStringLiteral("Gradient"));
+        // A preset isn't the painting colour: nothing joins Recent.
+        QVERIFY(w.colorPanel()->recentColors().isEmpty());
+
+        // A rod: the same preset mirrored about the middle of the bar.
+        o.shape = GradientShape::Reflected;
+        w.setGradientOptions(o);
+        w.drawGradient({0, 50}, {0, 80});
+        QCOMPARE(pixel(w, 100, 35), pixel(w, 100, 64));
+        QVERIFY(pixel(w, 100, 50).lightness() > 230);
+
+        // Reversed: the dark end first.
+        o.shape = GradientShape::Linear;
+        o.reverse = true;
+        w.setGradientOptions(o);
+        QCOMPARE(w.currentGradientStops().first().color, gradientPresets().first().stops.last().color);
+    }
+
+    void shadedColourMakesABall()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorPanel()->setColor(QColor(200, 40, 40));
+        MainWindow::GradientOptions o;
+        o.preset = QStringLiteral("colour-shaded");
+        o.shape = GradientShape::Radial;
+        w.setGradientOptions(o);
+        w.setSelection(Selection::ellipse(QRect(250, 30, 100, 100)));
+        w.drawGradient({285, 65}, {345, 110}); // from the highlight, up and to the left, to the far edge
+        const QColor highlight = pixel(w, 285, 65), body = pixel(w, 300, 82), shadow = pixel(w, 335, 105);
+        QVERIFY2(highlight.lightness() > body.lightness() && body.lightness() > shadow.lightness(),
+                 qPrintable(highlight.name() + body.name() + shadow.name()));
+        QVERIFY(highlight.lightness() > 215);
+        QVERIFY(body.red() > 150 && body.green() < 110); // still the colour picked
+        QCOMPARE(pixel(w, 252, 32), QColor(Qt::white));  // outside the ellipse
+        // It follows the painting colour.
+        w.colorPanel()->setColor(QColor(40, 40, 200));
+        QCOMPARE(w.currentGradientStops().at(1).color, QColor(40, 40, 200));
+    }
+
+    void conicalSweepsRoundTheStart()
+    {
+        MainWindow w;
+        setupWindow(w);
+        MainWindow::GradientOptions o;
+        o.preset = QStringLiteral("spun-metal");
+        o.shape = GradientShape::Conical;
+        w.setGradientOptions(o);
+        w.setSelection(Selection::ellipse(QRect(240, 150, 120, 120)));
+        w.drawGradient({300, 210}, {360, 210});
+        // Light and dark by turns going round, and no seam along the line dragged.
+        QVERIFY(std::abs(pixel(w, 340, 209).lightness() - pixel(w, 340, 210).lightness()) <= 3);
+        QVERIFY(std::abs(pixel(w, 300, 250).lightness() - pixel(w, 328, 238).lightness()) > 40);
+        QCOMPARE(pixel(w, 242, 152), QColor(Qt::white));
+    }
+
+    void savedGradients()
+    {
+        MainWindow w;
+        setupWindow(w);
+        const GradientStops mine = {{0.0, Qt::red}, {0.4, Qt::yellow}, {1.0, Qt::blue}};
+        const QString id = w.saveUserGradient(QStringLiteral("  Mine  "), mine);
+        QCOMPARE(id, QStringLiteral("user:Mine"));
+        QCOMPARE(w.userGradients().size(), 1);
+        MainWindow::GradientOptions o;
+        o.preset = id;
+        w.setGradientOptions(o);
+        QCOMPARE(w.currentGradientStops(), mine);
+        auto *bar = w.findChild<QWidget *>(QStringLiteral("GradientOptionsBar"));
+        auto *presets = bar->findChildren<QComboBox *>().value(0);
+        QCOMPARE(presets->currentText(), QStringLiteral("Mine"));
+
+        // Saving under the same name replaces it.
+        w.saveUserGradient(QStringLiteral("Mine"), twoStops(Qt::black, Qt::white));
+        QCOMPARE(w.userGradients().size(), 1);
+        QCOMPARE(w.currentGradientStops(), twoStops(Qt::black, Qt::white));
+
+        // Removed: the tool falls back to the first gradient.
+        QVERIFY(w.removeUserGradient(id));
+        QVERIFY(w.userGradients().isEmpty());
+        QCOMPARE(w.gradientOptions().preset, QStringLiteral("colour-transparent"));
+        QVERIFY(presets->findData(id) < 0);
+        QVERIFY(!w.removeUserGradient(QStringLiteral("chrome"))); // built-ins stay
+
+        // A custom gradient (edited, not saved) is in the list once it exists.
+        QVERIFY(presets->findData(QStringLiteral("custom")) < 0);
+        o = {};
+        o.preset = QStringLiteral("custom");
+        o.custom = mine;
+        w.setGradientOptions(o);
+        QCOMPARE(presets->currentText(), QStringLiteral("Custom"));
+        QCOMPARE(w.currentGradientStops(), mine);
+    }
+
+    void gradientEditorEditsStops()
+    {
+        GradientDialog dlg(twoStops(Qt::black, Qt::white));
+        GradientBar *bar = dlg.bar();
+        bar->resize(420, 64);
+        QCOMPARE(dlg.stops().size(), 2);
+
+        // A new stop takes the colour the gradient has there.
+        const int mid = bar->addStop(0.5);
+        QCOMPARE(mid, 1);
+        QCOMPARE(bar->selected(), 1);
+        QVERIFY(std::abs(dlg.stops().at(1).color.red() - 128) <= 1);
+        bar->setStopColor(1, Qt::red);
+        QCOMPARE(dlg.stops().at(1).color, QColor(Qt::red));
+
+        // Dragged onto a neighbour it stays on its own side: a hard edge.
+        QCOMPARE(bar->setStopPosition(1, 1.0), 1);
+        QCOMPARE(dlg.stops().at(1).color, QColor(Qt::red));
+        QCOMPARE(dlg.stops().at(2).color, QColor(Qt::white));
+        // Moved past a neighbour, it changes places and stays selected.
+        bar->setStopPosition(1, 0.5);
+        QCOMPARE(bar->addStop(0.25), 1);
+        bar->setStopColor(1, Qt::blue);
+        QCOMPARE(bar->setStopPosition(1, 0.75), 2);
+        QCOMPARE(bar->selected(), 2);
+        QCOMPARE(dlg.stops().at(1).color, QColor(Qt::red));
+        QCOMPARE(dlg.stops().at(2).color, QColor(Qt::blue));
+        QVERIFY(bar->removeStop(2));
+        bar->setSelected(1);
+        bar->setStopPosition(1, 0.25);
+        QCOMPARE(dlg.stops().at(1).position, 0.25);
+
+        // The fields follow the selection; the wheel changes the colour and leaves opacity alone.
+        auto *opacity = dlg.findChild<QSpinBox *>();
+        QVERIFY(opacity);
+        opacity->setValue(40);
+        QCOMPARE(dlg.stops().at(1).color.alpha(), 102);
+        QCOMPARE(dlg.findChild<QLineEdit *>()->text(), QStringLiteral("#FF0000"));
+        bar->setSelected(0);
+        QCOMPARE(opacity->value(), 100);
+        QCOMPARE(dlg.findChild<QLineEdit *>()->text(), QStringLiteral("#000000"));
+
+        // Mouse: a click on the bar adds a stop; dragging a marker moves it.
+        const QRect r = bar->barRect();
+        QTest::mouseClick(bar, Qt::LeftButton, Qt::NoModifier, QPoint(r.left() + r.width() * 3 / 4, r.center().y()));
+        QCOMPARE(dlg.stops().size(), 4);
+        QVERIFY(std::abs(dlg.stops().at(2).position - 0.75) < 0.01);
+        QCOMPARE(bar->selected(), 2);
+        const int y = r.bottom() + 8;
+        QTest::mousePress(bar, Qt::LeftButton, Qt::NoModifier, QPoint(r.left() + r.width() * 3 / 4, y));
+        QTest::mouseMove(bar, QPoint(r.left() + r.width() / 2, y));
+        QTest::mouseRelease(bar, Qt::LeftButton, Qt::NoModifier, QPoint(r.left() + r.width() / 2, y));
+        QCOMPARE(dlg.stops().size(), 4);
+        QVERIFY(std::abs(dlg.stops().at(2).position - 0.5) < 0.01);
+
+        // Delete removes the selected stop, down to two and no further.
+        QTest::keyClick(bar, Qt::Key_Delete);
+        QCOMPARE(dlg.stops().size(), 3);
+        QVERIFY(bar->removeStop(1));
+        QVERIFY(!bar->removeStop(0));
+        QCOMPARE(dlg.stops().size(), 2);
     }
 
     void lockedLayerRefuses()
