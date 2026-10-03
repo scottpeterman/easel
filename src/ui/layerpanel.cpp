@@ -241,6 +241,13 @@ void LayerPanel::addItems(QTreeWidgetItem *parentItem, int parentId)
             f.setBold(true);
             item->setFont(kNameColumn, f);
         }
+        if (l->isAdjustment()) {
+            QFont f = item->font(kNameColumn);
+            f.setItalic(true);
+            item->setFont(kNameColumn, f);
+            item->setToolTip(kNameColumn, tr("An adjustment layer: it changes the look of everything below it. "
+                                             "Its settings are in the Adjustment panel."));
+        }
         item->setFlags(flags);
         if (l->group) {
             addItems(item, l->id);
@@ -293,7 +300,7 @@ void LayerPanel::refreshControls()
 {
     m_updating = true;
     const Layer *active = m_stack ? m_stack->active() : nullptr;
-    m_blend->setEnabled(active != nullptr);
+    m_blend->setEnabled(active != nullptr && !active->isAdjustment()); // an adjustment has no blend mode
     m_opacity->setEnabled(active != nullptr);
     m_opacitySpin->setEnabled(active != nullptr);
     if (active) {
@@ -303,14 +310,14 @@ void LayerPanel::refreshControls()
         const int at = int(siblings.indexOf(active->id));
         m_raise->setEnabled(at < siblings.size() - 1 || active->parent != 0);
         m_lower->setEnabled(at > 0 || active->parent != 0);
-        const bool below = at > 0 && !m_stack->layer(siblings.at(at - 1))->group;
+        const bool below = at > 0 && m_stack->layer(siblings.at(at - 1))->hasPixels();
         m_merge->setEnabled(active->group || below);
         m_delete->setEnabled(m_stack->count() > 1);
     }
     m_addMask->setEnabled(active && !active->hasMask);
     m_editMask->setEnabled(active && active->hasMask);
     m_editMask->setChecked(active && active->hasMask && m_editingMask);
-    m_applyMask->setEnabled(active && active->hasMask && !active->group);
+    m_applyMask->setEnabled(active && active->hasMask && active->hasPixels());
     m_deleteMask->setEnabled(active && active->hasMask);
     m_updating = false;
 }

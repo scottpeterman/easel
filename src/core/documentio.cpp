@@ -241,7 +241,13 @@ LoadedDocument loadNativeDocument(const QString &path)
         Layer l;
         l.id = o.value(QLatin1String("id")).toInt(i + 1);
         l.name = o.value(QLatin1String("name")).toString();
-        l.group = o.value(QLatin1String("type")).toString() == QLatin1String("group");
+        const QString type = o.value(QLatin1String("type")).toString();
+        l.group = type == QLatin1String("group");
+        if (type == QLatin1String("adjustment")) {
+            l.adjust = Adjustment::fromJson(o.value(QLatin1String("adjustment")).toObject());
+            if (!l.isAdjustment())
+                return failed(QObject::tr("The document is damaged (layer %1).").arg(i));
+        }
         l.parent = o.value(QLatin1String("parent")).toInt(0);
         l.visible = o.value(QLatin1String("visible")).toBool(true);
         l.locked = o.value(QLatin1String("locked")).toBool(false);
@@ -288,7 +294,7 @@ LoadedDocument loadNativeDocument(const QString &path)
             continue;
         Layer &layer = list[entry.value()];
         const bool isMask = match.captured(2) == QLatin1String("mask");
-        if (isMask ? !layer.hasMask : layer.group)
+        if (isMask ? !layer.hasMask : !layer.hasPixels())
             continue;
         TileStore &store = isMask ? layer.mask : layer.store;
         const QByteArray data = zip.fileData(info.filePath);
@@ -345,19 +351,25 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
         zip.setCompressionPolicy(QZipWriter::AutoCompress);
 
         QJsonArray layerList;
+        bool anyAdjustment = false;
         for (int i = 0; i < stack.count(); ++i) {
             const Layer &l = stack.layers().at(i);
             QJsonObject o{
                 {QLatin1String("id"), l.id},
                 {QLatin1String("name"), l.name},
-                {QLatin1String("type"), QLatin1String(l.group ? "group" : "raster")},
+                {QLatin1String("type"),
+                 QLatin1String(l.group ? "group" : l.isAdjustment() ? "adjustment" : "raster")},
                 {QLatin1String("parent"), l.parent},
                 {QLatin1String("visible"), l.visible},
                 {QLatin1String("locked"), l.locked},
                 {QLatin1String("opacity"), l.opacity},
                 {QLatin1String("blend"), blendModeKey(l.blend)},
             };
-            if (!l.group) {
+            if (l.isAdjustment()) {
+                o.insert(QLatin1String("adjustment"), l.adjust.toJson());
+                anyAdjustment = true;
+            }
+            if (l.hasPixels()) {
                 o.insert(QLatin1String("default"), pixelToJson(l.store.defaultPixel()));
                 o.insert(QLatin1String("chunks"), QStringLiteral("layers/%1/chunks/").arg(i));
             }
@@ -371,7 +383,7 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
         }
         const QJsonObject manifest{
             {QLatin1String("format"), QLatin1String("easeletch")},
-            {QLatin1String("version"), FormatVersion},
+            {QLatin1String("version"), anyAdjustment ? FormatVersion : FormatVersionWithoutAdjustments},
             {QLatin1String("width"), size.width()},
             {QLatin1String("height"), size.height()},
             {QLatin1String("tileSize"), TileStore::TileSize},
@@ -422,7 +434,7 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
         };
         for (int i = 0; i < stack.count(); ++i) {
             const Layer &l = stack.layers().at(i);
-            if (!l.group)
+            if (l.hasPixels())
                 writeStore(i, "chunks", l.store);
             if (l.hasMask)
                 writeStore(i, "mask", l.mask);

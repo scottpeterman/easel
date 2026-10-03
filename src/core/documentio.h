@@ -15,8 +15,9 @@ namespace easeletch {
 // Native documents are .easeletch files: a zip holding
 //   mimetype                 "application/x-easeletch", stored first
 //   manifest.json            canvas size, pixel format, and the layers bottom to top:
-//                            id, name, type (raster / group), parent (the group it's
-//                            in, 0 for none), visible, locked, opacity, blend
+//                            id, name, type (raster / group / adjustment), parent (the
+//                            group it's in, 0 for none), visible, locked, opacity, blend;
+//                            an adjustment layer's settings are in "adjustment"
 //   preview.png              flattened 8-bit sRGB image, at most 2048 px on its long side
 //   layers/<n>/mask/<cx>_<cy>
 //                            the same for layer n's mask, when it has one (the
@@ -37,8 +38,10 @@ inline constexpr char NativeSuffix[] = "easeletch";
 // still open. They aren't written back to; saving one asks for a new name.
 inline constexpr char LegacySuffix[] = "easel";
 // Version 1 held a single layer; version 2 holds the layer stack; version 3
-// adds layer masks.
-inline constexpr int FormatVersion = 3;
+// adds layer masks; version 4 adds adjustment layers. A document with no
+// adjustment layers is still written as version 3, so older builds open it.
+inline constexpr int FormatVersion = 4;
+inline constexpr int FormatVersionWithoutAdjustments = 3;
 inline constexpr int PreviewMaxSide = 2048;
 inline constexpr int ChunkTiles = 16; // tiles per chunk side
 

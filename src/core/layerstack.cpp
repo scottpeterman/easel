@@ -1,5 +1,7 @@
 #include "layerstack.h"
 
+#include "srgblut.h"
+
 #include <QFloat16>
 #include <QHash>
 
@@ -28,47 +30,10 @@ constexpr BlendKey kBlendKeys[BlendModeCount] = {
     {BlendMode::Hue, "hue"},                {BlendMode::Color, "color"},
 };
 
-// sRGB <-> linear for values in 0..1, by table with linear interpolation.
-// Encoding is steep near black, so that table is indexed by the square root.
-constexpr int kLutSize = 4096;
-
-struct Luts {
-    std::array<float, kLutSize + 2> encode; // index: sqrt(linear) * kLutSize
-    std::array<float, kLutSize + 2> decode; // index: srgb * kLutSize
-    Luts()
-    {
-        for (int i = 0; i < kLutSize + 2; ++i) {
-            const float t = std::min(1.0f, float(i) / float(kLutSize));
-            encode[size_t(i)] = linearToSrgb(t * t);
-            decode[size_t(i)] = srgbToLinear(t);
-        }
-    }
-};
-
-const Luts &luts()
-{
-    static const Luts l;
-    return l;
-}
-
-inline float lookup(const std::array<float, kLutSize + 2> &table, float t)
-{
-    const float f = t * float(kLutSize);
-    const int i = int(f);
-    const float frac = f - float(i);
-    return table[size_t(i)] + (table[size_t(i) + 1] - table[size_t(i)]) * frac;
-}
-
-inline float encode(const Luts &l, float linear)
-{
-    const float c = std::clamp(linear, 0.0f, 1.0f);
-    return lookup(l.encode, std::sqrt(c));
-}
-
-inline float decode(const Luts &l, float srgb)
-{
-    return lookup(l.decode, std::clamp(srgb, 0.0f, 1.0f));
-}
+using srgblut::Luts;
+using srgblut::luts;
+using srgblut::encode;
+using srgblut::decode;
 
 inline float lum(const float c[3])
 {
@@ -501,8 +466,28 @@ bool LayerStack::mergeDown(int id)
     if (at <= 0)
         return false;
     Layer *below = layer(siblings.at(at - 1));
-    if (!below || below->group)
+    if (!below || !below->hasPixels())
         return false;
+
+    if (top->isAdjustment()) {
+        // Baked into the layer below: its pixels take the adjusted colours.
+        const Layer adj = *top;
+        std::vector<float> pixels;
+        for (const TileCoord c : below->store.tileCoords()) {
+            fetchTile(below->store, c, pixels);
+            adjustTile(adj, c, pixels);
+            below->store.setTile(c, toTile(pixels));
+        }
+        const Pixel d = below->store.defaultPixel();
+        float px[4] = {float(d.r), float(d.g), float(d.b), float(d.a)};
+        const float v = adj.hasMask && adj.maskEnabled ? maskValue(adj.mask.defaultPixel()) : 1.0f;
+        AdjustmentKernel(adj.adjust).apply(px, 1, float(adj.opacity) * v);
+        below->store.setDefaultPixel(makePixel(px[0], px[1], px[2], px[3]));
+        const int keep = below->id;
+        remove(id);
+        m_active = keep;
+        return true;
+    }
 
     // The result keeps no mask: what each layer's mask hides is erased first.
     if (below->hasMask)
@@ -569,7 +554,7 @@ bool LayerStack::removeMask(int id)
 bool LayerStack::applyMask(int id)
 {
     Layer *l = layer(id);
-    if (!l || !l->hasMask || l->group)
+    if (!l || !l->hasMask || !l->hasPixels())
         return false;
     // Tiles the layer has, and where its default pixel shows, tiles the mask has.
     QSet<TileCoord> coords;
@@ -667,6 +652,26 @@ bool LayerStack::contributes(const Layer &l, TileCoord c) const
     return false;
 }
 
+void LayerStack::adjustTile(const Layer &l, TileCoord c, std::vector<float> &pixels) const
+{
+    const AdjustmentKernel kernel(l.adjust);
+    const float amount = float(l.opacity);
+    if (!(l.hasMask && l.maskEnabled)) {
+        kernel.apply(pixels.data(), kTilePixels, amount);
+        return;
+    }
+    const QImage tile = l.mask.tile(c);
+    if (tile.isNull()) {
+        kernel.apply(pixels.data(), kTilePixels, amount * maskValue(l.mask.defaultPixel()));
+        return;
+    }
+    const auto *m = reinterpret_cast<const Pixel *>(tile.constBits());
+    std::array<float, kTilePixels> strength;
+    for (int i = 0; i < kTilePixels; ++i)
+        strength[size_t(i)] = maskValue(m[i]);
+    kernel.apply(pixels.data(), kTilePixels, amount, strength.data());
+}
+
 bool LayerStack::fetchLayer(const Layer &l, TileCoord c, std::vector<float> &out) const
 {
     if (l.group ? !compositeTile(l.id, c, out) : !fetchTile(l.store, c, out))
@@ -683,6 +688,12 @@ bool LayerStack::compositeTile(int parent, TileCoord c, std::vector<float> &out)
     for (const Layer &l : m_layers) {
         if (l.parent != parent || !l.visible || l.opacity <= 0.0)
             continue;
+        if (l.isAdjustment()) {
+            // Changes what's below it here; with nothing below, nothing to change.
+            if (any)
+                adjustTile(l, c, out);
+            continue;
+        }
         if (!fetchLayer(l, c, src))
             continue;
         if (!any) {
@@ -702,6 +713,13 @@ bool LayerStack::compositeDefault(int parent, float out[4]) const
         if (l.parent != parent || !l.visible || l.opacity <= 0.0)
             continue;
         float src[4];
+        if (l.isAdjustment()) {
+            if (any) {
+                const float v = l.hasMask && l.maskEnabled ? maskValue(l.mask.defaultPixel()) : 1.0f;
+                AdjustmentKernel(l.adjust).apply(out, 1, float(l.opacity) * v);
+            }
+            continue;
+        }
         if (l.group) {
             if (!compositeDefault(l.id, src))
                 continue;
@@ -745,7 +763,7 @@ QImage LayerStack::composedTile(TileCoord c) const
             if (l.parent != 0 || &l == only || !l.visible || l.opacity <= 0.0)
                 continue;
             float d[4];
-            if (l.group ? compositeDefault(l.id, d) : float(l.store.defaultPixel().a) > 0.0f)
+            if (l.isAdjustment() || (l.group ? compositeDefault(l.id, d) : float(l.store.defaultPixel().a) > 0.0f))
                 alone = false;
         }
         if (alone)

@@ -19,6 +19,11 @@ add_library(easeletch_core STATIC
     selection.cpp
     regionops.h
     regionops.cpp
+    adjust.h
+    adjust.cpp
+    srgblut.h
+    filters.h
+    filters.cpp
     fillops.h
     fillops.cpp
     transform.h

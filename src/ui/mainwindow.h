@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fillops.h"
+#include "filters.h"
 #include "griddialog.h"
 #include "history.h"
 #include "layerstack.h"
@@ -26,6 +27,7 @@ class CanvasTool;
 class CanvasView;
 class EyedropperTool;
 class LayerPanel;
+class AdjustPanel;
 class MoveTool;
 class SelectTool;
 class WandTool;
@@ -43,6 +45,7 @@ class QDoubleSpinBox;
 class QToolBar;
 class ColorPanel;
 class QAction;
+class QDockWidget;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
@@ -72,6 +75,7 @@ public:
     easeletch::TileStore *layer() const;
     const easeletch::LayerStack &layers() const { return *m_stack; }
     LayerPanel *layerPanel() const { return m_layerPanel; }
+    AdjustPanel *adjustPanel() const { return m_adjustPanel; }
     BrushTool *brushTool() const { return m_brush; }
     EyedropperTool *eyedropperTool() const { return m_eyedropper; }
     ColorPanel *colorPanel() const { return m_color; }
@@ -183,6 +187,19 @@ public slots:
     // whole layer (what a drag with the Gradient tool does). One undo step.
     void drawGradient(const QPointF &from, const QPointF &to);
 
+    // Runs a filter over the active layer, inside the selection if there is
+    // one. One undo step. False if nothing changed or the layer can't be edited.
+    bool applyFilter(const easeletch::Filter &filter);
+    // The same, tried out: the canvas shows the result, and nothing is
+    // recorded until endFilterPreview(true). Each call replaces the last.
+    bool previewFilter(const easeletch::Filter &filter);
+    void endFilterPreview(bool keep);
+    bool isPreviewingFilter() const { return m_filterPreview.active; }
+    // Opens a filter's settings, previewing on the canvas as they change.
+    void showFilterDialog(easeletch::FilterType type);
+    // Runs the last filter used again, with the same settings.
+    void repeatFilter();
+
     // Free transform of the selected pixels, or of everything on the layer
     // when nothing is selected. Enter (commitFloating) applies it as one undo
     // step, Escape (cancelFloating) drops it. False if there's nothing to
@@ -203,6 +220,12 @@ public slots:
     // Layers. Each is one undo step and returns false if it couldn't be done.
     // New layers go above the active one and become active.
     bool addLayer();
+    // Adds an adjustment layer above the active one: it changes the look of
+    // everything below it and stays editable.
+    bool addAdjustmentLayer(easeletch::AdjustmentType type);
+    // Changes an adjustment layer's settings. A run of changes to the same
+    // layer (dragging a slider or a curve point) is one undo step.
+    void setAdjustment(int id, const easeletch::Adjustment &adjustment);
     // Puts the active layer into a new group.
     bool addGroup();
     bool duplicateLayer();
@@ -291,6 +314,9 @@ private:
     // After the stack changed: recomposite, rebind, refresh the panel.
     void layersChanged();
     bool moveLayerBy(int step);
+    // Brings the Adjustment panel forward for an adjustment layer, the Color
+    // panel for any other.
+    void showPanelForActiveLayer();
     void flushOpacityRedraw();
     // Brings the composite up to date with the layers.
     void syncComposite() const;
@@ -343,6 +369,12 @@ private:
     EyedropperTool *m_eyedropper = nullptr;
     BrushOptionsBar *m_options = nullptr;
     LayerPanel *m_layerPanel = nullptr;
+    AdjustPanel *m_adjustPanel = nullptr;
+    QDockWidget *m_adjustDock = nullptr;
+    QDockWidget *m_colorDock = nullptr;
+    // The adjustment layer and history state the last settings entry belongs to.
+    int m_adjustLayer = 0;
+    quint64 m_adjustState = 0;
     QListWidget *m_historyList = nullptr;
     ColorPanel *m_color = nullptr;
     SelectTool *m_rectSelect = nullptr;
@@ -367,6 +399,19 @@ private:
         bool movingLayer = false; // ... or it became a drag, and is moving the layer
         easeletch::Selection selectionBeforeMove;
     } m_text;
+    // A filter being tried out. The layer's tiles as they were are kept, so
+    // each new setting starts from the original, never from the last try.
+    struct FilterPreview {
+        bool active = false;
+        int layerId = 0;
+        bool onMask = false;
+        easeletch::TileStore original;
+        QHash<easeletch::TileCoord, QImage> before; // what the try now showing replaced
+        QString label;
+    } m_filterPreview;
+    easeletch::Filter m_lastFilters[easeletch::FilterTypeCount];
+    int m_lastFilterType = -1;
+    QAction *m_repeatFilterAct = nullptr;
     FillTool *m_fillTool = nullptr;
     GradientTool *m_gradientTool = nullptr;
     QAction *m_fillAct = nullptr;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "adjust.h"
 #include "tilestore.h"
 
 #include <QImage>
@@ -50,6 +51,14 @@ struct Layer {
     double opacity = 1.0;
     BlendMode blend = BlendMode::Normal;
     TileStore store; // raster layers only
+
+    // An adjustment layer has no pixels: it changes the look of everything
+    // below it (within its group), by its opacity and through its mask, and
+    // can be re-edited or removed at any time. Its blend mode isn't used.
+    Adjustment adjust;
+    bool isAdjustment() const { return adjust.type != AdjustmentType::None; }
+    // A raster layer: the only kind that can be painted on.
+    bool hasPixels() const { return !group && !isAdjustment(); }
 
     // A mask hides part of the layer (or group) without erasing it: where the
     // mask is white the layer shows, where it's black it doesn't, and greys
@@ -123,7 +132,8 @@ public:
     bool move(int id, int parent, int position);
     // Copies a layer (and its contents) just above it. Returns the copy's id.
     int duplicate(int id);
-    // Blends a raster layer into the raster layer below it and removes it.
+    // Blends a raster layer into the raster layer below it and removes it. An
+    // adjustment layer is applied to the raster layer below it for good.
     // False if there's nothing suitable below.
     bool mergeDown(int id);
     // Replaces a group by one raster layer showing the same thing.
@@ -166,6 +176,7 @@ private:
     bool fetchLayer(const Layer &l, TileCoord c, std::vector<float> &out) const;
     bool compositeTile(int parent, TileCoord c, std::vector<float> &out) const;
     bool compositeDefault(int parent, float out[4]) const;
+    void adjustTile(const Layer &l, TileCoord c, std::vector<float> &pixels) const;
     QImage composedTile(TileCoord c) const;
     void recomposite(const QSet<TileCoord> &coords);
     QSet<TileCoord> tileCoordsUnder(int parent) const;

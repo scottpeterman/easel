@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include "adjustpanel.h"
 #include "brushoptionsbar.h"
 #include "brushtool.h"
 #include "canvasarea.h"
@@ -9,6 +10,7 @@
 #include "documentio.h"
 #include "edittools.h"
 #include "eyedroppertool.h"
+#include "filterdialog.h"
 #include "layerpanel.h"
 #include "newdocumentdialog.h"
 #include "selecttools.h"
@@ -301,6 +303,11 @@ void MainWindow::createActions()
     dupLayer->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_J));
     auto *groupLayer = layer->addAction(tr("&Group Layer"), this, &MainWindow::addGroup);
     groupLayer->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
+    QMenu *adjust = layer->addMenu(tr("New &Adjustment Layer"));
+    for (int t = 1; t < easeletch::AdjustmentTypeCount; ++t) {
+        const auto type = easeletch::AdjustmentType(t);
+        adjust->addAction(AdjustPanel::typeName(type), this, [this, type] { addAdjustmentLayer(type); });
+    }
     layer->addAction(tr("D&elete Layer"), this, &MainWindow::deleteLayer);
     layer->addSeparator();
     layer->addAction(tr("Move &Up"), this, &MainWindow::raiseLayer);
@@ -325,6 +332,17 @@ void MainWindow::createActions()
     connect(m_editMaskAct, &QAction::triggered, this, &MainWindow::setEditingMask);
     layer->addAction(tr("&Apply Layer Mask"), this, &MainWindow::applyLayerMask);
     layer->addAction(tr("&Remove Layer Mask"), this, &MainWindow::deleteLayerMask);
+
+    QMenu *filter = menuBar()->addMenu(tr("Filte&r"));
+    m_repeatFilterAct = filter->addAction(tr("&Repeat Last Filter"), this, &MainWindow::repeatFilter);
+    m_repeatFilterAct->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_F));
+    m_repeatFilterAct->setEnabled(false);
+    filter->addSeparator();
+    for (int t = 0; t < easeletch::FilterTypeCount; ++t) {
+        const auto type = easeletch::FilterType(t);
+        m_lastFilters[t] = easeletch::Filter::make(type);
+        filter->addAction(tr("%1...").arg(FilterDialog::typeName(type)), this, [this, type] { showFilterDialog(type); });
+    }
 
     auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
     smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
@@ -587,11 +605,27 @@ void MainWindow::createDocks()
     connect(m_layerPanel, &LayerPanel::applyMaskRequested, this, &MainWindow::applyLayerMask);
     connect(m_layerPanel, &LayerPanel::editMaskToggled, this, &MainWindow::setEditingMask);
 
+    m_adjustPanel = new AdjustPanel;
+    m_adjustDock = new QDockWidget(tr("Adjustment"), this);
+    m_adjustDock->setObjectName(QStringLiteral("AdjustmentDock"));
+    m_adjustDock->setWidget(m_adjustPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_adjustDock);
+    connect(m_adjustPanel, &AdjustPanel::addRequested, this, &MainWindow::addAdjustmentLayer);
+    connect(m_adjustPanel, &AdjustPanel::adjustmentChanged, this, [this](const easeletch::Adjustment &a) {
+        if (m_stack)
+            setAdjustment(m_stack->activeId(), a);
+    });
+
     m_color = new ColorPanel;
     auto *colorDock = new QDockWidget(tr("Color"), this);
     colorDock->setObjectName(QStringLiteral("ColorDock"));
     colorDock->setWidget(m_color);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
+    // Colour and Adjustment share a place: whichever suits the active layer
+    // comes to the front.
+    m_colorDock = colorDock;
+    tabifyDockWidget(colorDock, m_adjustDock);
+    colorDock->raise();
     connect(m_color, &ColorPanel::colorChanged, m_brush, &BrushTool::setColor);
     connect(m_color, &ColorPanel::colorChanged, this, &MainWindow::updateText);
     connect(m_color, &ColorPanel::colorChanged, m_eyedropper, &EyedropperTool::setCurrentColor);
@@ -1454,7 +1488,7 @@ void MainWindow::cancelFloating()
 easeletch::TileStore *MainWindow::layer() const
 {
     easeletch::Layer *l = m_stack ? m_stack->active() : nullptr;
-    return l && !l->group ? &l->store : nullptr;
+    return l && l->hasPixels() ? &l->store : nullptr;
 }
 
 easeletch::TileStore *MainWindow::editStore()
@@ -1466,6 +1500,9 @@ easeletch::TileStore *MainWindow::editStore()
     QString why;
     if (l->group && !onMask)
         why = tr("A group has no pixels of its own: pick a layer inside it");
+    else if (l->isAdjustment() && !onMask)
+        why = tr("An adjustment layer has no pixels: change it in the Adjustment panel, "
+                 "or add a mask to it and paint on that");
     else if (m_stack->isLocked(l->id))
         why = tr("\"%1\" is locked").arg(l->name);
     else if (!m_stack->isShown(l->id))
@@ -1493,7 +1530,7 @@ void MainWindow::bindTools()
     const QRect bounds = canvasRect();
     easeletch::Layer *l = m_stack->active();
     m_editMask = m_editMask && l && l->hasMask;
-    const bool paintable = l && (m_editMask || !l->group) && !m_stack->isLocked(l->id) && m_stack->isShown(l->id);
+    const bool paintable = l && (m_editMask || l->hasPixels()) && !m_stack->isLocked(l->id) && m_stack->isShown(l->id);
     m_brush->setDocument(paintable ? (m_editMask ? &l->mask : &l->store) : nullptr, bounds, &m_history,
                          l ? l->id : 0, m_editMask);
     m_layerPanel->setEditingMask(m_editMask);
@@ -1501,6 +1538,7 @@ void MainWindow::bindTools()
         m_editMaskAct->setEnabled(l && l->hasMask);
         m_editMaskAct->setChecked(m_editMask);
     }
+    m_adjustPanel->setAdjustment(l ? l->adjust : easeletch::Adjustment());
     // The eyedropper picks what's on screen.
     m_eyedropper->setDocument(m_stack->compositeStore(), bounds);
 }
@@ -1538,6 +1576,7 @@ void MainWindow::setActiveLayer(int id)
     m_editMask = false; // a newly picked layer is painted on, not its mask
     bindTools();
     m_layerPanel->syncActive();
+    showPanelForActiveLayer();
 }
 
 bool MainWindow::addLayer()
@@ -1559,6 +1598,74 @@ bool MainWindow::addLayer()
     m_stack->setActive(id);
     finishLayerChange(tr("New Layer"), std::move(before));
     return true;
+}
+
+bool MainWindow::addAdjustmentLayer(easeletch::AdjustmentType type)
+{
+    if (type == easeletch::AdjustmentType::None || !beginLayerChange())
+        return false;
+    easeletch::LayerStack before = m_stack->snapshot();
+    easeletch::Layer l;
+    l.adjust = easeletch::Adjustment::make(type);
+    l.name = m_stack->uniqueName(AdjustPanel::typeName(type));
+    const easeletch::Layer *active = m_stack->active();
+    int id = 0;
+    if (active && active->group) {
+        id = m_stack->insert(std::move(l), active->id, INT_MAX); // on top, inside the group
+    } else {
+        const int parent = active ? active->parent : 0;
+        const int at = active ? int(m_stack->children(parent).indexOf(active->id)) + 1 : INT_MAX;
+        id = m_stack->insert(std::move(l), parent, at);
+    }
+    m_stack->setActive(id);
+    m_editMask = false;
+    finishLayerChange(tr("New %1 Layer").arg(AdjustPanel::typeName(type)), std::move(before));
+    m_adjustDock->show();
+    showPanelForActiveLayer();
+    return true;
+}
+
+void MainWindow::showPanelForActiveLayer()
+{
+    // Only while the two are tabbed together: pulled apart, both are in view.
+    if (!m_stack || !tabifiedDockWidgets(m_colorDock).contains(m_adjustDock))
+        return;
+    const easeletch::Layer *l = m_stack->active();
+    (l && l->isAdjustment() ? m_adjustDock : m_colorDock)->raise();
+}
+
+void MainWindow::setAdjustment(int id, const easeletch::Adjustment &adjustment)
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    const easeletch::Layer *l = m_stack->layer(id);
+    const easeletch::Adjustment next = adjustment.normalized();
+    if (!l || !l->isAdjustment() || next.type != l->adjust.type || l->adjust == next)
+        return;
+    commitFloating();
+    if (m_stack->isLocked(id)) {
+        statusBar()->showMessage(tr("\"%1\" is locked").arg(l->name), 4000);
+        m_adjustPanel->setAdjustment(l->adjust); // the controls go back
+        return;
+    }
+    // Dragging a slider or a curve point sends many values; they add up to
+    // one undo step.
+    const bool continuing = m_adjustLayer == id && m_adjustState == m_history.stateId();
+    easeletch::LayerStack before;
+    if (!continuing)
+        before = m_stack->snapshot();
+    m_stack->layer(id)->adjust = next;
+    if (!continuing) {
+        m_history.pushState(tr("Change %1").arg(AdjustPanel::typeName(next.type)), std::move(before), *m_stack);
+        m_adjustLayer = id;
+        m_adjustState = m_history.stateId();
+        historyChanged();
+    }
+    // Redraw once the queued moves are in, not once per move.
+    if (!m_opacityRedrawPending) {
+        m_opacityRedrawPending = true;
+        QTimer::singleShot(0, this, &MainWindow::flushOpacityRedraw);
+    }
 }
 
 bool MainWindow::addGroup()
@@ -1683,6 +1790,10 @@ bool MainWindow::applyLayerMask()
         return false;
     if (m_stack->active()->group) {
         statusBar()->showMessage(tr("A group's mask can't be applied: merge the group first"), 4000);
+        return false;
+    }
+    if (m_stack->active()->isAdjustment()) {
+        statusBar()->showMessage(tr("An adjustment layer's mask can't be applied: there are no pixels to erase"), 4000);
         return false;
     }
     easeletch::LayerStack before = m_stack->snapshot();
@@ -1943,6 +2054,7 @@ bool MainWindow::saveDocumentTo(const QString &path, bool wait)
     // painting can go on while it's written out.
     syncComposite();
     m_opacityLayer = 0; // a later opacity change is a change since this save
+    m_adjustLayer = 0;
     easeletch::LayerStack snapshot = *m_stack;
     const quint64 stateId = m_history.stateId();
     const quint64 docGeneration = m_docGeneration;
@@ -2016,6 +2128,7 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
                              const QString &historyLabel, easeletch::TilePyramid pyramid, const QString &path)
 {
     // Detach everything from the old document before it's freed.
+    m_filterPreview = FilterPreview();
     m_floating.cancel();
     endTransform();
     m_lasso->cancel();
@@ -2038,6 +2151,7 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
     m_stack = std::move(stack);
     m_name = name;
     m_opacityLayer = 0;
+    m_adjustLayer = 0;
     m_editMask = false;
     m_view->setDocument(m_stack->compositeStore(), canvasSize(), std::move(pyramid));
     bindTools();

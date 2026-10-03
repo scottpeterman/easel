@@ -1,4 +1,4 @@
-// MainWindow: free transform, flips and quarter turns; fill and gradient.
+// MainWindow: free transform, flips and quarter turns; fill and gradient; filters.
 
 #include "mainwindow.h"
 
@@ -7,6 +7,8 @@
 #include "colorpanel.h"
 #include "edittools.h"
 #include "fillops.h"
+#include "filterdialog.h"
+#include "filters.h"
 #include "gradienteditor.h"
 #include "selecttools.h"
 
@@ -742,4 +744,100 @@ void MainWindow::drawGradient(const QPointF &from, const QPointF &to)
         m_color->noteUsed(m_color->color());
     m_view->refresh();
     historyChanged();
+}
+
+// --- Filters ------------------------------------------------------------------------
+
+bool MainWindow::previewFilter(const easeletch::Filter &filter)
+{
+    if (!m_stack || m_view->isStroking())
+        return false;
+    if (!m_filterPreview.active) {
+        commitFloating();
+        easeletch::TileStore *store = editStore();
+        if (!store)
+            return false;
+        m_filterPreview = FilterPreview();
+        m_filterPreview.active = true;
+        m_filterPreview.layerId = m_stack->activeId();
+        m_filterPreview.onMask = m_editMask;
+        m_filterPreview.original = store->snapshot();
+    }
+    easeletch::Layer *l = m_stack->layer(m_filterPreview.layerId);
+    if (!l) {
+        m_filterPreview = FilterPreview();
+        return false;
+    }
+    easeletch::TileStore &store = m_filterPreview.onMask ? l->mask : l->store;
+    // Back to the original first, so tries don't pile up.
+    for (auto it = m_filterPreview.before.cbegin(); it != m_filterPreview.before.cend(); ++it)
+        store.setTile(it.key(), it.value());
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    m_filterPreview.before = easeletch::applyFilter(store, m_selection, canvasRect(), filter);
+    QApplication::restoreOverrideCursor();
+    m_filterPreview.label = FilterDialog::typeName(filter.type);
+    m_lastFilters[int(filter.type)] = filter.normalized();
+    m_view->refresh();
+    return !m_filterPreview.before.isEmpty();
+}
+
+void MainWindow::endFilterPreview(bool keep)
+{
+    if (!m_filterPreview.active)
+        return;
+    FilterPreview preview = std::move(m_filterPreview);
+    m_filterPreview = FilterPreview();
+    easeletch::Layer *l = m_stack ? m_stack->layer(preview.layerId) : nullptr;
+    if (!l)
+        return;
+    if (keep && !preview.before.isEmpty()) {
+        m_history.push(preview.label, preview.layerId, std::move(preview.before), preview.onMask);
+        historyChanged();
+    } else {
+        easeletch::TileStore &store = preview.onMask ? l->mask : l->store;
+        for (auto it = preview.before.cbegin(); it != preview.before.cend(); ++it)
+            store.setTile(it.key(), it.value());
+    }
+    m_view->refresh();
+}
+
+bool MainWindow::applyFilter(const easeletch::Filter &filter)
+{
+    endFilterPreview(false);
+    const bool changed = previewFilter(filter);
+    const bool began = m_filterPreview.active;
+    endFilterPreview(true);
+    if (began) {
+        m_lastFilterType = int(filter.type);
+        m_repeatFilterAct->setEnabled(true);
+        m_repeatFilterAct->setText(tr("&Repeat %1").arg(FilterDialog::typeName(filter.type)));
+    }
+    return changed;
+}
+
+void MainWindow::showFilterDialog(easeletch::FilterType type)
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    commitFloating();
+    if (!editStore())
+        return; // the status bar says why
+    FilterDialog dlg(m_lastFilters[int(type)], this);
+    connect(&dlg, &FilterDialog::previewRequested, this, &MainWindow::previewFilter);
+    connect(&dlg, &FilterDialog::previewCleared, this, [this] { endFilterPreview(false); });
+    previewFilter(dlg.filter());
+    if (dlg.exec() == QDialog::Accepted) {
+        // Whatever the preview shows, what's applied is the settings as they ended.
+        endFilterPreview(false);
+        if (!applyFilter(dlg.filter()))
+            statusBar()->showMessage(tr("%1 changed nothing here").arg(FilterDialog::typeName(type)), 4000);
+    } else {
+        endFilterPreview(false);
+    }
+}
+
+void MainWindow::repeatFilter()
+{
+    if (m_lastFilterType >= 0)
+        applyFilter(m_lastFilters[m_lastFilterType]);
 }
