@@ -53,6 +53,8 @@ signals:
     void strokeCommitted();
     // A stroke was started with nothing to paint on.
     void blocked();
+    // A stroke was started outside the selection, where it leaves no mark.
+    void outsideSelection();
 
 private:
     easeletch::BrushSettings &current();

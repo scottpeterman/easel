@@ -50,6 +50,7 @@
 #include <QToolButton>
 #include <QUuid>
 
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <memory>
@@ -83,7 +84,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     m_view = new CanvasView;
-    setCentralWidget(new CanvasArea(m_view, this));
+    createPageBar(); // the canvas, with the page tabs under it
 
     m_brush = new BrushTool(this);
     m_eyedropper = new EyedropperTool(this);
@@ -133,6 +134,10 @@ MainWindow::MainWindow(QWidget *parent)
     });
     m_brush->setSelection(&m_selection);
     connect(m_brush, &BrushTool::blocked, this, [this] { editStore(); });
+    connect(m_brush, &BrushTool::outsideSelection, this, [this] {
+        statusBar()->showMessage(tr("Painting stays inside the selection. Ctrl+D deselects, to paint anywhere."),
+                                 5000);
+    });
     // Painting changes a layer; the canvas draws the composite of them all.
     m_view->setBeforeRefresh([this] {
         if (m_stack)
@@ -343,6 +348,8 @@ void MainWindow::createActions()
         m_lastFilters[t] = easeletch::Filter::make(type);
         filter->addAction(tr("%1...").arg(FilterDialog::typeName(type)), this, [this, type] { showFilterDialog(type); });
     }
+
+    createPageMenu();
 
     auto *smaller = edit->addAction(tr("Smaller Brush"), this, [this] { m_brush->scaleSize(1.0 / 1.2); });
     smaller->setShortcut(QKeySequence(Qt::Key_BracketLeft));
@@ -2012,13 +2019,19 @@ void MainWindow::finishOpen(const QString &path, quint64 generation, easeletch::
     m_lastDir = info.absolutePath();
     // Only an .easeletch file is saved back to; an opened image gets Save As.
     setDocument(std::move(doc.stack), info.fileName(), tr("Open %1").arg(info.fileName()),
-                std::move(doc.pyramid), doc.native ? info.absoluteFilePath() : QString());
+                std::move(doc.pyramid), doc.native ? info.absoluteFilePath() : QString(), std::move(doc.pages),
+                doc.activePage);
     emit documentOpened(path, true);
 }
 
 bool MainWindow::isModified() const
 {
-    return m_history.stateId() != m_cleanId;
+    if (m_history.stateId() != m_cleanId || m_pagesRevision != m_cleanRevision)
+        return true;
+    for (int i = 0; i < pageCount(); ++i)
+        if (i != m_page && m_pages[i].history.stateId() != m_pages[i].cleanId)
+            return true;
+    return false;
 }
 
 bool MainWindow::save()
@@ -2055,38 +2068,47 @@ bool MainWindow::saveDocumentTo(const QString &path, bool wait)
     syncComposite();
     m_opacityLayer = 0; // a later opacity change is a change since this save
     m_adjustLayer = 0;
-    easeletch::LayerStack snapshot = *m_stack;
-    const quint64 stateId = m_history.stateId();
-    const quint64 docGeneration = m_docGeneration;
+    // Every page goes into the file; the others haven't changed since they
+    // were last worked on.
+    QList<easeletch::DocumentPage> pages;
+    SavedState state;
+    state.docGeneration = m_docGeneration;
+    state.pagesRevision = m_pagesRevision;
+    for (int i = 0; i < pageCount(); ++i) {
+        const bool current = i == m_page;
+        pages.append({m_pages[i].name, current ? *m_stack : *m_pages[i].stack});
+        state.pages.append({m_pages[i].id, current ? m_history.stateId() : m_pages[i].history.stateId()});
+    }
+    const int activePage = m_page;
     m_lastDir = QFileInfo(path).absolutePath();
 
     if (wait) {
         QApplication::setOverrideCursor(Qt::BusyCursor);
-        const QString error = easeletch::saveNativeDocument(path, std::move(snapshot));
+        const QString error = easeletch::saveNativeDocument(path, std::move(pages), activePage);
         QApplication::restoreOverrideCursor();
         ++m_pendingJobs; // balanced in finishSave
-        finishSave(path, stateId, docGeneration, error);
+        finishSave(path, state, error);
         return error.isEmpty();
     }
 
     statusBar()->showMessage(tr("Saving %1…").arg(QFileInfo(path).fileName()));
     ++m_pendingJobs;
     QPointer<MainWindow> self(this);
-    auto shared = std::make_shared<easeletch::LayerStack>(std::move(snapshot));
-    QThreadPool::globalInstance()->start([self, path, shared, stateId, docGeneration] {
-        const QString error = easeletch::saveNativeDocument(path, std::move(*shared));
+    auto shared = std::make_shared<QList<easeletch::DocumentPage>>(std::move(pages));
+    QThreadPool::globalInstance()->start([self, path, shared, activePage, state] {
+        const QString error = easeletch::saveNativeDocument(path, std::move(*shared), activePage);
         QMetaObject::invokeMethod(
             qApp,
-            [self, path, stateId, docGeneration, error] {
+            [self, path, state, error] {
                 if (self)
-                    self->finishSave(path, stateId, docGeneration, error);
+                    self->finishSave(path, state, error);
             },
             Qt::QueuedConnection);
     });
     return true;
 }
 
-void MainWindow::finishSave(const QString &path, quint64 stateId, quint64 docGeneration, const QString &error)
+void MainWindow::finishSave(const QString &path, const SavedState &state, const QString &error)
 {
     --m_pendingJobs;
     const QString name = QFileInfo(path).fileName();
@@ -2098,10 +2120,21 @@ void MainWindow::finishSave(const QString &path, quint64 stateId, quint64 docGen
         return;
     }
     // A different document may be open by now; only mark this one clean.
-    if (docGeneration == m_docGeneration) {
+    if (state.docGeneration == m_docGeneration) {
         m_path = QFileInfo(path).absoluteFilePath();
         m_name = name;
-        m_cleanId = stateId; // later strokes still count as unsaved
+        // Later strokes, and pages added or changed since, still count as unsaved.
+        m_cleanRevision = state.pagesRevision;
+        for (const auto &[id, stateId] : state.pages) {
+            for (int i = 0; i < pageCount(); ++i) {
+                if (m_pages[i].id != id)
+                    continue;
+                if (i == m_page)
+                    m_cleanId = stateId;
+                else
+                    m_pages[i].cleanId = stateId;
+            }
+        }
         updateTitle();
     }
     statusBar()->showMessage(tr("Saved %1").arg(name), 4000);
@@ -2125,7 +2158,8 @@ bool MainWindow::maybeSave()
 }
 
 void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const QString &name,
-                             const QString &historyLabel, easeletch::TilePyramid pyramid, const QString &path)
+                             const QString &historyLabel, easeletch::TilePyramid pyramid, const QString &path,
+                             std::vector<easeletch::LoadedPage> pages, int activePage)
 {
     // Detach everything from the old document before it's freed.
     m_filterPreview = FilterPreview();
@@ -2153,9 +2187,31 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
     m_opacityLayer = 0;
     m_adjustLayer = 0;
     m_editMask = false;
+
+    // The pages: the one given, or those of an opened document with the
+    // given one at activePage.
+    m_pages.clear();
+    m_nextPageId = 1;
+    m_pagesRevision = m_cleanRevision = 0;
+    if (pages.empty())
+        pages.emplace_back();
+    m_page = std::clamp(activePage, 0, int(pages.size()) - 1);
+    for (int i = 0; i < int(pages.size()); ++i) {
+        Page page;
+        page.id = m_nextPageId++;
+        page.name = pages[i].name.isEmpty() ? tr("Page %1").arg(i + 1) : pages[i].name;
+        if (i != m_page) {
+            page.stack = std::move(pages[i].stack);
+            page.history.reset(historyLabel);
+            page.cleanId = page.history.stateId();
+        }
+        m_pages.push_back(std::move(page));
+    }
+
     m_view->setDocument(m_stack->compositeStore(), canvasSize(), std::move(pyramid));
     bindTools();
     m_layerPanel->setStack(m_stack.get());
+    syncPageTabs();
 
     historyChanged();
     updateTitle();
@@ -2224,7 +2280,12 @@ void MainWindow::historyChanged()
 void MainWindow::updateTitle()
 {
     // [*] shows as "*" when the document has unsaved changes.
-    setWindowTitle(tr("%1[*] (%2 × %3) — Easeletch").arg(m_name).arg(canvasSize().width()).arg(canvasSize().height()));
+    // With more than one page, the title says which one this is.
+    const QString page = pageCount() > 1 ? tr(" · %1").arg(pageName(m_page)) : QString();
+    setWindowTitle(tr("%1[*]%2 (%3 × %4) — Easeletch")
+                       .arg(m_name, page)
+                       .arg(canvasSize().width())
+                       .arg(canvasSize().height()));
     setWindowModified(isModified());
 }
 
@@ -2268,7 +2329,10 @@ void MainWindow::showExportDialog()
     QStringList filters{tr("PNG image (*.png)"), tr("JPEG image (*.jpg *.jpeg)")};
     if (QImageWriter::supportedImageFormats().contains("webp"))
         filters << tr("WebP image (*.webp)");
-    const QString suggested = QDir(m_lastDir).filePath(QFileInfo(m_name).completeBaseName() + QStringLiteral(".png"));
+    // The current page is what's exported; with several, its name goes in the file's.
+    const QString base = QFileInfo(m_name).completeBaseName()
+                         + (pageCount() > 1 ? QLatin1Char('-') + pageName(m_page) : QString());
+    const QString suggested = QDir(m_lastDir).filePath(base + QStringLiteral(".png"));
     QString selected;
     QString path = QFileDialog::getSaveFileName(this, tr("Export"), suggested, filters.join(QStringLiteral(";;")),
                                                 &selected);

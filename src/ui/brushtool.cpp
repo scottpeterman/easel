@@ -3,6 +3,7 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <cmath>
 
 using easeletch::BrushMode;
 using easeletch::BrushSettings;
@@ -131,6 +132,9 @@ void BrushTool::press(const easeletch::StrokeSample &s)
         emit blocked();
         return;
     }
+    if (m_selection && !m_selection->isEmpty()
+        && m_selection->coverage(int(std::floor(s.pos.x())), int(std::floor(s.pos.y()))) <= 0.0f)
+        emit outsideSelection();
     m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s,
                    m_selection ? *m_selection : easeletch::Selection());
 }

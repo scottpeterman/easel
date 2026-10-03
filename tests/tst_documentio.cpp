@@ -11,6 +11,7 @@
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
 
+#include <climits>
 #include <cstring>
 
 using namespace easeletch;
@@ -238,6 +239,144 @@ private slots:
         QVERIFY(samePixel(in.layer(offId)->mask.defaultPixel(), pixelFromColor(Qt::black)));
         QVERIFY(!in.layers().first().hasMask);
         QVERIFY(sameTiles(stack.composite(), in.composite()));
+    }
+
+    void pagesRoundTrip()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("pages.easeletch"));
+
+        // Three pages of different sizes; the second has two layers and a mask.
+        QList<DocumentPage> pages;
+        const QSize sizes[] = {QSize(900, 500), QSize(64, 64), QSize(300, 1200)};
+        for (int i = 0; i < 3; ++i) {
+            TileStore store(i == 1 ? QColor(0, 0, 0, 0) : QColor(Qt::white));
+            paintSomething(store, QRect(QPoint(0, 0), sizes[i]));
+            LayerStack stack = LayerStack::single(std::move(store), sizes[i], QStringLiteral("Background"));
+            if (i == 1) {
+                Layer l;
+                l.name = QStringLiteral("Ink");
+                l.opacity = 0.5;
+                const int id = stack.insert(std::move(l), 0, INT_MAX);
+                paintSomething(stack.layer(id)->store, QRect(QPoint(0, 0), sizes[i]));
+                QVERIFY(stack.addMask(id));
+                stack.layer(id)->mask.writableTile({0, 0}).fill(Qt::black);
+                stack.setActive(id);
+            }
+            stack.recompositeAll();
+            pages.append({QStringLiteral("Drawing %1").arg(i + 1), std::move(stack)});
+        }
+        QCOMPARE(saveNativeDocument(path, pages, 1), QString());
+
+        // Several pages are format 5, with each page's tiles under its own folder.
+        {
+            QZipReader zip(path);
+            const QJsonObject m = QJsonDocument::fromJson(zip.fileData(QStringLiteral("manifest.json"))).object();
+            QCOMPARE(m.value(QStringLiteral("version")).toInt(), FormatVersion);
+            QCOMPARE(m.value(QStringLiteral("pages")).toArray().size(), 3);
+            bool paged = false;
+            for (const QZipReader::FileInfo &info : zip.fileInfoList())
+                paged = paged || info.filePath.startsWith(QStringLiteral("pages/2/layers/0/chunks/"));
+            QVERIFY(paged);
+        }
+
+        LoadedDocument doc = loadNativeDocument(path);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QCOMPARE(doc.pages.size(), size_t(3));
+        QCOMPARE(doc.activePage, 1);
+        QVERIFY(!doc.pages[1].stack); // the active page is doc.stack
+        QCOMPARE(doc.size, sizes[1]);
+        QCOMPARE(doc.pyramid.base(), &doc.stack->composite());
+        for (int i = 0; i < 3; ++i) {
+            const LayerStack &in = pages.at(i).stack;
+            const LayerStack &out = i == 1 ? *doc.stack : *doc.pages[size_t(i)].stack;
+            QCOMPARE(doc.pages[size_t(i)].name, QStringLiteral("Drawing %1").arg(i + 1));
+            QCOMPARE(out.size(), sizes[i]);
+            QCOMPARE(out.count(), in.count());
+            QCOMPARE(out.activeId(), in.activeId());
+            for (int n = 0; n < in.count(); ++n) {
+                QCOMPARE(out.layers().at(n).name, in.layers().at(n).name);
+                QCOMPARE(out.layers().at(n).opacity, in.layers().at(n).opacity);
+                QCOMPARE(out.layers().at(n).hasMask, in.layers().at(n).hasMask);
+                QVERIFY(sameTiles(out.layers().at(n).mask, in.layers().at(n).mask));
+            }
+            // Every page comes back composited, ready to show.
+            QCOMPARE(pixelToColor(out.composite().pixel(60, 55)), pixelToColor(in.composite().pixel(60, 55)));
+        }
+        // What's saved is the canvas: page 0's stroke runs past its 900 x 500.
+        QVERIFY(doc.pages[0].stack->layers().at(0).store.tileCount() > 0);
+    }
+
+    void onePageIsWrittenInTheOldLayout()
+    {
+        // ... so builds from before pages still open documents that don't use them.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("one.easeletch"));
+        QList<DocumentPage> pages;
+        pages.append({QStringLiteral("Sprite"), LayerStack::single(TileStore(Qt::white), QSize(100, 80),
+                                                                     QStringLiteral("Background"))});
+        QCOMPARE(saveNativeDocument(path, pages, 0), QString());
+        {
+            QZipReader zip(path);
+            const QJsonObject m = QJsonDocument::fromJson(zip.fileData(QStringLiteral("manifest.json"))).object();
+            QCOMPARE(m.value(QStringLiteral("version")).toInt(), FormatVersionWithoutAdjustments);
+            QVERIFY(!m.contains(QStringLiteral("pages")));
+            QCOMPARE(m.value(QStringLiteral("width")).toInt(), 100);
+            QCOMPARE(m.value(QStringLiteral("layers")).toArray().size(), 1);
+        }
+        LoadedDocument doc = loadNativeDocument(path);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QCOMPARE(doc.pages.size(), size_t(1));
+        QCOMPARE(doc.pages[0].name, QStringLiteral("Sprite"));
+        QCOMPARE(doc.activePage, 0);
+        QCOMPARE(doc.size, QSize(100, 80));
+    }
+
+    void pagesKeepAdjustmentLayers()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto version = [](const QString &path) {
+            QZipReader zip(path);
+            return QJsonDocument::fromJson(zip.fileData(QStringLiteral("manifest.json")))
+                .object()
+                .value(QStringLiteral("version"))
+                .toInt();
+        };
+        const auto page = [](const QString &name, bool adjusted) {
+            LayerStack stack = LayerStack::single(TileStore(Qt::white), QSize(100, 80), QStringLiteral("Background"));
+            if (adjusted) {
+                Layer l;
+                l.name = QStringLiteral("Levels");
+                l.adjust = Adjustment::make(AdjustmentType::Levels);
+                stack.insert(std::move(l), 0, INT_MAX);
+            }
+            stack.recompositeAll();
+            return DocumentPage{name, std::move(stack)};
+        };
+
+        // One page with an adjustment layer: the version before pages.
+        const QString one = dir.filePath(QStringLiteral("one.easeletch"));
+        QCOMPARE(saveNativeDocument(one, {page(QStringLiteral("A"), true)}, 0), QString());
+        QCOMPARE(version(one), FormatVersionWithoutPages);
+        LoadedDocument single = loadNativeDocument(one);
+        QVERIFY2(single.ok(), qPrintable(single.error));
+        QVERIFY(single.stack->layers().at(1).isAdjustment());
+
+        // Two pages, the adjustment layer on the one that isn't active.
+        const QString two = dir.filePath(QStringLiteral("two.easeletch"));
+        QCOMPARE(saveNativeDocument(two, {page(QStringLiteral("A"), false), page(QStringLiteral("B"), true)}, 0),
+                 QString());
+        QCOMPARE(version(two), FormatVersion);
+        LoadedDocument doc = loadNativeDocument(two);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QCOMPARE(doc.stack->count(), 1);
+        const LayerStack &b = *doc.pages[1].stack;
+        QCOMPARE(b.count(), 2);
+        QVERIFY(b.layers().at(1).isAdjustment());
+        QVERIFY(b.layers().at(1).adjust == Adjustment::make(AdjustmentType::Levels));
     }
 
     void opensVersion1Files()

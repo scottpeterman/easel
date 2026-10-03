@@ -64,9 +64,124 @@ Pixel pixelFromJson(const QJsonArray &a)
 constexpr char kChunkMagic[4] = {'E', 'Z', 'C', 'H'};
 constexpr quint32 kChunkVersion = 1;
 
-QString chunkEntry(int layer, const char *kind, int cx, int cy)
+// Where a page's tiles go in the zip: nowhere special for a single-page
+// document, "pages/<p>/" otherwise.
+QString pagePrefix(int page, bool paged)
 {
-    return QStringLiteral("layers/%1/%2/%3_%4").arg(layer).arg(QLatin1String(kind)).arg(cx).arg(cy);
+    return paged ? QStringLiteral("pages/%1/").arg(page) : QString();
+}
+
+QString chunkEntry(const QString &prefix, int layer, const char *kind, int cx, int cy)
+{
+    return prefix + QStringLiteral("layers/%1/%2/%3_%4").arg(layer).arg(QLatin1String(kind)).arg(cx).arg(cy);
+}
+
+QString defaultPageName(int index)
+{
+    return QObject::tr("Page %1").arg(index + 1);
+}
+
+// A page as the manifest describes it, before its tiles are read.
+struct PendingPage {
+    QString name;
+    QSize size;
+    int activeLayer = 0;
+    QList<Layer> list;
+    QHash<int, int> byEntry; // place in the manifest's layer list -> place in list
+};
+
+// Reads a page's size and layers from the manifest object describing it.
+// Returns the error, or an empty string.
+QString readPage(const QJsonObject &m, PendingPage &page)
+{
+    page.size = QSize(m.value(QLatin1String("width")).toInt(), m.value(QLatin1String("height")).toInt());
+    page.activeLayer = m.value(QLatin1String("activeLayer")).toInt(0);
+    const QJsonArray layers = m.value(QLatin1String("layers")).toArray();
+    if (page.size.isEmpty() || layers.isEmpty())
+        return QObject::tr("The document is damaged (no canvas or layers).");
+
+    // Version 1 files list one layer with no id; it reads as a raster layer.
+    QList<Layer> &list = page.list;
+    for (int i = 0; i < layers.size(); ++i) {
+        const QJsonObject o = layers.at(i).toObject();
+        Layer l;
+        l.id = o.value(QLatin1String("id")).toInt(i + 1);
+        l.name = o.value(QLatin1String("name")).toString();
+        const QString type = o.value(QLatin1String("type")).toString();
+        l.group = type == QLatin1String("group");
+        if (type == QLatin1String("adjustment")) {
+            l.adjust = Adjustment::fromJson(o.value(QLatin1String("adjustment")).toObject());
+            if (!l.isAdjustment())
+                return QObject::tr("The document is damaged (layer %1).").arg(i);
+        }
+        l.parent = o.value(QLatin1String("parent")).toInt(0);
+        l.visible = o.value(QLatin1String("visible")).toBool(true);
+        l.locked = o.value(QLatin1String("locked")).toBool(false);
+        l.opacity = std::clamp(o.value(QLatin1String("opacity")).toDouble(1.0), 0.0, 1.0);
+        l.blend = blendModeFromKey(o.value(QLatin1String("blend")).toString());
+        l.store.setDefaultPixel(pixelFromJson(o.value(QLatin1String("default")).toArray()));
+        if (const QJsonValue mask = o.value(QLatin1String("mask")); mask.isObject()) {
+            const QJsonObject mo = mask.toObject();
+            l.hasMask = true;
+            l.maskEnabled = mo.value(QLatin1String("enabled")).toBool(true);
+            l.mask.setDefaultPixel(pixelFromJson(mo.value(QLatin1String("default")).toArray()));
+        }
+        if (l.id <= 0)
+            return QObject::tr("The document is damaged (layer %1).").arg(i);
+        page.byEntry.insert(i, int(list.size()));
+        list.append(std::move(l));
+    }
+    // A parent must be a group in the file, and no group may contain itself.
+    for (Layer &l : list) {
+        const auto parent = std::find_if(list.cbegin(), list.cend(),
+                                         [&](const Layer &p) { return p.id == l.parent && p.group; });
+        if (l.parent != 0 && (parent == list.cend() || l.parent == l.id))
+            l.parent = 0;
+    }
+    for (Layer &l : list) {
+        int hops = 0;
+        for (int p = l.parent; p != 0 && hops <= list.size(); ++hops) {
+            const auto it = std::find_if(list.cbegin(), list.cend(), [&](const Layer &x) { return x.id == p; });
+            p = it == list.cend() ? 0 : it->parent;
+        }
+        if (hops > list.size())
+            l.parent = 0;
+    }
+    return {};
+}
+
+// A page's layers as the manifest lists them.
+QJsonArray layersToJson(const LayerStack &stack, const QString &prefix)
+{
+    QJsonArray layerList;
+    for (int i = 0; i < stack.count(); ++i) {
+        const Layer &l = stack.layers().at(i);
+        QJsonObject o{
+            {QLatin1String("id"), l.id},
+            {QLatin1String("name"), l.name},
+            {QLatin1String("type"),
+             QLatin1String(l.group ? "group" : l.isAdjustment() ? "adjustment" : "raster")},
+            {QLatin1String("parent"), l.parent},
+            {QLatin1String("visible"), l.visible},
+            {QLatin1String("locked"), l.locked},
+            {QLatin1String("opacity"), l.opacity},
+            {QLatin1String("blend"), blendModeKey(l.blend)},
+        };
+        if (l.isAdjustment())
+            o.insert(QLatin1String("adjustment"), l.adjust.toJson());
+        if (l.hasPixels()) {
+            o.insert(QLatin1String("default"), pixelToJson(l.store.defaultPixel()));
+            o.insert(QLatin1String("chunks"), prefix + QStringLiteral("layers/%1/chunks/").arg(i));
+        }
+        if (l.hasMask) {
+            o.insert(QLatin1String("mask"),
+                     QJsonObject{{QLatin1String("enabled"), l.maskEnabled},
+                                 {QLatin1String("default"), pixelToJson(l.mask.defaultPixel())},
+                                 {QLatin1String("chunks"), prefix + QStringLiteral("layers/%1/mask/").arg(i)}});
+        }
+        layerList.append(o);
+    }
+    return layerList;
 }
 
 int floorDiv(int a, int b)
@@ -206,6 +321,9 @@ LoadedDocument loadImageDocument(const QString &path)
 
     LoadedDocument doc;
     finish(doc, std::make_unique<LayerStack>(LayerStack::single(std::move(store), size, QObject::tr("Background"))));
+    LoadedPage page;
+    page.name = defaultPageName(0);
+    doc.pages.push_back(std::move(page));
     return doc;
 }
 
@@ -228,72 +346,51 @@ LoadedDocument loadNativeDocument(const QString &path)
         || m.value(QLatin1String("tileSize")).toInt() != TileStore::TileSize)
         return failed(QObject::tr("Unsupported pixel format."));
 
-    const QSize size(m.value(QLatin1String("width")).toInt(), m.value(QLatin1String("height")).toInt());
-    const QJsonArray layers = m.value(QLatin1String("layers")).toArray();
-    if (size.isEmpty() || layers.isEmpty())
-        return failed(QObject::tr("The document is damaged (no canvas or layers)."));
-
-    // Version 1 files list one layer with no id; it reads as a raster layer.
-    QList<Layer> list;
-    QHash<int, int> byEntry; // place in the manifest -> place in list
-    for (int i = 0; i < layers.size(); ++i) {
-        const QJsonObject o = layers.at(i).toObject();
-        Layer l;
-        l.id = o.value(QLatin1String("id")).toInt(i + 1);
-        l.name = o.value(QLatin1String("name")).toString();
-        const QString type = o.value(QLatin1String("type")).toString();
-        l.group = type == QLatin1String("group");
-        if (type == QLatin1String("adjustment")) {
-            l.adjust = Adjustment::fromJson(o.value(QLatin1String("adjustment")).toObject());
-            if (!l.isAdjustment())
-                return failed(QObject::tr("The document is damaged (layer %1).").arg(i));
+    // Format 5 lists pages; before that the document is the one page.
+    QList<PendingPage> pages;
+    const bool paged = m.contains(QLatin1String("pages"));
+    if (paged) {
+        const QJsonArray list = m.value(QLatin1String("pages")).toArray();
+        if (list.isEmpty())
+            return failed(QObject::tr("The document is damaged (no pages)."));
+        for (int i = 0; i < list.size(); ++i) {
+            const QJsonObject o = list.at(i).toObject();
+            PendingPage page;
+            page.name = o.value(QLatin1String("name")).toString();
+            if (const QString error = readPage(o, page); !error.isEmpty())
+                return failed(error);
+            pages.append(std::move(page));
         }
-        l.parent = o.value(QLatin1String("parent")).toInt(0);
-        l.visible = o.value(QLatin1String("visible")).toBool(true);
-        l.locked = o.value(QLatin1String("locked")).toBool(false);
-        l.opacity = std::clamp(o.value(QLatin1String("opacity")).toDouble(1.0), 0.0, 1.0);
-        l.blend = blendModeFromKey(o.value(QLatin1String("blend")).toString());
-        l.store.setDefaultPixel(pixelFromJson(o.value(QLatin1String("default")).toArray()));
-        if (const QJsonValue mask = o.value(QLatin1String("mask")); mask.isObject()) {
-            const QJsonObject mo = mask.toObject();
-            l.hasMask = true;
-            l.maskEnabled = mo.value(QLatin1String("enabled")).toBool(true);
-            l.mask.setDefaultPixel(pixelFromJson(mo.value(QLatin1String("default")).toArray()));
-        }
-        if (l.id <= 0)
-            return failed(QObject::tr("The document is damaged (layer %1).").arg(i));
-        byEntry.insert(i, int(list.size()));
-        list.append(std::move(l));
+    } else {
+        PendingPage page;
+        page.name = m.value(QLatin1String("pageName")).toString();
+        if (const QString error = readPage(m, page); !error.isEmpty())
+            return failed(error);
+        pages.append(std::move(page));
     }
-    // A parent must be a group in the file, and no group may contain itself.
-    for (Layer &l : list) {
-        const auto parent = std::find_if(list.cbegin(), list.cend(),
-                                         [&](const Layer &p) { return p.id == l.parent && p.group; });
-        if (l.parent != 0 && (parent == list.cend() || l.parent == l.id))
-            l.parent = 0;
-    }
-    for (Layer &l : list) {
-        int hops = 0;
-        for (int p = l.parent; p != 0 && hops <= list.size(); ++hops) {
-            const auto it = std::find_if(list.cbegin(), list.cend(), [&](const Layer &x) { return x.id == p; });
-            p = it == list.cend() ? 0 : it->parent;
-        }
-        if (hops > list.size())
-            l.parent = 0;
-    }
+    for (int i = 0; i < pages.size(); ++i)
+        if (pages[i].name.trimmed().isEmpty())
+            pages[i].name = defaultPageName(i);
 
     // Qt's zip reader looks entries up by name with a linear scan, so walk the
     // entry list once rather than asking for each chunk by name.
-    static const QRegularExpression chunkName(QStringLiteral("^layers/(\\d+)/(chunks|mask)/(-?\\d+)_(-?\\d+)$"));
+    static const QRegularExpression chunkName(
+        QStringLiteral("^(?:pages/(\\d+)/)?layers/(\\d+)/(chunks|mask)/(-?\\d+)_(-?\\d+)$"));
     for (const QZipReader::FileInfo &info : zip.fileInfoList()) {
         const QRegularExpressionMatch match = chunkName.match(info.filePath);
         if (!match.hasMatch())
             continue;
-        const auto entry = byEntry.constFind(match.captured(1).toInt());
-        if (entry == byEntry.cend())
+        if (match.captured(1).isEmpty() == paged)
+            continue; // not where this kind of document keeps its tiles
+        const int pageIndex = paged ? match.captured(1).toInt() : 0;
+        if (pageIndex < 0 || pageIndex >= pages.size())
             continue;
-        Layer &layer = list[entry.value()];
-        const bool isMask = match.captured(2) == QLatin1String("mask");
+        PendingPage &page = pages[pageIndex];
+        const auto entry = page.byEntry.constFind(match.captured(2).toInt());
+        if (entry == page.byEntry.cend())
+            continue;
+        Layer &layer = page.list[entry.value()];
+        const bool isMask = match.captured(3) == QLatin1String("mask");
         if (isMask ? !layer.hasMask : !layer.hasPixels())
             continue;
         TileStore &store = isMask ? layer.mask : layer.store;
@@ -314,13 +411,25 @@ LoadedDocument loadNativeDocument(const QString &path)
     if (zip.status() != QZipReader::NoError)
         return failed(QObject::tr("The file can't be read completely."));
 
-    auto stack = std::make_unique<LayerStack>();
-    stack->setSize(size);
-    stack->replaceLayers(std::move(list), m.value(QLatin1String("activeLayer")).toInt(0));
-
     LoadedDocument doc;
     doc.native = !isLegacyDocument(path);
-    finish(doc, std::move(stack));
+    doc.activePage = std::clamp(m.value(QLatin1String("activePage")).toInt(0), 0, int(pages.size()) - 1);
+    for (int i = 0; i < pages.size(); ++i) {
+        PendingPage &page = pages[i];
+        auto stack = std::make_unique<LayerStack>();
+        stack->setSize(page.size);
+        stack->replaceLayers(std::move(page.list), page.activeLayer);
+        LoadedPage loaded;
+        loaded.name = page.name;
+        if (i == doc.activePage) {
+            finish(doc, std::move(stack)); // composited, with the pyramid built
+        } else {
+            stack->recompositeAll();
+            stack->compositeStore()->takeDirty();
+            loaded.stack = std::move(stack);
+        }
+        doc.pages.push_back(std::move(loaded));
+    }
     return doc;
 }
 
@@ -331,8 +440,17 @@ QString saveNativeDocument(const QString &path, TileStore store, const QSize &si
 
 QString saveNativeDocument(const QString &path, LayerStack stack)
 {
-    const QSize size = stack.size();
-    const TileStore &store = stack.composite();
+    QList<DocumentPage> pages;
+    pages.append({defaultPageName(0), std::move(stack)});
+    return saveNativeDocument(path, std::move(pages), 0);
+}
+
+QString saveNativeDocument(const QString &path, QList<DocumentPage> pages, int activePage)
+{
+    if (pages.isEmpty())
+        return QObject::tr("The document has no pages.");
+    activePage = std::clamp(activePage, 0, int(pages.size()) - 1);
+    const bool paged = pages.size() > 1;
     // Write next to the target, then rename over it: the old file is replaced
     // in one step, or not at all. (QSaveFile would do this, but QZipWriter
     // closes its device when done, which QSaveFile doesn't allow.)
@@ -350,57 +468,52 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
         zip.addFile(QStringLiteral("mimetype"), QByteArray(kMimeType));
         zip.setCompressionPolicy(QZipWriter::AutoCompress);
 
-        QJsonArray layerList;
+        // The oldest version that can hold the document.
         bool anyAdjustment = false;
-        for (int i = 0; i < stack.count(); ++i) {
-            const Layer &l = stack.layers().at(i);
-            QJsonObject o{
-                {QLatin1String("id"), l.id},
-                {QLatin1String("name"), l.name},
-                {QLatin1String("type"),
-                 QLatin1String(l.group ? "group" : l.isAdjustment() ? "adjustment" : "raster")},
-                {QLatin1String("parent"), l.parent},
-                {QLatin1String("visible"), l.visible},
-                {QLatin1String("locked"), l.locked},
-                {QLatin1String("opacity"), l.opacity},
-                {QLatin1String("blend"), blendModeKey(l.blend)},
-            };
-            if (l.isAdjustment()) {
-                o.insert(QLatin1String("adjustment"), l.adjust.toJson());
-                anyAdjustment = true;
-            }
-            if (l.hasPixels()) {
-                o.insert(QLatin1String("default"), pixelToJson(l.store.defaultPixel()));
-                o.insert(QLatin1String("chunks"), QStringLiteral("layers/%1/chunks/").arg(i));
-            }
-            if (l.hasMask) {
-                o.insert(QLatin1String("mask"),
-                         QJsonObject{{QLatin1String("enabled"), l.maskEnabled},
-                                     {QLatin1String("default"), pixelToJson(l.mask.defaultPixel())},
-                                     {QLatin1String("chunks"), QStringLiteral("layers/%1/mask/").arg(i)}});
-            }
-            layerList.append(o);
-        }
-        const QJsonObject manifest{
+        for (const DocumentPage &page : std::as_const(pages))
+            for (const Layer &l : page.stack.layers())
+                anyAdjustment = anyAdjustment || l.isAdjustment();
+        const int version = paged ? FormatVersion
+                            : anyAdjustment ? FormatVersionWithoutPages
+                                            : FormatVersionWithoutAdjustments;
+        QJsonObject manifest{
             {QLatin1String("format"), QLatin1String("easeletch")},
-            {QLatin1String("version"), anyAdjustment ? FormatVersion : FormatVersionWithoutAdjustments},
-            {QLatin1String("width"), size.width()},
-            {QLatin1String("height"), size.height()},
+            {QLatin1String("version"), version},
             {QLatin1String("tileSize"), TileStore::TileSize},
             {QLatin1String("chunkTiles"), ChunkTiles},
             {QLatin1String("pixelFormat"), QLatin1String(kPixelFormat)},
-            {QLatin1String("activeLayer"), stack.activeId()},
-            {QLatin1String("layers"), layerList},
         };
+        const auto describe = [&](QJsonObject &o, int index) {
+            const LayerStack &stack = pages.at(index).stack;
+            o.insert(QLatin1String("width"), stack.size().width());
+            o.insert(QLatin1String("height"), stack.size().height());
+            o.insert(QLatin1String("activeLayer"), stack.activeId());
+            o.insert(QLatin1String("layers"), layersToJson(stack, pagePrefix(index, paged)));
+        };
+        if (paged) {
+            QJsonArray pageList;
+            for (int i = 0; i < pages.size(); ++i) {
+                QJsonObject o{{QLatin1String("name"), pages.at(i).name}};
+                describe(o, i);
+                pageList.append(o);
+            }
+            manifest.insert(QLatin1String("pages"), pageList);
+            manifest.insert(QLatin1String("activePage"), activePage);
+        } else {
+            manifest.insert(QLatin1String("pageName"), pages.at(0).name);
+            describe(manifest, 0);
+        }
         zip.addFile(QStringLiteral("manifest.json"), QJsonDocument(manifest).toJson());
 
-        // Preview: from the coarsest pyramid level still at least 2048 px
-        // across (cheap, and already filtered in linear light), scaled to fit.
+        // Preview (of the active page): from the coarsest pyramid level still
+        // at least 2048 px across (cheap, and already filtered in linear
+        // light), scaled to fit.
+        const QSize size = pages.at(activePage).stack.size();
         const int side = std::max(size.width(), size.height());
         int level = 0;
         while ((side >> (level + 1)) >= PreviewMaxSide)
             ++level;
-        QImage preview = flattenImage(store, size, level);
+        QImage preview = flattenImage(pages.at(activePage).stack.composite(), size, level);
         if (std::max(preview.width(), preview.height()) > PreviewMaxSide)
             preview = preview.scaled(PreviewMaxSide, PreviewMaxSide, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         QByteArray png;
@@ -410,8 +523,8 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
         zip.addFile(QStringLiteral("preview.png"), png);
 
         // Group tiles into chunks: few zip entries (fast to open), each small.
-        const QRect canvas(QPoint(0, 0), size);
-        const auto writeStore = [&](int index, const char *kind, const TileStore &tiles) {
+        const auto writeStore = [&](const QString &prefix, const QRect &canvas, int index, const char *kind,
+                                    const TileStore &tiles) {
             QHash<TileCoord, QList<TileCoord>> chunks;
             for (const TileCoord c : tiles.tileCoords()) {
                 if (!TileStore::tileRect(c).intersects(canvas))
@@ -429,15 +542,20 @@ QString saveNativeDocument(const QString &path, LayerStack stack)
                     putLE<qint32>(data, c.y);
                     appendTileData(data, tiles.tile(c));
                 }
-                zip.addFile(chunkEntry(index, kind, it.key().x, it.key().y), data);
+                zip.addFile(chunkEntry(prefix, index, kind, it.key().x, it.key().y), data);
             }
         };
-        for (int i = 0; i < stack.count(); ++i) {
-            const Layer &l = stack.layers().at(i);
-            if (l.hasPixels())
-                writeStore(i, "chunks", l.store);
-            if (l.hasMask)
-                writeStore(i, "mask", l.mask);
+        for (int p = 0; p < pages.size(); ++p) {
+            const LayerStack &stack = pages.at(p).stack;
+            const QString prefix = pagePrefix(p, paged);
+            const QRect canvas(QPoint(0, 0), stack.size());
+            for (int i = 0; i < stack.count(); ++i) {
+                const Layer &l = stack.layers().at(i);
+                if (l.hasPixels())
+                    writeStore(prefix, canvas, i, "chunks", l.store);
+                if (l.hasMask)
+                    writeStore(prefix, canvas, i, "mask", l.mask);
+            }
         }
         zip.close();
         if (zip.status() != QZipWriter::NoError)

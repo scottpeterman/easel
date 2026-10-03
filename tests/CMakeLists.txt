@@ -40,3 +40,4 @@ easeletch_add_gpu_test(tst_filterui easeletch_ui)
 # Needs the system's fonts, which the offscreen platform lacks on Windows.
 easeletch_add_gpu_test(tst_text easeletch_core)
 easeletch_add_test(tst_colorui easeletch_ui)
+easeletch_add_gpu_test(tst_pages easeletch_ui)

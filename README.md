@@ -20,6 +20,8 @@ Filters: Gaussian Blur, Sharpen, Add Noise and Pixelate, on the active layer or 
 
 Text: the Text tool types with any font installed on the machine, in any size, bold or italic, left, centred or right, smooth or hard-edged for pixel art. The canvas shows it as you type and you can drag it into place. Placed text lands on a new layer of its own as ordinary pixels: it can be moved, faded, masked or erased like anything else, but not retyped.
 
+Pages: a document holds any number of drawings, shown as tabs under the canvas. Each page has its own canvas size, layers, undo history, selection and view, and they are all saved in the one .easeletch file; copy on one page and paste on another. Click **+** for a new page, double-click a tab to rename it, drag tabs to reorder, right-click for duplicate and delete. Export writes the page that's showing. A document with a single page is saved in the single-page file layout, so builds from before pages still open it; one with several pages needs a build with pages.
+
 Layer masks: any layer or group can have a mask that hides part of it without erasing anything. Paint on the mask with the ordinary brush: black hides, white shows, and brush opacity gives the in-between. A mask added while something is selected shows only the selection. Masks can be switched off, applied (erasing what they hide) or removed.
 
 The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Clone, spot heal, shapes, layer effects and the rest arrive by milestone.
@@ -33,6 +35,9 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Export PNG, JPEG or WebP | Ctrl+Shift+E |
 | Paint | Left-drag or pen |
 | Brush / Eraser / Smudge / Eyedropper | B / E / S / I |
+| New page | Ctrl+Alt+N, or **+** beside the page tabs |
+| Next / previous page | Ctrl+PgDown / Ctrl+PgUp, or click a tab |
+| Rename, reorder, duplicate, delete a page | Double-click the tab, drag it, right-click it; or the Page menu |
 | New layer / duplicate / group | Ctrl+Shift+N / Ctrl+J / Ctrl+G |
 | Merge down (or merge a group) | Ctrl+E |
 | Show, lock, rename, reorder a layer | Layers panel: tick the box, tick Lock, double-click the name, drag the row (onto a group to put it inside) |

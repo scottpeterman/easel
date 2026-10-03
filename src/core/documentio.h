@@ -9,6 +9,7 @@
 #include <QString>
 
 #include <memory>
+#include <vector>
 
 namespace easeletch {
 
@@ -28,6 +29,12 @@ namespace easeletch {
 //                            "EZCH", u32 version 1, u32 count, then per tile
 //                            i32 x, i32 y (tile coordinates) and 32768 bytes of
 //                            RGBA16F, linear light, premultiplied; all little-endian
+// A document with several pages (format 5) lists them under "pages" instead:
+// each has a name, its own width, height, activeLayer and layers, and its tiles
+// under pages/<p>/layers/<n>/..., p being its place in the list; "activePage"
+// is the one last worked on, and the one preview.png shows. A document with a
+// single page is written in the layout above (plus "pageName"), so builds
+// from before pages still open it.
 // Tiles are stored exactly, so saving and reopening is lossless, and areas never
 // painted take no space. Written to a temporary file and renamed over the old
 // one, so a failed save never damages the previous file. Limit: Qt's zip writer
@@ -38,20 +45,40 @@ inline constexpr char NativeSuffix[] = "easeletch";
 // still open. They aren't written back to; saving one asks for a new name.
 inline constexpr char LegacySuffix[] = "easel";
 // Version 1 held a single layer; version 2 holds the layer stack; version 3
-// adds layer masks; version 4 adds adjustment layers. A document with no
-// adjustment layers is still written as version 3, so older builds open it.
-inline constexpr int FormatVersion = 4;
+// adds layer masks; version 4 adds adjustment layers; version 5 adds pages. A
+// document is written as the oldest version that can hold it, so older builds
+// open whatever they can: 3 with one page and no adjustment layers, 4 with one
+// page.
+inline constexpr int FormatVersion = 5;
 inline constexpr int FormatVersionWithoutAdjustments = 3;
+inline constexpr int FormatVersionWithoutPages = 4;
 inline constexpr int PreviewMaxSide = 2048;
 inline constexpr int ChunkTiles = 16; // tiles per chunk side
+
+// One page of a document to save: a drawing with its own size and layers.
+struct DocumentPage {
+    QString name;
+    LayerStack stack; // with its composite up to date
+};
+
+// One page of a document read from disk.
+struct LoadedPage {
+    QString name;
+    std::unique_ptr<LayerStack> stack; // composited; null for the active page (see LoadedDocument)
+};
 
 // A document read from disk, ready to hand to the UI: tiles imported, layers
 // composited and the zoom pyramid fully built over the composite. Safe to produce on a worker thread, since nothing in
 // it is shared until it's handed over.
+//
+// stack, pyramid and size are the active page's. pages lists every page in
+// order, the active one included: its entry has the name and a null stack.
 struct LoadedDocument {
     std::unique_ptr<LayerStack> stack;
     TilePyramid pyramid; // built over stack->composite()
     QSize size;
+    std::vector<LoadedPage> pages;
+    int activePage = 0;
     bool native = false; // came from an .easeletch file (so Save can write back to it)
     QString error;       // set when stack is null
 
@@ -73,6 +100,8 @@ LoadedDocument loadNativeDocument(const QString &path);
 // Takes the stack by value: pass a copy (with its composite up to date) and
 // the call can run on a worker thread while painting continues.
 QString saveNativeDocument(const QString &path, LayerStack stack);
+// A document of several pages. activePage is the one to come back to.
+QString saveNativeDocument(const QString &path, QList<DocumentPage> pages, int activePage);
 // A single-layer document from one store.
 QString saveNativeDocument(const QString &path, TileStore store, const QSize &size);
 

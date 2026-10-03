@@ -16,9 +16,11 @@
 #include <QSize>
 
 #include <memory>
+#include <vector>
 
 namespace easeletch {
 struct LoadedDocument;
+struct LoadedPage;
 }
 
 class BrushOptionsBar;
@@ -50,6 +52,7 @@ class QLabel;
 class QListWidget;
 class QListWidgetItem;
 class QMenu;
+class QTabBar;
 
 class MainWindow : public QMainWindow
 {
@@ -69,6 +72,16 @@ public:
 
     bool isModified() const;
     QString documentPath() const { return m_path; }
+
+    // Pages. A document holds one or more drawings, each with its own canvas
+    // size, layers, undo history, selection and view; they're saved together
+    // in the one .easeletch file. Everything else in this window works on the
+    // current page.
+    int pageCount() const { return int(m_pages.size()); }
+    int currentPage() const { return m_page; }
+    QString pageName(int index) const;
+    QSize pageSize(int index) const;
+    QTabBar *pageTabs() const { return m_pageTabs; }
 
     CanvasView *canvasView() const { return m_view; }
     // The active layer's pixels (null while a group is active).
@@ -251,6 +264,19 @@ public slots:
     void setLayerMaskEnabled(int id, bool enabled);
     void setEditingMask(bool on);
 
+    // Pages. Adding, removing, renaming and reordering pages aren't undo
+    // steps (each page has its own history); they do count as unsaved changes.
+    // Each returns false if it couldn't be done.
+    // A new page goes after the current one and becomes current.
+    bool addPage(const QSize &size, const QColor &background);
+    // A copy of the current page, layers and all.
+    bool duplicatePage();
+    // The last page can't be deleted.
+    bool deletePage(int index);
+    bool renamePage(int index, const QString &name);
+    bool movePage(int from, int to);
+    bool setCurrentPage(int index);
+
 signals:
     void documentOpened(const QString &path, bool ok);
     void documentSaved(const QString &path, bool ok);
@@ -345,15 +371,77 @@ private:
     QString askSavePath();
     // Offers to save unsaved changes. False if the user cancelled.
     bool maybeSave();
-    void finishSave(const QString &path, quint64 stateId, quint64 docGeneration, const QString &error);
+    // What a save wrote, so that exactly that can be marked as saved when it
+    // finishes: painting goes on while a save is written.
+    struct SavedState {
+        quint64 docGeneration = 0;
+        quint64 pagesRevision = 0;
+        QList<QPair<int, quint64>> pages; // page id, its history state
+    };
+    void finishSave(const QString &path, const SavedState &state, const QString &error);
     void showAbout();
+    // pages: every page of an opened document in order, the active one
+    // (stack) with a null entry at activePage; empty for a one-page document.
     void setDocument(std::unique_ptr<easeletch::LayerStack> stack, const QString &name, const QString &historyLabel,
-                     easeletch::TilePyramid pyramid = {}, const QString &path = {});
+                     easeletch::TilePyramid pyramid = {}, const QString &path = {},
+                     std::vector<easeletch::LoadedPage> pages = {}, int activePage = 0);
+
+    struct Page;
+    // Takes the current page out of the window's hands (view, tools, panels)
+    // and keeps it in m_pages / brings a kept page back as the current one.
+    void parkPage();
+    void unparkPage(int index);
+    // Makes a page of a stack, after the current one, and switches to it.
+    bool insertPage(std::unique_ptr<easeletch::LayerStack> stack, const QString &name, const QString &historyLabel);
+    // False while the page can't be left: a stroke is under way. Places
+    // anything floating first.
+    bool leavePage();
+    QString uniquePageName(const QString &base) const;
+    // After pages were added, removed, renamed or reordered.
+    void pagesChanged();
+    void syncPageTabs();
+    void createPageBar();
+    void createPageMenu();
+    void showNewPageDialog();
+    void showRenamePageDialog(int index);
+    void confirmDeletePage(int index);
+    void showPageMenu(const QPoint &pos);
     void finishOpen(const QString &path, quint64 generation, easeletch::LoadedDocument doc);
     void historyChanged();
     void historyItemClicked(QListWidgetItem *item);
     void updateTitle();
     void updateMemoryLabel();
+
+    // The current page's layers, history (m_history), saved state (m_cleanId)
+    // and selection (m_selection) are members of the window, as for a
+    // document of one drawing. The other pages wait in m_pages, which also
+    // has an entry for the current page: its name and id, with the rest
+    // empty until it's parked.
+    struct Page {
+        int id = 0; // stays with the page when it's moved or others are deleted
+        QString name;
+        std::unique_ptr<easeletch::LayerStack> stack;
+        easeletch::History history;
+        quint64 cleanId = 0;
+        easeletch::Selection selection;
+        // Where the view was. fitted: it was following the window's size.
+        bool fitted = true;
+        double zoom = 1.0;
+        double rotation = 0.0;
+        QPointF pan;
+    };
+    std::vector<Page> m_pages;
+    int m_page = 0;
+    int m_nextPageId = 1;
+    // Counts changes to the page list itself; differs from m_cleanRevision
+    // when one hasn't been saved.
+    quint64 m_pagesRevision = 0;
+    quint64 m_cleanRevision = 0;
+    QTabBar *m_pageTabs = nullptr;
+    bool m_syncingTabs = false;
+    QAction *m_deletePageAct = nullptr;
+    QAction *m_nextPageAct = nullptr;
+    QAction *m_prevPageAct = nullptr;
 
     std::unique_ptr<easeletch::LayerStack> m_stack;
     QString m_name;
