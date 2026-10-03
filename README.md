@@ -2,6 +2,8 @@
 
 A balanced layered image editor: Paint.NET approachability with Photoshop's layer model. C++20, Qt 6.
 
+
+
 ## Status
 
 M5. Paint and erase with a round brush: pen pressure for size and opacity, hardness, flow, spacing and a stabilizer. Opacity caps within a stroke, as in Photoshop, and strokes blend in linear light. Undo and redo keep only the tiles each stroke changed, within a 1 GB budget, and the History panel jumps to any step. The Color panel has a hue ring with a saturation/value square, hex entry, recent colours and a saved palette; the eyedropper shows a before/after ring while you pick.
