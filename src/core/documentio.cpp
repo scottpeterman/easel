@@ -469,11 +469,14 @@ QString saveNativeDocument(const QString &path, QList<DocumentPage> pages, int a
         zip.setCompressionPolicy(QZipWriter::AutoCompress);
 
         // The oldest version that can hold the document.
-        bool anyAdjustment = false;
+        bool anyAdjustment = false, anyThreshold = false;
         for (const DocumentPage &page : std::as_const(pages))
-            for (const Layer &l : page.stack.layers())
+            for (const Layer &l : page.stack.layers()) {
                 anyAdjustment = anyAdjustment || l.isAdjustment();
-        const int version = paged ? FormatVersion
+                anyThreshold = anyThreshold || l.adjust.type == AdjustmentType::Threshold;
+            }
+        const int version = anyThreshold ? FormatVersion
+                            : paged ? FormatVersionWithoutThreshold
                             : anyAdjustment ? FormatVersionWithoutPages
                                             : FormatVersionWithoutAdjustments;
         QJsonObject manifest{

@@ -24,6 +24,7 @@ constexpr TypeKey kKeys[] = {
     {AdjustmentType::HueSaturation, "hue-saturation"},
     {AdjustmentType::Exposure, "exposure"},
     {AdjustmentType::BlackWhite, "black-white"},
+    {AdjustmentType::Threshold, "threshold"},
 };
 
 // The tone curve of the adjustments that treat every channel alike.
@@ -141,6 +142,8 @@ Adjustment Adjustment::normalized() const
     a.exposure = std::isfinite(a.exposure) ? std::clamp(a.exposure, -5.0, 5.0) : 0.0;
     for (double *w : {&a.red, &a.green, &a.blue})
         *w = std::isfinite(*w) ? std::clamp(*w, -2.0, 3.0) : 0.0;
+    a.threshold = std::isfinite(a.threshold) ? std::clamp(a.threshold, 0.0, 1.0) : 0.5;
+    a.softness = std::isfinite(a.softness) ? std::clamp(a.softness, 0.0, 0.25) : 0.0;
 
     QList<QPointF> pts;
     for (const QPointF &p : a.curve)
@@ -192,6 +195,10 @@ QJsonObject Adjustment::toJson() const
         o.insert(QLatin1String("green"), green);
         o.insert(QLatin1String("blue"), blue);
         break;
+    case AdjustmentType::Threshold:
+        o.insert(QLatin1String("threshold"), threshold);
+        o.insert(QLatin1String("softness"), softness);
+        break;
     case AdjustmentType::None:
         break;
     }
@@ -219,6 +226,8 @@ Adjustment Adjustment::fromJson(const QJsonObject &o)
     a.red = num("red", a.red);
     a.green = num("green", a.green);
     a.blue = num("blue", a.blue);
+    a.threshold = num("threshold", a.threshold);
+    a.softness = num("softness", a.softness);
     if (const QJsonValue pts = o.value(QLatin1String("points")); pts.isArray()) {
         a.curve.clear();
         for (const QJsonValue &v : pts.toArray()) {
@@ -235,7 +244,8 @@ bool operator==(const Adjustment &a, const Adjustment &b)
     return a.type == b.type && a.brightness == b.brightness && a.contrast == b.contrast && a.inBlack == b.inBlack
            && a.inWhite == b.inWhite && a.gamma == b.gamma && a.outBlack == b.outBlack && a.outWhite == b.outWhite
            && a.curve == b.curve && a.hue == b.hue && a.saturation == b.saturation && a.lightness == b.lightness
-           && a.exposure == b.exposure && a.red == b.red && a.green == b.green && a.blue == b.blue;
+           && a.exposure == b.exposure && a.red == b.red && a.green == b.green && a.blue == b.blue
+           && a.threshold == b.threshold && a.softness == b.softness;
 }
 
 double curveValue(const QList<QPointF> &points, double x)
@@ -341,6 +351,17 @@ void AdjustmentKernel::adjustColor(float c[3]) const
                                           + srgblut::encode(l, c[2]) * float(m_adjust.blue),
                                       0.0f, 1.0f);
         c[0] = c[1] = c[2] = srgblut::decode(l, grey);
+        return;
+    }
+    case AdjustmentType::Threshold: {
+        // How light it looks, against the level: black or white, or a short
+        // fade between the two across the soft band.
+        const float grey = srgblut::encode(l, c[0]) * 0.30f + srgblut::encode(l, c[1]) * 0.59f
+                           + srgblut::encode(l, c[2]) * 0.11f;
+        const float level = float(m_adjust.threshold), soft = float(m_adjust.softness);
+        const float v = soft > 0.0f ? std::clamp((grey - level) / soft + 0.5f, 0.0f, 1.0f)
+                                    : (grey >= level ? 1.0f : 0.0f);
+        c[0] = c[1] = c[2] = srgblut::decode(l, v);
         return;
     }
     }

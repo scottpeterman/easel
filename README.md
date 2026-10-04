@@ -16,9 +16,9 @@ Transform: Free Transform scales, rotates and moves the selected pixels, or ever
 
 Fill and gradient: Fill floods the area of similar colour under a click with the current colour, with a tolerance, Contiguous, and All layers (find the area in the whole picture, so colour can go on its own layer under line art). Gradient is a drag from start to end. Its colours come from a list: the current colour to transparent, to an end colour, or shaded (a highlight, the colour, its shadow); metals (Chrome, Steel, Gold, Copper, Gunmetal, Spun metal) and a few skies and spectrums; and your own, built in the gradient editor with as many colours as you like, each with its own opacity, and saved under a name. Four shapes: Linear, Radial, Reflected (mirrored about the start: a metal gradient becomes a rod or pipe) and Conical (swept round the start: a disc or knob). Shaded with Radial, started where the highlight goes, makes a ball. Both tools stay inside the selection, fading with a feathered one, and both work on a layer mask. Edit > Fill with Colour fills the selection or the whole layer.
 
-Adjustment layers: Levels, Curves, Hue / Saturation, Brightness / Contrast, Exposure and Black & White. An adjustment layer has no pixels of its own: it changes the look of everything below it (inside a group, of that group only), and nothing underneath is altered, so it can be re-edited, faded with its opacity, limited with a mask, hidden or deleted at any time. Its settings are in the Adjustment panel and change the canvas as you drag; Curves is a line you bend by its points. Merge Down makes one permanent on the layer below.
+Adjustment layers: Levels, Curves, Hue / Saturation, Brightness / Contrast, Exposure, Black & White and Threshold. An adjustment layer has no pixels of its own: it changes the look of everything below it (inside a group, of that group only), and nothing underneath is altered, so it can be re-edited, faded with its opacity, limited with a mask, hidden or deleted at any time. Its settings are in the Adjustment panel and change the canvas as you drag; Curves is a line you bend by its points. Merge Down makes one permanent on the layer below. Threshold turns everything lighter than its level white and the rest black, for cleaning up scanned line art: raise the level until the paper goes white; Soften edges keeps lines smooth instead of stepped.
 
-Filters: Gaussian Blur, Sharpen, Add Noise and Pixelate, on the active layer or its mask, inside the selection (fading with a feathered one). The canvas shows the result while you set it; nothing is recorded until OK. Blur and Sharpen work in linear light, so colours don't darken where they meet and nothing bleeds out of transparent areas.
+Filters: Gaussian Blur, Sharpen, Add Noise, Pixelate and Despeckle, on the active layer or its mask, inside the selection (fading with a feathered one). The canvas shows the result while you set it; nothing is recorded until OK. Blur and Sharpen work in linear light, so colours don't darken where they meet and nothing bleeds out of transparent areas. Despeckle removes stray specks (the dots a fill leaves behind, dust on a scan): any patch up to the size you set that lies wholly inside one larger area takes that area's colour. Bigger things are left exactly as they were, so thin lines, dashes, corners and soft edges keep their shape.
 
 Text: the Text tool types with any font installed on the machine, in any size, bold or italic, left, centred or right, smooth or hard-edged for pixel art. The canvas shows it as you type and you can drag it into place. Placed text lands on a new layer of its own as ordinary pixels: it can be moved, faded, masked or erased like anything else, but not retyped.
 
@@ -51,7 +51,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Select all / deselect | Ctrl+A / Ctrl+D |
 | Cut / copy / paste / delete | Ctrl+X / Ctrl+C / Ctrl+V / Delete |
 | Move selected pixels | V, then drag; arrows nudge 1 px, Shift+arrows 10 px |
-| Drop / cancel floating pixels | Enter / Escape |
+| Drop / cancel floating pixels | Enter / Escape. Pasted pixels are outlined only while you place them: once dropped, nothing is selected |
+| Tools do nothing, or only in one spot | Something is still selected (the status bar shows its size): Ctrl+D deselects |
 | Free transform | Ctrl+T (the selection, or the whole layer). Drag a corner to scale, Shift for any shape; a side to stretch; outside the box to rotate, Shift for 15° steps; inside to move; arrows nudge. Enter applies, Escape cancels |
 | Fill | G; click an area. Tolerance, Contiguous and All layers in the tool options |
 | Fill the selection (or the layer) with the current colour | Shift+F5 |
@@ -60,7 +61,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Add an adjustment layer | Layer > New Adjustment Layer, or the buttons in the Adjustment panel (it shares a tab with Color) |
 | Change an adjustment | Select its layer: its settings are in the Adjustment panel. Curves: click the line to add a point, drag to bend, drag a point off the square to remove it |
 | Limit an adjustment to an area | Select the area, then Add Mask on the adjustment layer; or paint on its mask |
-| Filters | Filter menu: Gaussian Blur, Sharpen, Add Noise, Pixelate. Ctrl+Alt+F repeats the last one |
+| Filters | Filter menu: Gaussian Blur, Sharpen, Add Noise, Pixelate, Despeckle. Ctrl+Alt+F repeats the last one |
+| Clean up a scan | Add a Threshold adjustment layer and set its level, Merge Down, then Filter > Despeckle |
 | Flip, rotate 90° or 180° | Layer menu, or the buttons in the transform options |
 | Lasso | L; drag around something and let go, or click point by point and press Enter (or click the first point). Escape gives up. Shift adds, Ctrl subtracts |
 | Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
@@ -92,7 +94,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 
 Easeletch saves `.easeletch` documents: a zip with a `manifest.json` (canvas size and the layer list: name, group, visibility, lock, opacity, blend mode, mask, and an adjustment layer's settings), a flattened `preview.png` (up to 2048 px) you can look at without Easeletch, and each layer's and mask's tiles stored exactly (16-bit float, linear light), so saving and reopening never loses quality. Areas you haven't painted take no space. Saves and exports run in the background, and a failed save never damages the previous file. Export writes a full-size flattened PNG, JPEG or WebP.
 
-The app was called Easel before 0.2.0: `.easel` files from then still open, and saving one asks for a new `.easeletch` name. Documents saved before layers (format 1) open as a single layer. Documents with adjustment layers are saved as format 4, which builds before 0.4 decline to open; without any they are still format 3 (layers and masks), which every build since 0.2 opens.
+The app was called Easel before 0.2.0: `.easel` files from then still open, and saving one asks for a new `.easeletch` name. Documents saved before layers (format 1) open as a single layer. Documents with adjustment layers are saved as format 4, which builds before 0.4 decline to open; without any they are still format 3 (layers and masks), which every build since 0.2 opens. A document with a Threshold layer is format 6 and needs 0.5 or later.
 
 ## Build
 
@@ -145,8 +147,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 | Platform | Package |

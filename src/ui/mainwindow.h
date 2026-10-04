@@ -548,6 +548,7 @@ private:
     easeletch::FloatingContent m_floating;
     easeletch::Selection m_selectionBeforeFloat; // restored on cancel
     QString m_floatLabel;                    // history label when committed
+    bool m_floatPasted = false;              // the floating pixels came from Paste
     int m_floatLayer = 0;                    // the layer the pixels float over
     // Dragging the opacity slider is one undo step: the layer and history
     // state the last opacity entry belongs to.

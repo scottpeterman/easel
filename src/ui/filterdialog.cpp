@@ -26,6 +26,7 @@ QString FilterDialog::typeName(FilterType type)
     case FilterType::Sharpen: return tr("Sharpen");
     case FilterType::Noise: return tr("Add Noise");
     case FilterType::Pixelate: return tr("Pixelate");
+    case FilterType::Despeckle: return tr("Despeckle");
     }
     return QString();
 }
@@ -73,6 +74,13 @@ FilterDialog::FilterDialog(const Filter &filter, QWidget *parent)
         break;
     case FilterType::Pixelate:
         m_cell = addRow(grid, tr("Block size"), 2.0, 256.0, 0, tr(" px"), QString());
+        break;
+    case FilterType::Despeckle:
+        m_speck = addRow(grid, tr("Speck size"), 1.0, 5000.0, 0, tr(" px"),
+                         tr("The largest speck removed, counted in pixels. Anything bigger is left exactly as it is"));
+        m_tolerance = addRow(grid, tr("Tolerance"), 0.0, 100.0, 0, tr("%"),
+                             tr("How alike neighbouring pixels must be to count as one area of colour. "
+                                "Raise it on grainy paper; lower it if faint detail starts to go"));
         break;
     }
 
@@ -159,6 +167,10 @@ void FilterDialog::setFilter(const Filter &filter)
         m_amount.spin->setValue(m_filter.amount * (percent ? 100.0 : 1.0));
     if (m_cell.spin)
         m_cell.spin->setValue(m_filter.cell);
+    if (m_speck.spin)
+        m_speck.spin->setValue(m_filter.speck);
+    if (m_tolerance.spin)
+        m_tolerance.spin->setValue(m_filter.tolerance * 100.0);
     if (m_monochrome)
         m_monochrome->setChecked(m_filter.monochrome);
     m_syncing = false;
@@ -172,6 +184,10 @@ void FilterDialog::changed()
         m_filter.amount = m_amount.spin->value() / 100.0;
     if (m_cell.spin)
         m_filter.cell = int(std::lround(m_cell.spin->value()));
+    if (m_speck.spin)
+        m_filter.speck = int(std::lround(m_speck.spin->value()));
+    if (m_tolerance.spin)
+        m_filter.tolerance = m_tolerance.spin->value() / 100.0;
     m_filter = m_filter.normalized();
     m_timer->start();
 }

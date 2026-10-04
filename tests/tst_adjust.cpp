@@ -4,8 +4,11 @@
 #include "layerstack.h"
 #include "tilestore.h"
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTest>
+#include <private/qzipreader_p.h>
 
 #include <algorithm>
 #include <climits>
@@ -207,6 +210,67 @@ private slots:
         const float strength[2] = {0.0f, 1.0f};
         AdjustmentKernel(a).apply(two, 2, 1.0f, strength);
         QVERIFY(two[0] == 1.0f && two[4] < 0.01f);
+    }
+
+    void thresholdMakesBlackAndWhite()
+    {
+        Adjustment a = Adjustment::make(AdjustmentType::Threshold);
+        // Half way by default: lighter goes white, darker black, whatever the colour.
+        QCOMPARE(adjusted(a, QColor(200, 190, 170)), QColor(Qt::white));
+        QCOMPARE(adjusted(a, QColor(40, 30, 35)), QColor(Qt::black));
+        QCOMPARE(adjusted(a, QColor(128, 128, 128)), QColor(Qt::white));
+        QCOMPARE(adjusted(a, QColor(126, 126, 126)), QColor(Qt::black));
+        // Judged by how light it looks: pure blue is dark, pure green light.
+        QCOMPARE(adjusted(a, QColor(0, 0, 255)), QColor(Qt::black));
+        QCOMPARE(adjusted(a, QColor(0, 255, 0)), QColor(Qt::white));
+        // Scanned paper (grey-brown) against ink: raise the level past the
+        // ink, keep it under the paper.
+        a.threshold = 100.0 / 255.0;
+        QCOMPARE(adjusted(a, QColor(172, 157, 143)), QColor(Qt::white));
+        QCOMPARE(adjusted(a, QColor(60, 50, 45)), QColor(Qt::black));
+        // Transparency is never changed.
+        QCOMPARE(adjusted(a, QColor(200, 200, 200, 128)).alpha(), 128);
+        QCOMPARE(adjusted(a, QColor(0, 0, 0, 0)).alpha(), 0);
+    }
+
+    void thresholdSoftnessFadesNearTheLevel()
+    {
+        Adjustment a = Adjustment::make(AdjustmentType::Threshold);
+        a.softness = 0.2; // from 0.4 to 0.6
+        QCOMPARE(adjusted(a, QColor(90, 90, 90)), QColor(Qt::black));   // 0.35
+        QCOMPARE(adjusted(a, QColor(166, 166, 166)), QColor(Qt::white)); // 0.65
+        const QColor mid = adjusted(a, QColor(128, 128, 128));
+        QVERIFY2(nearly(mid, QColor(128, 128, 128), 3), qPrintable(mid.name()));
+        const QColor low = adjusted(a, QColor(115, 115, 115)), high = adjusted(a, QColor(140, 140, 140));
+        QVERIFY(low.red() > 0 && low.red() < mid.red() && high.red() > mid.red() && high.red() < 255);
+        // Out of range settings are brought back in.
+        a.threshold = 7.0;
+        a.softness = 3.0;
+        QCOMPARE(a.normalized().threshold, 1.0);
+        QCOMPARE(a.normalized().softness, 0.25);
+    }
+
+    void aThresholdLayerNeedsTheNewestFormat()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("t.easeletch"));
+        LayerStack stack = LayerStack::single(TileStore(QColor(172, 157, 143)), QSize(64, 64), QStringLiteral("Background"));
+        Adjustment a = Adjustment::make(AdjustmentType::Threshold);
+        a.threshold = 0.4;
+        a.softness = 0.1;
+        stack.insert(adjustmentLayer(a), 0, INT_MAX);
+        stack.recompositeAll();
+        QCOMPARE(colorAt(stack.composite(), 10, 10), QColor(Qt::white));
+        QCOMPARE(saveNativeDocument(path, stack), QString());
+        {
+            QZipReader zip(path);
+            const QJsonObject m = QJsonDocument::fromJson(zip.fileData(QStringLiteral("manifest.json"))).object();
+            QCOMPARE(m.value(QStringLiteral("version")).toInt(), FormatVersion);
+        }
+        LoadedDocument doc = loadNativeDocument(path);
+        QVERIFY2(doc.ok(), qPrintable(doc.error));
+        QCOMPARE(doc.stack->layers().at(1).adjust, a);
+        QCOMPARE(colorAt(doc.stack->composite(), 10, 10), QColor(Qt::white));
     }
 
     void jsonRoundTrip()

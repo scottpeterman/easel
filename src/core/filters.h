@@ -15,8 +15,9 @@ enum class FilterType {
     Sharpen,
     Noise,
     Pixelate,
+    Despeckle,
 };
-inline constexpr int FilterTypeCount = 4;
+inline constexpr int FilterTypeCount = 5;
 
 // A filter and its settings. One struct holds every kind's; only those the
 // kind uses matter.
@@ -33,6 +34,11 @@ struct Filter {
     quint32 seed = 1;
     // Pixelate: the size of each block, in pixels (2..256).
     int cell = 8;
+    // Despeckle: the largest speck removed, in pixels of area (1..5000).
+    int speck = 30;
+    // Despeckle: how alike neighbouring pixels must be to count as one patch
+    // of colour, 0..1 (as the magic wand's tolerance).
+    double tolerance = 0.15;
 
     static Filter make(FilterType type);
     Filter normalized() const;
@@ -47,6 +53,12 @@ struct Filter {
 // At the edge of the canvas the edge pixels are repeated outward. Noise leaves
 // transparency alone and gives the same pattern for the same seed. Pixelate's
 // blocks line up with the canvas's top-left corner.
+//
+// Despeckle removes specks: a small patch (up to `speck` pixels) lying wholly
+// inside one larger patch of colour takes that patch's colour where they meet.
+// Anything bigger is left exactly as it was, so thin lines, dashes and corners
+// keep their shape, and so do soft edges, which lie between two patches rather
+// than inside one. A speck cut by the edge of the selection is left alone.
 QHash<TileCoord, QImage> applyFilter(TileStore &store, const Selection &clip, const QRect &canvas, const Filter &filter);
 
 } // namespace easeletch

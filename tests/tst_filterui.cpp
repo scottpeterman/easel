@@ -115,6 +115,26 @@ private slots:
         QVERIFY(samePixel(w.layer()->pixel(195, 100), once));
     }
 
+    void despeckleIsOneUndoStep()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.layer()->fillRect(QRect(300, 200, 2, 2), QColor(Qt::blue)); // a stray dot
+        w.canvasView()->refresh();
+        const Pixel paper = w.layer()->pixel(310, 210);
+        const qsizetype steps = w.history().count();
+        QVERIFY(w.applyFilter(Filter::make(FilterType::Despeckle)));
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Despeckle"));
+        QVERIFY(samePixel(w.layer()->pixel(300, 200), paper));
+        w.undo();
+        QVERIFY(!samePixel(w.layer()->pixel(300, 200), paper));
+        // The dialog shows this filter's two settings.
+        FilterDialog dlg(Filter::make(FilterType::Despeckle));
+        QCOMPARE(dlg.windowTitle(), QStringLiteral("Despeckle"));
+        QCOMPARE(dlg.filter().speck, 30);
+    }
+
     void refusedWhereThereAreNoPixels()
     {
         MainWindow w;

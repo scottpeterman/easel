@@ -136,6 +136,53 @@ private slots:
         QCOMPARE(pixel(w, 60, 100), QColor(Qt::red));
     }
 
+    void aPlacedPasteLeavesNothingSelected()
+    {
+        // The outline round pasted pixels goes once they're down, so the next
+        // stroke paints wherever it's made rather than only inside it.
+        MainWindow w;
+        setupWindow(w);
+        w.setSelection(Selection::rect(QRect(50, 90, 20, 20)));
+        w.copy();
+        w.paste();
+        QVERIFY(!w.selection().isEmpty()); // shown while it's being placed
+        drag(w, {60, 100}, {160, 150});
+        key(w, Qt::Key_Return);
+        QVERIFY(!w.isFloating());
+        QVERIFY(w.selection().isEmpty());
+        QVERIFY(w.canvasView()->selectionOutline().isEmpty());
+
+        key(w, Qt::Key_B);
+        w.brushTool()->setColor(Qt::blue);
+        drag(w, {300, 40}, {340, 40}); // nowhere near what was pasted
+        QVERIFY(pixel(w, 320, 40).blue() > 200 && pixel(w, 320, 40).red() < 60);
+
+        // Escape while placing puts back what was selected before.
+        w.setSelection(Selection::rect(QRect(10, 10, 30, 30)));
+        w.paste();
+        key(w, Qt::Key_Escape);
+        QCOMPARE(w.selection().bounds(), QRect(10, 10, 30, 30));
+    }
+
+    void movingSelectedPixelsKeepsThemSelectedAWholeLayerNot()
+    {
+        MainWindow w;
+        setupWindow(w);
+        // A selection the user made follows the pixels and stays.
+        w.setSelection(Selection::rect(QRect(50, 90, 20, 20)));
+        key(w, Qt::Key_V);
+        drag(w, {60, 100}, {90, 100});
+        key(w, Qt::Key_Return);
+        QCOMPARE(w.selection().bounds(), QRect(80, 90, 20, 20));
+        // With nothing selected, Move takes the whole layer and leaves nothing selected.
+        key(w, Qt::Key_D, Qt::ControlModifier);
+        drag(w, {200, 150}, {210, 150});
+        key(w, Qt::Key_Return);
+        QVERIFY(!w.isFloating());
+        QVERIFY(w.selection().isEmpty());
+        QCOMPARE(pixel(w, 95, 100), QColor(Qt::red));
+    }
+
     void cutClearsAndPastesBack()
     {
         MainWindow w;

@@ -40,7 +40,7 @@ private:
     void changed();
 
     easeletch::Filter m_filter;
-    Row m_radius, m_amount, m_cell;
+    Row m_radius, m_amount, m_cell, m_speck, m_tolerance;
     QCheckBox *m_monochrome = nullptr;
     QCheckBox *m_preview = nullptr;
     QTimer *m_timer = nullptr;

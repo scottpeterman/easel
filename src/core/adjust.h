@@ -17,16 +17,18 @@ enum class AdjustmentType {
     HueSaturation,
     Exposure,
     BlackWhite,
+    Threshold,
 };
-inline constexpr int AdjustmentTypeCount = 7; // with None
+inline constexpr int AdjustmentTypeCount = 8; // with None
 
 // Name used in .easeletch files ("levels", "hue-saturation", ...).
+// Threshold came after the others: a document holding one needs a newer build.
 QString adjustmentKey(AdjustmentType type);
 AdjustmentType adjustmentFromKey(const QString &key);
 
 // What an adjustment layer does to the picture below it. One struct holds the
 // settings of every kind; only those of `type` are used. Every default leaves
-// the picture as it is (except Black & White, which is what it's for).
+// the picture as it is (except Black & White and Threshold, which is what they're for).
 //
 // Tones are worked on as sRGB values, as other editors do, so 50% grey is the
 // middle of Levels and Curves; Exposure works in linear light, where a stop
@@ -63,6 +65,12 @@ struct Adjustment {
     double red = 0.30;
     double green = 0.59;
     double blue = 0.11;
+
+    // Threshold: everything as light as this or lighter (0..1) becomes white,
+    // the rest black. softness: the width of the band around it that fades
+    // from one to the other instead (0..0.25), which keeps edges smooth.
+    double threshold = 0.5;
+    double softness = 0.0;
 
     static Adjustment make(AdjustmentType type)
     {

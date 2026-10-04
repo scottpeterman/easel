@@ -184,10 +184,139 @@ int marginFor(const Filter &f)
         return int(std::ceil(f.radius * 3.0)) + 1;
     case FilterType::Pixelate:
         return f.cell;
+    case FilterType::Despeckle:
+        return 1; // a ring around what's painted, so a speck at its edge is enclosed
     case FilterType::Noise:
         break;
     }
     return 0;
+}
+
+// Despeckle. Patches: neighbouring pixels that are alike (within the
+// tolerance) belong to one patch. Small patches that touch each other make up
+// a speck (a soft dot is a core and a ring of in-between pixels); it goes when
+// the whole of it is small and everything around it is one big patch.
+void despeckle(const Buffer &in, Buffer &out, const QRect &canvas, int maxArea, double tolerance)
+{
+    const int w = in.w(), h = in.h();
+    const size_t count = size_t(w) * size_t(h);
+    if (count == 0)
+        return;
+    const srgblut::Luts &l = srgblut::luts();
+
+    // Colours compared as the magic wand does: 8-bit sRGB values and alpha.
+    std::vector<quint32> rgba(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float *p = &in.px[i * 4];
+        const float a = std::clamp(p[3], 0.0f, 1.0f);
+        quint32 v = quint32(std::lround(a * 255.0f)) << 24;
+        if (a > 0.0f)
+            for (int ch = 0; ch < 3; ++ch) {
+                const float s = srgblut::encode(l, std::clamp(p[ch] / a, 0.0f, 1.0f));
+                v |= quint32(std::lround(s * 255.0f)) << (ch * 8);
+            }
+        rgba[i] = v;
+    }
+    const int tol = int(std::lround(std::clamp(tolerance, 0.0, 1.0) * 255.0));
+    const auto alike = [&](size_t a, size_t b) {
+        const quint32 p = rgba[a], q = rgba[b];
+        for (int s = 0; s < 32; s += 8)
+            if (std::abs(int((p >> s) & 0xFF) - int((q >> s) & 0xFF)) > tol)
+                return false;
+        return true;
+    };
+    // Where what was read stops short of the canvas, a patch may carry on
+    // unseen: it can't be called small.
+    const bool cutL = in.rect.left() > canvas.left(), cutR = in.rect.right() < canvas.right();
+    const bool cutT = in.rect.top() > canvas.top(), cutB = in.rect.bottom() < canvas.bottom();
+    const auto onCut = [&](int x, int y) {
+        return (cutL && x == 0) || (cutR && x == w - 1) || (cutT && y == 0) || (cutB && y == h - 1);
+    };
+
+    // 1. Patches.
+    std::vector<int> label(count, -1);
+    std::vector<char> big; // per patch: too large to be part of a speck
+    std::vector<size_t> stack;
+    const int dx[4] = {1, -1, 0, 0}, dy[4] = {0, 0, 1, -1};
+    for (size_t start = 0; start < count; ++start) {
+        if (label[start] >= 0)
+            continue;
+        const int id = int(big.size());
+        int area = 0;
+        bool cut = false;
+        label[start] = id;
+        stack.assign(1, start);
+        while (!stack.empty()) {
+            const size_t i = stack.back();
+            stack.pop_back();
+            ++area;
+            const int x = int(i % size_t(w)), y = int(i / size_t(w));
+            cut = cut || onCut(x, y);
+            for (int d = 0; d < 4; ++d) {
+                const int nx = x + dx[d], ny = y + dy[d];
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h)
+                    continue;
+                const size_t n = size_t(ny) * size_t(w) + size_t(nx);
+                if (label[n] < 0 && alike(i, n)) {
+                    label[n] = id;
+                    stack.push_back(n);
+                }
+            }
+        }
+        big.push_back(cut || area > maxArea);
+    }
+
+    // 2. Specks: small patches that touch, taken together.
+    std::vector<char> seen(count, 0);
+    std::vector<size_t> members;
+    for (size_t start = 0; start < count; ++start) {
+        if (seen[start] || big[size_t(label[start])])
+            continue;
+        members.clear();
+        seen[start] = 1;
+        stack.assign(1, start);
+        int around = -1;     // the one big patch around it
+        bool enclosed = true; // false once a second one turns up
+        size_t area = 0;
+        double sum[4] = {0, 0, 0, 0};
+        int edge = 0;
+        while (!stack.empty()) {
+            const size_t i = stack.back();
+            stack.pop_back();
+            if (++area <= size_t(maxArea))
+                members.push_back(i);
+            const int x = int(i % size_t(w)), y = int(i / size_t(w));
+            for (int d = 0; d < 4; ++d) {
+                const int nx = x + dx[d], ny = y + dy[d];
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h)
+                    continue;
+                const size_t n = size_t(ny) * size_t(w) + size_t(nx);
+                const int nl = label[n];
+                if (!big[size_t(nl)]) {
+                    if (!seen[n]) {
+                        seen[n] = 1;
+                        stack.push_back(n);
+                    }
+                    continue;
+                }
+                if (around < 0)
+                    around = nl;
+                if (nl != around) {
+                    enclosed = false;
+                    continue;
+                }
+                const float *p = &in.px[n * 4];
+                for (int ch = 0; ch < 4; ++ch)
+                    sum[ch] += double(p[ch]);
+                ++edge;
+            }
+        }
+        if (!enclosed || around < 0 || area > size_t(maxArea) || edge == 0)
+            continue;
+        const float fill[4] = {float(sum[0] / edge), float(sum[1] / edge), float(sum[2] / edge), float(sum[3] / edge)};
+        for (const size_t i : members)
+            std::copy(fill, fill + 4, &out.px[i * 4]);
+    }
 }
 
 } // namespace
@@ -210,6 +339,10 @@ Filter Filter::make(FilterType type)
     case FilterType::Pixelate:
         f.cell = 8;
         break;
+    case FilterType::Despeckle:
+        f.speck = 30;
+        f.tolerance = 0.15;
+        break;
     }
     return f;
 }
@@ -221,6 +354,8 @@ Filter Filter::normalized() const
     f.radius = std::isfinite(f.radius) ? std::clamp(f.radius, 0.1, sharpen ? 50.0 : 250.0) : 1.0;
     f.amount = std::isfinite(f.amount) ? std::clamp(f.amount, 0.0, sharpen ? 5.0 : 1.0) : 0.0;
     f.cell = std::clamp(f.cell, 2, 256);
+    f.speck = std::clamp(f.speck, 1, 5000);
+    f.tolerance = std::isfinite(f.tolerance) ? std::clamp(f.tolerance, 0.0, 1.0) : 0.15;
     return f;
 }
 
@@ -314,6 +449,9 @@ QHash<TileCoord, QImage> applyFilter(TileStore &store, const Selection &clip, co
         }
         break;
     }
+    case FilterType::Despeckle:
+        despeckle(in, out, canvas, f.speck, f.tolerance);
+        break;
     }
 
     // Back into the tiles: only where it's selected, only tiles that changed.

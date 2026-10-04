@@ -273,7 +273,7 @@ private slots:
         {
             QZipReader zip(path);
             const QJsonObject m = QJsonDocument::fromJson(zip.fileData(QStringLiteral("manifest.json"))).object();
-            QCOMPARE(m.value(QStringLiteral("version")).toInt(), FormatVersion);
+            QCOMPARE(m.value(QStringLiteral("version")).toInt(), FormatVersionWithoutThreshold);
             QCOMPARE(m.value(QStringLiteral("pages")).toArray().size(), 3);
             bool paged = false;
             for (const QZipReader::FileInfo &info : zip.fileInfoList())
@@ -369,7 +369,7 @@ private slots:
         const QString two = dir.filePath(QStringLiteral("two.easeletch"));
         QCOMPARE(saveNativeDocument(two, {page(QStringLiteral("A"), false), page(QStringLiteral("B"), true)}, 0),
                  QString());
-        QCOMPARE(version(two), FormatVersion);
+        QCOMPARE(version(two), FormatVersionWithoutThreshold);
         LoadedDocument doc = loadNativeDocument(two);
         QVERIFY2(doc.ok(), qPrintable(doc.error));
         QCOMPARE(doc.stack->count(), 1);

@@ -214,6 +214,23 @@ private slots:
         QVERIFY(w.layerPanel()->tree()->currentItem() != nullptr);
     }
 
+    void thresholdLayerTurnsThePictureBlackAndWhite()
+    {
+        MainWindow w;
+        setupWindow(w);
+        QVERIFY(w.addAdjustmentLayer(AdjustmentType::Threshold));
+        QCOMPARE(w.adjustPanel()->adjustment().type, AdjustmentType::Threshold);
+        QVERIFY(w.adjustPanel()->findChild<QWidget *>(QStringLiteral("add-threshold")) != nullptr);
+        // Red looks darker than half way: black. The white around it stays white.
+        QCOMPARE(shown(w, 60, 100).rgba(), QColor(Qt::black).rgba());
+        QCOMPARE(shown(w, 200, 200).rgba(), QColor(Qt::white).rgba());
+        // Lower the level under red's lightness and it turns white.
+        Adjustment a = w.adjustPanel()->adjustment();
+        a.threshold = 0.2;
+        w.setAdjustment(w.layers().activeId(), a);
+        QCOMPARE(shown(w, 60, 100).rgba(), QColor(Qt::white).rgba());
+    }
+
     void mergeDownAndSaveReopen()
     {
         MainWindow w;

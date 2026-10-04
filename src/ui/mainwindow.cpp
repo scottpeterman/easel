@@ -927,6 +927,7 @@ void MainWindow::paste()
     m_floatMask = m_editMask;
     m_floating.paste(store, content, pos, shape, canvasRect());
     m_floatLabel = tr("Paste");
+    m_floatPasted = true;
     m_floatStart = QPoint(INT_MIN, INT_MIN); // always a change
     setSelection(m_floating.selection());
     activateTool(m_move, false);
@@ -961,6 +962,7 @@ bool MainWindow::liftForMove()
     if (!m_floating.isActive())
         return false;
     m_floatLabel = tr("Move");
+    m_floatPasted = false;
     m_floatStart = m_floating.position();
     setSelection(m_floating.selection());
     return true;
@@ -1019,8 +1021,12 @@ void MainWindow::commitFloating()
         m_xf.dragging = false;
         applyTransform(true); // a drag may have left a quick preview
     }
-    // A transform of the whole layer leaves nothing selected.
-    const bool keepSelection = !m_xf.active || m_xf.hadSelection;
+    // The outline around floating pixels is only there to show what's being
+    // placed. Once they're down it stays only if the user had selected that
+    // area themselves: a paste, or a move or transform of the whole layer,
+    // leaves nothing selected, so the next brush stroke paints anywhere.
+    const bool keepSelection = !m_floatPasted && !m_selectionBeforeFloat.isEmpty()
+                               && (!m_xf.active || m_xf.hadSelection);
     const easeletch::Selection placed = m_floating.selection();
     m_history.push(m_floatLabel, m_floatLayer, m_floating.commit(), m_floatMask);
     m_moveDragging = false;

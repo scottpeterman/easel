@@ -209,6 +209,7 @@ QString AdjustPanel::typeName(AdjustmentType type)
     case AdjustmentType::HueSaturation: return tr("Hue / Saturation");
     case AdjustmentType::Exposure: return tr("Exposure");
     case AdjustmentType::BlackWhite: return tr("Black & White");
+    case AdjustmentType::Threshold: return tr("Threshold");
     default: return QString();
     }
 }
@@ -358,6 +359,13 @@ QWidget *AdjustPanel::makePage(AdjustmentType type)
                tr("How light red things come out in the grey"));
         addRow(grid, tr("Greens"), &Adjustment::green, -200, 300, 100, 0, pct);
         addRow(grid, tr("Blues"), &Adjustment::blue, -200, 300, 100, 0, pct);
+        break;
+    case AdjustmentType::Threshold:
+        addRow(grid, tr("Level"), &Adjustment::threshold, 0, 255, 255, 0, QString(),
+               tr("Everything this light or lighter becomes white, the rest black. "
+                  "For scanned line art: raise it until the paper goes white, stop before the lines thin out"));
+        addRow(grid, tr("Soften edges"), &Adjustment::softness, 0, 100, 400, 0, pct,
+               tr("Fades between black and white near the level, so edges stay smooth instead of stepped"));
         break;
     case AdjustmentType::None:
         break;

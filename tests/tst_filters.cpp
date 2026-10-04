@@ -220,6 +220,116 @@ private slots:
         QVERIFY(contrast(60, 100) > 0.2f && contrast(60, 100) < 0.8f); // part way at the soft edge
     }
 
+    void despeckleRemovesSmallSpecksOnly()
+    {
+        // Black with specks of white left in it, and things that must stay.
+        TileStore store(Qt::black);
+        const QRect canvas(0, 0, 200, 200);
+        store.fillRect(QRect(20, 20, 3, 3), QColor(Qt::white));    // a speck: 9 px
+        store.fillRect(QRect(0, 100, 2, 2), QColor(Qt::white));    // a speck at the canvas edge
+        store.fillRect(QRect(60, 60, 10, 10), QColor(Qt::white));  // too big: 100 px
+        store.fillRect(QRect(10, 150, 180, 1), QColor(Qt::white)); // a thin line: 180 px
+        store.fillRect(QRect(120, 20, 6, 2), QColor(Qt::white));   // a dash: 12 px
+        Filter f = Filter::make(FilterType::Despeckle);
+        f.speck = 10;
+        const auto before = applyFilter(store, {}, canvas, f);
+        QVERIFY(!before.isEmpty());
+        QCOMPARE(colorAt(store, 21, 21), QColor(Qt::black));
+        QCOMPARE(colorAt(store, 0, 100), QColor(Qt::black));
+        QCOMPARE(colorAt(store, 65, 65), QColor(Qt::white));
+        QCOMPARE(colorAt(store, 60, 60), QColor(Qt::white)); // corners keep their shape
+        QCOMPARE(colorAt(store, 100, 150), QColor(Qt::white));
+        QCOMPARE(colorAt(store, 122, 20), QColor(Qt::white));
+        // A larger limit takes the dash too, and still not the line or the square.
+        f.speck = 12;
+        applyFilter(store, {}, canvas, f);
+        QCOMPARE(colorAt(store, 122, 20), QColor(Qt::black));
+        QCOMPARE(colorAt(store, 100, 150), QColor(Qt::white));
+        QCOMPARE(colorAt(store, 65, 65), QColor(Qt::white));
+        // Nothing left to remove: nothing changes, nothing for History.
+        QVERIFY(applyFilter(store, {}, canvas, f).isEmpty());
+    }
+
+    void despeckleLeavesSoftEdgesAndTextureAlone()
+    {
+        // A white disc on black with a blurred edge: the in-between pixels of
+        // the edge lie between two areas, not inside one, so they stay.
+        TileStore store(Qt::black);
+        const QRect canvas(0, 0, 200, 200);
+        for (int y = 60; y < 140; ++y)
+            for (int x = 60; x < 140; ++x)
+                if ((x - 100) * (x - 100) + (y - 100) * (y - 100) < 30 * 30)
+                    store.fillRect(QRect(x, y, 1, 1), QColor(Qt::white));
+        applyFilter(store, {}, canvas, blur(1.5));
+        // Noise where every pixel differs from the next: no area is big, so
+        // there is nothing for a speck to be inside.
+        Filter noise = Filter::make(FilterType::Noise);
+        noise.amount = 1.0;
+        applyFilter(store, Selection::rect(QRect(0, 150, 200, 50)), canvas, noise);
+        const TileStore was = store;
+        Filter f = Filter::make(FilterType::Despeckle);
+        f.tolerance = 0.02;
+        applyFilter(store, {}, canvas, f);
+        for (int y = 0; y < 200; ++y)
+            for (int x = 0; x < 200; ++x)
+                if (y < 148 || y > 152) // where the noise meets the flat black, single pixels may go
+                    QVERIFY2(samePixel(store.pixel(x, y), was.pixel(x, y)), qPrintable(QStringLiteral("%1,%2").arg(x).arg(y)));
+    }
+
+    void despeckleTakesASoftSpeckWhole()
+    {
+        // A small blurred dot: its core and its faint ring go together.
+        TileStore store(Qt::black);
+        const QRect canvas(0, 0, 100, 100);
+        store.fillRect(QRect(49, 49, 2, 2), QColor(Qt::white));
+        applyFilter(store, Selection::rect(QRect(40, 40, 20, 20)), canvas, blur(0.8));
+        QVERIFY(colorAt(store, 49, 49).red() > 60);
+        Filter f = Filter::make(FilterType::Despeckle);
+        f.speck = 60;
+        f.tolerance = 0.0; // every shade its own patch
+        applyFilter(store, {}, canvas, f);
+        for (int y = 40; y < 60; ++y)
+            for (int x = 40; x < 60; ++x)
+                QCOMPARE(colorAt(store, x, y).rgba(), QColor(Qt::black).rgba());
+    }
+
+    void despeckleWorksOnTransparencyAndInASelection()
+    {
+        // Stray opaque pixels on an empty layer go transparent, and only
+        // inside the selection. A speck the selection cuts through stays.
+        TileStore store;
+        const QRect canvas(0, 0, 200, 100);
+        store.fillRect(QRect(20, 20, 2, 2), QColor(Qt::red));
+        store.fillRect(QRect(120, 20, 2, 2), QColor(Qt::red));
+        store.fillRect(QRect(99, 60, 2, 2), QColor(Qt::red)); // across the selection's edge
+        store.fillRect(QRect(40, 40, 30, 30), QColor(Qt::red));
+        const Filter f = Filter::make(FilterType::Despeckle);
+        applyFilter(store, Selection::rect(QRect(0, 0, 100, 100)), canvas, f);
+        QCOMPARE(alphaAt(store, 20, 20), 0.0f);
+        QCOMPARE(alphaAt(store, 120, 20), 1.0f);
+        QCOMPARE(alphaAt(store, 99, 60), 1.0f);
+        QCOMPARE(alphaAt(store, 50, 50), 1.0f);
+        applyFilter(store, {}, canvas, f);
+        QCOMPARE(alphaAt(store, 120, 20), 0.0f);
+        QCOMPARE(alphaAt(store, 99, 60), 0.0f);
+    }
+
+    void despeckleIsQuickEnoughToPreview()
+    {
+        // A scanned page's worth: flat ink with thousands of specks in it.
+        TileStore store(QColor(17, 17, 16));
+        const QRect canvas(0, 0, 2700, 3100);
+        for (int i = 0; i < 4000; ++i)
+            store.fillRect(QRect((i * 7919) % 2690, (i * 104729) % 3090, 1 + i % 4, 1 + i % 3), QColor(180, 165, 150));
+        QElapsedTimer timer;
+        timer.start();
+        QVERIFY(!applyFilter(store, {}, canvas, Filter::make(FilterType::Despeckle)).isEmpty());
+        const qint64 ms = timer.elapsed();
+        qInfo("Despeckle, 2700 x 3100: %lld ms", ms);
+        QVERIFY2(ms < 6000, "too slow to preview");
+        QCOMPARE(colorAt(store, (7 * 7919) % 2690, (7 * 104729) % 3090).rgba(), QColor(17, 17, 16).rgba());
+    }
+
     void largeBlurIsQuickEnoughToPreview()
     {
         TileStore store(Qt::white);

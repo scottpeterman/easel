@@ -45,13 +45,14 @@ inline constexpr char NativeSuffix[] = "easeletch";
 // still open. They aren't written back to; saving one asks for a new name.
 inline constexpr char LegacySuffix[] = "easel";
 // Version 1 held a single layer; version 2 holds the layer stack; version 3
-// adds layer masks; version 4 adds adjustment layers; version 5 adds pages. A
-// document is written as the oldest version that can hold it, so older builds
-// open whatever they can: 3 with one page and no adjustment layers, 4 with one
-// page.
-inline constexpr int FormatVersion = 5;
+// adds layer masks; version 4 adds adjustment layers; version 5 adds pages;
+// version 6 adds the Threshold adjustment. A document is written as the oldest
+// version that can hold it, so older builds open whatever they can: 3 with one
+// page and no adjustment layers, 4 with one page, 5 with no Threshold layer.
+inline constexpr int FormatVersion = 6;
 inline constexpr int FormatVersionWithoutAdjustments = 3;
 inline constexpr int FormatVersionWithoutPages = 4;
+inline constexpr int FormatVersionWithoutThreshold = 5;
 inline constexpr int PreviewMaxSide = 2048;
 inline constexpr int ChunkTiles = 16; // tiles per chunk side
 
