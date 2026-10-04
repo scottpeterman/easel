@@ -28,6 +28,10 @@ Layer masks: any layer or group can have a mask that hides part of it without er
 
 The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Clone, spot heal, shapes, layer effects and the rest arrive by milestone.
 
+## Guides
+
+- [Restoring old ink art](docs/restoring-ink-art.md): from a photo of an ink drawing on aged paper to clean line work, then shading under the lines.
+
 ## Controls
 
 | Action | Input |
