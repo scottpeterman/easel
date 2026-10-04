@@ -63,6 +63,81 @@ class TestPainting : public QObject
     Q_OBJECT
 
 private slots:
+    void cloneToolCopiesFromWhereAltWasClicked()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        w.layer()->fillRect(QRect(50, 90, 20, 20), QColor(Qt::blue));
+        view->refresh();
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        view->setFocus();
+        QTest::keyClick(view, Qt::Key_C);
+        QCOMPARE(w.brushTool()->mode(), BrushMode::Clone);
+        QCOMPARE(view->tool(), w.brushTool());
+        BrushSettings b = w.brushTool()->settings();
+        b.size = 30;
+        b.hardness = 1.0;
+        w.brushTool()->setSettings(b);
+
+        // Before a source is chosen, a stroke does nothing.
+        const qsizetype steps = w.history().count();
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 200}));
+        QCOMPARE(w.history().count(), steps);
+        QVERIFY(!w.brushTool()->hasCloneSource());
+
+        // Alt+click sets the source (rather than picking a colour), and shows a marker there.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::AltModifier, viewPos(w, {60, 100}));
+        QVERIFY(w.brushTool()->hasCloneSource());
+        QCOMPARE(w.history().count(), steps);
+        QCOMPARE(w.brushTool()->color(), QColor(Qt::red)); // the painting colour is as it was
+        QCOMPARE(view->handles().size(), 1);
+
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 200}));
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Clone"));
+        QCOMPARE(pixel(w, 200, 200), QColor(Qt::blue));
+        QCOMPARE(pixel(w, 205, 205), QColor(Qt::blue));
+        QCOMPARE(pixel(w, 213, 200), QColor(Qt::white)); // beside the square, the white beside it
+        // A second stroke carries on the same copy: 100 px along from the
+        // first, it copies from 100 px along from the source.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {300, 200}));
+        QCOMPARE(pixel(w, 300, 200), QColor(Qt::white));
+        w.undo();
+        w.undo();
+        QCOMPARE(pixel(w, 200, 200), QColor(Qt::white));
+
+        // Another tool: the marker goes, and Alt picks colours again.
+        QTest::keyClick(view, Qt::Key_B);
+        QVERIFY(view->handles().isEmpty());
+        QTest::mouseClick(view, Qt::LeftButton, Qt::AltModifier, viewPos(w, {60, 100}));
+        QCOMPARE(w.brushTool()->color(), QColor(Qt::blue));
+    }
+
+    void healToolRemovesABlemish()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        w.layer()->fillRect(QRect(195, 145, 10, 10), QColor(Qt::black));
+        view->refresh();
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        view->setFocus();
+        QTest::keyClick(view, Qt::Key_H);
+        QCOMPARE(w.brushTool()->mode(), BrushMode::Heal);
+        const qsizetype steps = w.history().count();
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 150}));
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Heal"));
+        for (int y = 140; y < 160; ++y)
+            for (int x = 190; x < 210; ++x)
+                QCOMPARE(pixel(w, x, y), QColor(Qt::white));
+        w.undo();
+        QCOMPARE(pixel(w, 200, 150), QColor(Qt::black));
+    }
+
     void mouseStrokePaintsAndUndoes()
     {
         MainWindow w;

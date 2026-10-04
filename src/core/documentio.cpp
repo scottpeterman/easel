@@ -635,7 +635,11 @@ QString writeImageFile(const QString &path, QImage image, int quality)
     if (!file.open(QIODevice::WriteOnly))
         return file.errorString();
     QImageWriter writer(&file, format);
-    writer.setQuality(quality);
+    // PNG is lossless: for it "quality" only sets how hard the file is
+    // squeezed, and a high number means hardly at all (a flat 2700 x 3100
+    // picture came out at 33 MB). Left alone it gets the usual compression.
+    if (format != "png")
+        writer.setQuality(quality);
     if (!writer.write(image))
         return writer.errorString();
     if (!file.commit())

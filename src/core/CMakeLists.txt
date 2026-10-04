@@ -24,6 +24,8 @@ add_library(easeletch_core STATIC
     srgblut.h
     filters.h
     filters.cpp
+    heal.h
+    heal.cpp
     fillops.h
     fillops.cpp
     transform.h

@@ -1,6 +1,6 @@
 # Restoring old ink art
 
-How to take a scan or phone photo of an ink drawing on aged paper and end up with clean black line work you can shade or colour, without touching the original. Needs Easeletch 0.5 or later.
+How to take a scan or phone photo of an ink drawing on aged paper and end up with clean black line work you can shade or colour, without touching the original. Needs Easeletch 0.5 or later (0.6 for the Heal and Clone tools).
 
 The drawing used here was made for this guide. Yours will have the same problems: paper that has gone brown, uneven light, print showing through from the other side of the page, stains and dust.
 
@@ -42,13 +42,20 @@ What's left are the marks that were as dark as the ink: dust, fibres, flecks in 
 
 ![Before and after Despeckle: the dots are gone, the row of dashes is still there](images/ink-3-despeckle.png)
 
-A mark too big for Despeckle without losing detail is quicker to remove by hand: lasso it (L) and press Delete, or brush over it in white.
+A mark too big for Despeckle without losing detail is quicker to remove by hand: press **H** for the Heal tool and dab it, or lasso it (L) and press Delete.
 
 To clean one part of the picture harder than the rest, select that part first. Despeckle then only works inside the selection.
 
 ![The cleaned drawing](images/ink-4-clean.png)
 
 That is the restoration. **File > Export** (Ctrl+Shift+E) writes a PNG. The rest is optional.
+
+### Repairing damage (0.6 and later)
+
+Two tools fix what the steps above can't, and both also work straight on the scan if you'd rather keep the look of the paper than turn it white.
+
+- **Heal (H)** removes a stain, a scratch or a blot. Set the size a little bigger than the mark, dab it (or drag along it) and let go. It's replaced with a nearby piece of the same layer, toned to match, so on paper the grain carries across. It works best where the mark sits on an open area. Where a line of the drawing runs through the mark it has to guess, and may bend or double the line; undo and use Clone there.
+- **Clone (C)** copies one part of the layer onto another. Hold **Alt** and click what to copy (an intact stretch of a line, say), then paint over the gap. A diamond shows where the copy is coming from. Each new stroke carries on the same copy; Alt+click again to copy from somewhere else.
 
 ## 5. Shade or colour under the lines
 

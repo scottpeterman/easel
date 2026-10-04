@@ -156,6 +156,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_move, &MoveTool::nudged, this, &MainWindow::nudge);
     m_view->setTool(m_brush);
     m_view->setAltTool(m_eyedropper);
+    m_cloneSource = new CloneSourceTool(m_brush, this);
+    connect(m_brush, &BrushTool::cloneSourceNeeded, this, [this] {
+        statusBar()->showMessage(tr("Clone: hold Alt and click what to copy first, then paint."), 5000);
+    });
+    connect(m_brush, &BrushTool::cloneSourceChanged, this, &MainWindow::updateCloneTool);
 
     createDocks();
     createToolBars();
@@ -466,6 +471,14 @@ void MainWindow::createToolBars()
     m_smudgeAct = tools->addAction(tr("Smudge"), this, [this] { selectBrushMode(int(BrushMode::Smudge)); });
     m_smudgeAct->setShortcut(QKeySequence(Qt::Key_S));
     m_smudgeAct->setToolTip(tr("Smudge (S): drags and blends colour"));
+    m_cloneAct = tools->addAction(tr("Clone"), this, [this] { selectBrushMode(int(BrushMode::Clone)); });
+    m_cloneAct->setShortcut(QKeySequence(Qt::Key_C));
+    m_cloneAct->setToolTip(tr("Clone (C): hold Alt and click what to copy, then paint it somewhere else. "
+                              "Later strokes carry on the same copy."));
+    m_healAct = tools->addAction(tr("Heal"), this, [this] { selectBrushMode(int(BrushMode::Heal)); });
+    m_healAct->setShortcut(QKeySequence(Qt::Key_H));
+    m_healAct->setToolTip(tr("Spot heal (H): dab or drag over a blemish. "
+                             "It's replaced with what's around it when you let go."));
     m_eyedropperAct = tools->addAction(tr("Picker"), this, &MainWindow::selectEyedropper);
     m_eyedropperAct->setShortcut(QKeySequence(Qt::Key_I));
     m_eyedropperAct->setToolTip(tr("Eyedropper (I). Hold Alt with any tool to pick once."));
@@ -509,7 +522,7 @@ void MainWindow::createToolBars()
     m_transformAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     m_transformAct->setToolTip(tr("Free transform (Ctrl+T): scale, rotate and move the selection, or the whole layer. "
                                   "Enter applies, Escape cancels."));
-    for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_eyedropperAct, m_rectSelectAct,
+    for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_cloneAct, m_healAct, m_eyedropperAct, m_rectSelectAct,
                        m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct, m_transformAct, m_fillAct,
                        m_gradientAct}) {
         a->setCheckable(true);
@@ -520,8 +533,11 @@ void MainWindow::createToolBars()
         if (m_view->tool() == m_brush)
             (mode == BrushMode::Erase    ? m_eraserAct
              : mode == BrushMode::Smudge ? m_smudgeAct
+             : mode == BrushMode::Clone  ? m_cloneAct
+             : mode == BrushMode::Heal   ? m_healAct
                                          : m_brushAct)
                 ->setChecked(true);
+        updateCloneTool();
     });
 
     m_options = new BrushOptionsBar(m_brush, this);
@@ -676,6 +692,7 @@ void MainWindow::createStatusBar()
     }
     statusBar()->addPermanentWidget(m_zoomLabel);
 
+    connect(m_view, &CanvasView::viewChanged, this, &MainWindow::updateCloneTool);
     connect(m_view, &CanvasView::viewChanged, this, [this](double zoom, double rotation) {
         m_lasso->setCloseDistance(8.0 / qMax(zoom, 0.01)); // eight screen pixels
         if (m_xf.active && m_view->tool() == m_transformTool)
@@ -713,6 +730,8 @@ QAction *MainWindow::actionFor(CanvasTool *tool) const
     if (tool == m_brush)
         return m_brush->mode() == BrushMode::Erase    ? m_eraserAct
                : m_brush->mode() == BrushMode::Smudge ? m_smudgeAct
+               : m_brush->mode() == BrushMode::Clone  ? m_cloneAct
+               : m_brush->mode() == BrushMode::Heal   ? m_healAct
                                                       : m_brushAct;
     return tool == m_rectSelect      ? m_rectSelectAct
            : tool == m_ellipseSelect ? m_ellipseSelectAct
@@ -758,6 +777,28 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
             bar->show();
     if (QAction *act = actionFor(tool))
         act->setChecked(true);
+    updateCloneTool();
+}
+
+void MainWindow::updateCloneTool()
+{
+    const bool cloning = m_view->tool() == m_brush && m_brush->mode() == BrushMode::Clone;
+    m_view->setAltTool(cloning ? static_cast<CanvasTool *>(m_cloneSource) : m_eyedropper);
+    if (m_xf.active) {
+        m_cloneMarker = false; // the handles on the canvas are the transform's
+        return;
+    }
+    if (cloning && m_brush->hasCloneSource()) {
+        // A small diamond where the copy is taken from, the same size on
+        // screen at any zoom.
+        const QPointF c = m_brush->cloneSource();
+        const double r = 6.0 / qMax(m_view->zoom(), 0.01);
+        m_view->setHandles({QPolygonF({c + QPointF(0, -r), c + QPointF(r, 0), c + QPointF(0, r), c + QPointF(-r, 0)})});
+        m_cloneMarker = true;
+    } else if (m_cloneMarker) {
+        m_view->setHandles({});
+        m_cloneMarker = false;
+    }
 }
 
 // --- Selection, clipboard and moving ------------------------------------------

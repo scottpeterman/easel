@@ -20,13 +20,15 @@ Adjustment layers: Levels, Curves, Hue / Saturation, Brightness / Contrast, Expo
 
 Filters: Gaussian Blur, Sharpen, Add Noise, Pixelate and Despeckle, on the active layer or its mask, inside the selection (fading with a feathered one). The canvas shows the result while you set it; nothing is recorded until OK. Blur and Sharpen work in linear light, so colours don't darken where they meet and nothing bleeds out of transparent areas. Despeckle removes stray specks (the dots a fill leaves behind, dust on a scan): any patch up to the size you set that lies wholly inside one larger area takes that area's colour. Bigger things are left exactly as they were, so thin lines, dashes, corners and soft edges keep their shape.
 
+Retouching: Heal removes a blemish in one move. Dab or drag over it and, when you let go, it's replaced with a nearby patch of the same layer whose surroundings match, toned to meet the edges, so paper grain or any other texture carries across and no patch shows. It suits marks on open areas (stains, scratches, dust too big for Despeckle); across a line or an edge it has to guess, and Clone is the better tool. Clone paints with a copy of another part of the layer: hold Alt and click what to copy, then paint. A diamond marks where the copy comes from, and later strokes carry on the same copy until you Alt+click somewhere new. Use it to rebuild a broken line from an intact stretch of it. Both use the brush's size and hardness, stay inside the selection, and are one undo step per stroke.
+
 Text: the Text tool types with any font installed on the machine, in any size, bold or italic, left, centred or right, smooth or hard-edged for pixel art. The canvas shows it as you type and you can drag it into place. Placed text lands on a new layer of its own as ordinary pixels: it can be moved, faded, masked or erased like anything else, but not retyped.
 
 Pages: a document holds any number of drawings, shown as tabs under the canvas. Each page has its own canvas size, layers, undo history, selection and view, and they are all saved in the one .easeletch file; copy on one page and paste on another. Click **+** for a new page, double-click a tab to rename it, drag tabs to reorder, right-click for duplicate and delete. Export writes the page that's showing. A document with a single page is saved in the single-page file layout, so builds from before pages still open it; one with several pages needs a build with pages.
 
 Layer masks: any layer or group can have a mask that hides part of it without erasing anything. Paint on the mask with the ordinary brush: black hides, white shows, and brush opacity gives the in-between. A mask added while something is selected shows only the selection. Masks can be switched off, applied (erasing what they hide) or removed.
 
-The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Clone, spot heal, shapes, layer effects and the rest arrive by milestone.
+The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux) from a sparse tile store (64×64, RGBA16F, linear light), with pan, zoom and rotate. Layers are composited on the CPU, tile by tile, into the store the canvas draws. Opening an image runs in the background. Shapes, layer effects and the rest arrive by milestone.
 
 ## Guides
 
@@ -41,6 +43,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Export PNG, JPEG or WebP | Ctrl+Shift+E |
 | Paint | Left-drag or pen |
 | Brush / Eraser / Smudge / Eyedropper | B / E / S / I |
+| Clone | C; hold Alt and click what to copy, then paint it somewhere else |
+| Heal | H; dab or drag over a blemish and let go |
 | New page | Ctrl+Alt+N, or **+** beside the page tabs |
 | Next / previous page | Ctrl+PgDown / Ctrl+PgUp, or click a tab |
 | Rename, reorder, duplicate, delete a page | Double-click the tab, drag it, right-click it; or the Page menu |
@@ -84,7 +88,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Export selection as PNG | Ctrl+Alt+E |
 | Pixel grid (from 600%) | Ctrl+' |
 | Sprite grid on / off | Ctrl+Shift+' (cell size, offset and snapping under View > Sprite Grid Settings) |
-| Pick a colour from any tool | Hold Alt and click or drag |
+| Pick a colour from any tool | Hold Alt and click or drag (with the Clone tool, Alt+click sets what to copy instead) |
 | Smaller / larger brush | [ / ] |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
 | Pan | Middle-drag, or hold Space and drag |
@@ -151,8 +155,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 | Platform | Package |

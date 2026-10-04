@@ -22,6 +22,7 @@
 
 class BrushOptionsBar;
 class BrushTool;
+class CloneSourceTool;
 class CanvasTool;
 class CanvasView;
 class EyedropperTool;
@@ -311,6 +312,9 @@ private:
     void transformReleased(const QPointF &pos);
     void selectBrushMode(int mode);
     void selectEyedropper();
+    // Clone tool: Alt picks its source rather than a colour, and a marker
+    // shows where the source is.
+    void updateCloneTool();
     // Switches the canvas tool, committing floating pixels unless it's Move.
     void activateTool(CanvasTool *tool, bool brushOptions);
     // Floats the selection (or the whole canvas) so Move can place it.
@@ -575,6 +579,10 @@ private:
     QAction *m_eraserAct = nullptr;
     QAction *m_eyedropperAct = nullptr;
     QAction *m_smudgeAct = nullptr;
+    QAction *m_cloneAct = nullptr;
+    QAction *m_healAct = nullptr;
+    CloneSourceTool *m_cloneSource = nullptr; // Alt+click while the Clone tool is active
+    bool m_cloneMarker = false;               // the source marker is on the canvas
     QAction *m_rectSelectAct = nullptr;
     QAction *m_ellipseSelectAct = nullptr;
     QAction *m_moveAct = nullptr;

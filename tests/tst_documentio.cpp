@@ -524,6 +524,14 @@ private slots:
         QCOMPARE(a.pixelColor(10, 10), QColor(200, 30, 60));
         QCOMPARE(a.pixelColor(90, 10).alpha(), 0); // transparent stays transparent
 
+        // A PNG is compressed: a big flat picture is a small file.
+        TileStore flat(QColor(17, 17, 16));
+        flat.fillRect(QRect(200, 200, 600, 400), QColor(180, 165, 150));
+        const QString big = dir.filePath(QStringLiteral("big.png"));
+        QCOMPARE(exportImage(big, flat, QSize(2000, 1500)), QString());
+        QVERIFY2(QFileInfo(big).size() < 200 * 1024, qPrintable(QString::number(QFileInfo(big).size())));
+        QCOMPARE(QImage(big).pixelColor(500, 400), QColor(180, 165, 150));
+
         const QString jpg = dir.filePath(QStringLiteral("out.jpg"));
         QCOMPARE(exportImage(jpg, s, size), QString());
         const QImage b(jpg);

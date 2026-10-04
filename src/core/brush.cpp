@@ -1,5 +1,7 @@
 #include "brush.h"
 
+#include "heal.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -128,6 +130,7 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
 {
     m_target = target;
     m_before = target->snapshot();
+    m_canvas = bounds;
     m_clip = clip;
     m_bounds = clip.isEmpty() ? bounds : (bounds & clip.bounds());
     m_touched.clear();
@@ -176,6 +179,8 @@ QHash<TileCoord, QImage> BrushStroke::end()
     for (const StrokeSample &s : m_stabilizer.flush())
         m_spacer.moveTo(s, m_settings, dabs);
     paintDabs(dabs);
+    if (m_mode == BrushMode::Heal)
+        finishHeal();
 
     for (const TileCoord c : std::as_const(m_touched))
         before.insert(c, m_before.tile(c));
@@ -265,6 +270,9 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                 const float a = coverageAt(dist, radius) * strength;
                 if (a <= 0.0f)
                     continue;
+                // Clone: nothing to copy from beyond the edge of the canvas.
+                if (m_mode == BrushMode::Clone && !m_canvas.contains(x + m_cloneOffset.x(), y + m_cloneOffset.y()))
+                    continue;
 
                 const int i = row + (x - tr.left());
                 float &m = mask[size_t(i)];
@@ -276,6 +284,17 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                 if (m_mode == BrushMode::Erase) {
                     const float k = 1.0f - cov;
                     out[i] = makePixel(dr * k, dg * k, db * k, da * k);
+                } else if (m_mode == BrushMode::Clone) {
+                    // A straight copy, transparency included: what's there
+                    // turns into what's at the source, by the coverage.
+                    const Pixel s = m_before.pixel(x + m_cloneOffset.x(), y + m_cloneOffset.y());
+                    out[i] = makePixel(dr + (float(s.r) - dr) * cov, dg + (float(s.g) - dg) * cov,
+                                       db + (float(s.b) - db) * cov, da + (float(s.a) - da) * cov);
+                } else if (m_mode == BrushMode::Heal) {
+                    // Until the stroke ends, a grey veil shows what's marked.
+                    const float k = cov * 0.5f;
+                    out[i] = makePixel(dr + (0.2f - dr) * k, dg + (0.2f - dg) * k, db + (0.2f - db) * k,
+                                       da + (1.0f - da) * k);
                 } else {
                     const float sa = m_colorAlpha * cov; // source alpha
                     const float k = 1.0f - sa;
@@ -285,6 +304,40 @@ void BrushStroke::paintDab(const StrokeSample &dab)
             }
         }
     }
+}
+
+void BrushStroke::finishHeal()
+{
+    constexpr int N = TileStore::TileSize;
+    // The veil comes off, then what it covered is healed in one go.
+    for (const TileCoord c : std::as_const(m_touched))
+        m_target->setTile(c, m_before.tile(c));
+
+    QRect area;
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
+        const QRect tr = TileStore::tileRect(it.key());
+        const std::vector<float> &mask = it.value();
+        for (int i = 0; i < N * N; ++i)
+            if (mask[size_t(i)] > 0.0f)
+                area |= QRect(tr.left() + i % N, tr.top() + i / N, 1, 1);
+    }
+    area &= m_bounds;
+    if (area.isEmpty())
+        return;
+    const float opacity = float(std::clamp(m_settings.opacity, 0.0, 1.0));
+    std::vector<float> coverage(size_t(area.width()) * size_t(area.height()), 0.0f);
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
+        const QRect tr = TileStore::tileRect(it.key());
+        const QRect part = tr & area;
+        const std::vector<float> &mask = it.value();
+        for (int y = part.top(); y <= part.bottom(); ++y)
+            for (int x = part.left(); x <= part.right(); ++x) {
+                const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
+                coverage[size_t(y - area.top()) * size_t(area.width()) + size_t(x - area.left())] =
+                    mask[size_t((y - tr.top()) * N + (x - tr.left()))] * opacity * clip;
+            }
+    }
+    healArea(*m_target, m_canvas, area, coverage);
 }
 
 void BrushStroke::smudgeDab(const StrokeSample &dab)

@@ -51,6 +51,20 @@ BrushTool::BrushTool(QObject *parent)
     m_smudge.hardness = 0.5;
     m_smudge.opacity = 0.6; // strength
     m_smudge.spacing = 0.08;
+    m_clone.size = 40.0;
+    m_clone.hardness = 0.5;
+    m_clone.pressureSize = false;
+    m_heal.size = 30.0;
+    m_heal.hardness = 0.7;
+    m_heal.pressureSize = false;
+}
+
+void BrushTool::setCloneSource(const QPointF &pos)
+{
+    m_source = pos;
+    m_hasSource = true;
+    m_offsetFixed = false;
+    emit cloneSourceChanged();
 }
 
 void BrushTool::setDocument(easeletch::TileStore *store, const QRect &bounds, easeletch::History *history, int layerId,
@@ -81,6 +95,10 @@ BrushSettings &BrushTool::current()
         return m_erase;
     case BrushMode::Smudge:
         return m_smudge;
+    case BrushMode::Clone:
+        return m_clone;
+    case BrushMode::Heal:
+        return m_heal;
     case BrushMode::Paint:
         break;
     }
@@ -116,6 +134,8 @@ void BrushTool::loadSettings(QSettings &s)
     load(s, QStringLiteral("brush"), m_paint);
     load(s, QStringLiteral("eraser"), m_erase);
     load(s, QStringLiteral("smudge"), m_smudge);
+    load(s, QStringLiteral("clone"), m_clone);
+    load(s, QStringLiteral("heal"), m_heal);
     emit settingsChanged();
 }
 
@@ -124,6 +144,8 @@ void BrushTool::saveSettings(QSettings &s) const
     save(s, QStringLiteral("brush"), m_paint);
     save(s, QStringLiteral("eraser"), m_erase);
     save(s, QStringLiteral("smudge"), m_smudge);
+    save(s, QStringLiteral("clone"), m_clone);
+    save(s, QStringLiteral("heal"), m_heal);
 }
 
 void BrushTool::press(const easeletch::StrokeSample &s)
@@ -135,6 +157,20 @@ void BrushTool::press(const easeletch::StrokeSample &s)
     if (m_selection && !m_selection->isEmpty()
         && m_selection->coverage(int(std::floor(s.pos.x())), int(std::floor(s.pos.y()))) <= 0.0f)
         emit outsideSelection();
+    if (m_mode == BrushMode::Clone) {
+        if (!m_hasSource) {
+            emit cloneSourceNeeded();
+            return;
+        }
+        if (!m_offsetFixed) {
+            m_offset = QPoint(int(std::lround(m_source.x() - s.pos.x())), int(std::lround(m_source.y() - s.pos.y())));
+            m_offsetFixed = true;
+        }
+        // Where this stroke's copy starts, for the marker on the canvas.
+        m_source = s.pos + QPointF(m_offset);
+        emit cloneSourceChanged();
+        m_stroke.setCloneOffset(m_offset);
+    }
     m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s,
                    m_selection ? *m_selection : easeletch::Selection());
 }
@@ -155,6 +191,8 @@ void BrushTool::release(const easeletch::StrokeSample &s)
         return;
     const QString label = m_mode == BrushMode::Erase    ? tr("Eraser")
                           : m_mode == BrushMode::Smudge ? tr("Smudge")
+                          : m_mode == BrushMode::Clone  ? tr("Clone")
+                          : m_mode == BrushMode::Heal   ? tr("Heal")
                                                         : tr("Brush");
     m_history->push(label, m_layerId, std::move(before), m_layerMask);
     emit strokeCommitted();

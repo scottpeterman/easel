@@ -40,7 +40,10 @@ struct BrushSettings {
 };
 
 // Smudge drags and blends existing colour; opacity is its strength.
-enum class BrushMode { Paint, Erase, Smudge };
+// Clone paints with a copy of the layer taken from somewhere else on it (see
+// BrushStroke::setCloneOffset). Heal marks what the stroke covers and, when
+// the stroke ends, replaces it with what's around it (see heal.h).
+enum class BrushMode { Paint, Erase, Smudge, Clone, Heal };
 
 struct StrokeSample {
     QPointF pos;
@@ -99,6 +102,10 @@ public:
                const QColor &color, BrushMode mode, const StrokeSample &first,
                const Selection &clip = {});
     void moveTo(const StrokeSample &raw);
+    // Clone: where each painted pixel is copied from, relative to itself. Set
+    // before begin(). The copy is of the layer as it was when the stroke
+    // began, so a stroke never copies its own paint.
+    void setCloneOffset(const QPoint &offset) { m_cloneOffset = offset; }
     // Ends the stroke and returns the pre-stroke content of every tile it
     // touched (a null image = the tile didn't exist).
     QHash<TileCoord, QImage> end();
@@ -110,11 +117,14 @@ private:
     void paintDabs(const QList<StrokeSample> &dabs);
     void paintDab(const StrokeSample &dab);
     void smudgeDab(const StrokeSample &dab);
+    void finishHeal();
     float coverageAt(double dist, double radius) const;
 
     TileStore *m_target = nullptr;
     TileStore m_before;
     QRect m_bounds;
+    QRect m_canvas; // the whole canvas, whatever the selection
+    QPoint m_cloneOffset;
     BrushSettings m_settings;
     BrushMode m_mode = BrushMode::Paint;
     float m_color[3] = {0, 0, 0}; // linear, straight alpha

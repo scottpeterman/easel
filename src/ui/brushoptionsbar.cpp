@@ -164,7 +164,9 @@ void BrushOptionsBar::syncFromTool()
     const easeletch::BrushMode mode = m_tool->mode();
     m_mode->setText(mode == easeletch::BrushMode::Erase    ? tr("Eraser")
                     : mode == easeletch::BrushMode::Smudge ? tr("Smudge")
-                                                       : tr("Brush"));
+                    : mode == easeletch::BrushMode::Clone  ? tr("Clone")
+                    : mode == easeletch::BrushMode::Heal   ? tr("Heal")
+                                                           : tr("Brush"));
     // For smudge, "opacity" is how far colour is dragged.
     m_opacityLabel->setText(mode == easeletch::BrushMode::Smudge ? tr("Strength") : tr("Opacity"));
 
