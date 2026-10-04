@@ -19,6 +19,8 @@ add_library(easeletch_ui STATIC
     adjustpanel.cpp
     filterdialog.h
     filterdialog.cpp
+    shadedialog.h
+    shadedialog.cpp
     gradienteditor.h
     gradienteditor.cpp
     edittools.h

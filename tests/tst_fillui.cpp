@@ -6,7 +6,9 @@
 #include "fillops.h"
 #include "gradienteditor.h"
 #include "mainwindow.h"
+#include "shadedialog.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QGuiApplication>
 #include <QLineEdit>
@@ -77,6 +79,78 @@ class TestFillUi : public QObject
     Q_OBJECT
 
 private slots:
+    void shadeAreasPutsShadingOnAMultiplyLayerAbove()
+    {
+        MainWindow w;
+        setupWindow(w);
+        const int art = w.layers().activeId();
+        const qsizetype steps = w.history().count();
+        ShadeSettings s;
+        s.stops = twoStops(QColor(200, 200, 200), QColor(100, 100, 100));
+        s.variation = 0.0;
+        QVERIFY(w.shadeAreas(s));
+        QVERIFY(!w.isPreviewingShade());
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Shade Areas"));
+        QCOMPARE(w.layers().count(), 2);
+        const Layer &shading = w.layers().layers().last();
+        QCOMPARE(shading.blend, BlendMode::Multiply);
+        QCOMPARE(shading.name, QStringLiteral("Shading 1"));
+        QCOMPARE(w.layers().activeId(), art); // the line art is still the layer in hand
+        // The line art itself is untouched; the picture shows it shaded.
+        QCOMPARE(pixel(w, 150, 150), QColor(Qt::white));
+        w.canvasView()->refresh();
+        const QColor in = pixelToColor(w.layers().composite().pixel(150, 150));
+        QVERIFY2(in.red() > 110 && in.red() < 190, qPrintable(in.name()));
+        QCOMPARE(pixelToColor(w.layers().composite().pixel(100, 150)).red(), 0);   // the ink stays black
+        QCOMPARE(pixelToColor(w.layers().composite().pixel(50, 50)).red(), 255);  // the page round it stays white
+
+        // Again, darker: it goes on the same layer, replacing the first try.
+        s.brightness = -0.6;
+        QVERIFY(w.shadeAreas(s));
+        QCOMPARE(w.layers().count(), 2);
+        w.canvasView()->refresh();
+        QVERIFY(pixelToColor(w.layers().composite().pixel(150, 150)).red() < in.red() - 30);
+
+        // Undo takes each run back, and the layer with the first.
+        w.undo();
+        QCOMPARE(w.layers().count(), 2);
+        w.undo();
+        QCOMPARE(w.layers().count(), 1);
+        QCOMPARE(w.history().count(), steps + 2);
+
+        // Selected elsewhere, there's nothing to shade: nothing is added, nothing recorded.
+        w.setSelection(Selection::rect(QRect(250, 20, 100, 60)));
+        const QString last = w.history().undoLabel();
+        QVERIFY(!w.shadeAreas(s));
+        QCOMPARE(w.layers().count(), 1);
+        QCOMPARE(w.history().count(), steps + 2); // the undone steps are still there to redo
+        QCOMPARE(w.history().undoLabel(), last);
+    }
+
+    void shadeDialogReportsItsSettings()
+    {
+        ShadeSettings s;
+        s.angle = 120.0;
+        s.brightness = -0.25;
+        AreaOptions o;
+        o.minArea = 500;
+        ShadeDialog dlg(s, o, 2, QColor(Qt::red));
+        QCOMPARE(dlg.windowTitle(), QStringLiteral("Shade Areas"));
+        QCOMPARE(dlg.gradientIndex(), 2);
+        QCOMPARE(dlg.settings().angle, 120.0);
+        QCOMPARE(dlg.settings().brightness, -0.25);
+        QCOMPARE(dlg.settings().stops, gradientPresets().at(1).stops);
+        QVERIFY(!dlg.settings().tint.isValid());
+        QCOMPARE(dlg.options().minArea, 500);
+        QVERIFY(dlg.options().whiteOnly);
+        // Ticking Tint uses the colour it was given.
+        const QList<QCheckBox *> boxes = dlg.findChildren<QCheckBox *>();
+        QVERIFY(!boxes.isEmpty());
+        boxes.first()->setChecked(true);
+        QCOMPARE(dlg.settings().tint, QColor(Qt::red));
+    }
+
     void clickFillsInsideTheOutline()
     {
         MainWindow w;

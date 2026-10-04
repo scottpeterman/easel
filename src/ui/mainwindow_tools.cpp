@@ -8,6 +8,7 @@
 #include "edittools.h"
 #include "fillops.h"
 #include "filterdialog.h"
+#include "shadedialog.h"
 #include "filters.h"
 #include "gradienteditor.h"
 #include "selecttools.h"
@@ -840,4 +841,104 @@ void MainWindow::repeatFilter()
 {
     if (m_lastFilterType >= 0)
         applyFilter(m_lastFilters[m_lastFilterType]);
+}
+
+// --- Shade Areas -------------------------------------------------------------
+
+bool MainWindow::previewShade(const easeletch::ShadeSettings &settings, const easeletch::AreaOptions &options)
+{
+    if (!m_shade.active) {
+        if (!beginLayerChange())
+            return false;
+        const easeletch::Layer *art = m_stack->active();
+        if (!art || !art->hasPixels() || m_editMask) {
+            statusBar()->showMessage(tr("Shade Areas reads a layer with pixels: select the line art first"), 5000);
+            return false;
+        }
+        m_shade = ShadePreview();
+        m_shade.before = m_stack->snapshot();
+        // The Multiply layer just above the line art, if there is one, takes
+        // the shading: runs on one group of panels after another add up there.
+        const QList<int> siblings = m_stack->children(art->parent);
+        const int at = int(siblings.indexOf(art->id));
+        const easeletch::Layer *above = at + 1 < siblings.size() ? m_stack->layer(siblings.at(at + 1)) : nullptr;
+        if (above && above->hasPixels() && above->blend == easeletch::BlendMode::Multiply && !m_stack->isLocked(above->id)) {
+            m_shade.targetId = above->id;
+        } else {
+            const int artId = art->id, parent = art->parent;
+            easeletch::Layer l;
+            l.name = m_stack->uniqueName(tr("Shading"));
+            l.blend = easeletch::BlendMode::Multiply;
+            m_shade.targetId = m_stack->insert(std::move(l), parent, at + 1);
+            m_stack->setActive(artId); // the line art stays the layer in hand
+            layersChanged();
+        }
+        m_shade.active = true;
+    }
+    easeletch::Layer *target = m_stack->layer(m_shade.targetId);
+    const easeletch::Layer *art = m_stack->active();
+    if (!target || !art) {
+        m_shade = ShadePreview();
+        return false;
+    }
+    if (!m_shade.found || options.minArea != m_shade.options.minArea || options.whiteOnly != m_shade.options.whiteOnly
+        || options.grow != m_shade.options.grow) {
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        m_shade.shader.findAreas(art->store, m_selection, canvasRect(), options);
+        QApplication::restoreOverrideCursor();
+        m_shade.options = options;
+        m_shade.found = true;
+    }
+    // From the layer as it was, never from the last try.
+    for (auto it = m_shade.painted.cbegin(); it != m_shade.painted.cend(); ++it)
+        target->store.setTile(it.key(), it.value());
+    m_shade.painted = m_shade.shader.shade(target->store, settings);
+    m_view->refresh();
+    return !m_shade.painted.isEmpty();
+}
+
+void MainWindow::endShadePreview(bool keep)
+{
+    if (!m_shade.active)
+        return;
+    ShadePreview shade = std::move(m_shade);
+    m_shade = ShadePreview();
+    if (keep && !shade.painted.isEmpty()) {
+        finishLayerChange(tr("Shade Areas"), std::move(shade.before));
+        return;
+    }
+    m_stack->swapState(shade.before);
+    layersChanged();
+}
+
+bool MainWindow::shadeAreas(const easeletch::ShadeSettings &settings, const easeletch::AreaOptions &options)
+{
+    endShadePreview(false);
+    const bool shaded = previewShade(settings, options);
+    endShadePreview(true);
+    return shaded;
+}
+
+void MainWindow::showShadeDialog()
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    ShadeDialog dlg(m_lastShade, m_lastShadeOptions, m_lastShadeGradient, m_color->color(), this);
+    connect(&dlg, &ShadeDialog::previewRequested, this, &MainWindow::previewShade);
+    connect(&dlg, &ShadeDialog::previewCleared, this, [this] { endShadePreview(false); });
+    if (!previewShade(dlg.settings(), dlg.options()) && !m_shade.active)
+        return; // the status bar says why
+    if (m_shade.shader.isEmpty())
+        statusBar()->showMessage(tr("No enclosed areas found here. Areas that reach the edge of the canvas, "
+                                    "or are joined to it through a gap in a line, don't count."), 8000);
+    if (dlg.exec() == QDialog::Accepted) {
+        m_lastShade = dlg.settings();
+        m_lastShadeOptions = dlg.options();
+        m_lastShadeGradient = dlg.gradientIndex();
+        endShadePreview(false);
+        if (!shadeAreas(m_lastShade, m_lastShadeOptions))
+            statusBar()->showMessage(tr("Shade Areas found nothing to shade here"), 5000);
+    } else {
+        endShadePreview(false);
+    }
 }

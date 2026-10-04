@@ -26,6 +26,8 @@ add_library(easeletch_core STATIC
     filters.cpp
     heal.h
     heal.cpp
+    shade.h
+    shade.cpp
     fillops.h
     fillops.cpp
     transform.h

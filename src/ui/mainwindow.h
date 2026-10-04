@@ -8,6 +8,7 @@
 #include "layerstack.h"
 #include "regionops.h"
 #include "selection.h"
+#include "shade.h"
 #include "tilepyramid.h"
 #include "tilestore.h"
 #include "transform.h"
@@ -210,6 +211,18 @@ public slots:
     void showFilterDialog(easeletch::FilterType type);
     // Runs the last filter used again, with the same settings.
     void repeatFilter();
+
+    // Shade Areas: a gradient on every enclosed area of the active layer (or
+    // those mostly inside the selection), on a Multiply layer just above it:
+    // the one already there, or a new one. One undo step. False if there was
+    // nothing to shade or the layer can't be read.
+    bool shadeAreas(const easeletch::ShadeSettings &settings, const easeletch::AreaOptions &options = {});
+    // The same, tried out: the canvas shows it, and nothing is recorded until
+    // endShadePreview(true). Each call replaces the last.
+    bool previewShade(const easeletch::ShadeSettings &settings, const easeletch::AreaOptions &options);
+    void endShadePreview(bool keep);
+    bool isPreviewingShade() const { return m_shade.active; }
+    void showShadeDialog();
 
     // Free transform of the selected pixels, or of everything on the layer
     // when nothing is selected. Enter (commitFloating) applies it as one undo
@@ -498,6 +511,21 @@ private:
         QHash<easeletch::TileCoord, QImage> before; // what the try now showing replaced
         QString label;
     } m_filterPreview;
+    // Shade Areas being tried out: the layers as they were, the areas found
+    // (finding them is the slow part, so it's done once), and what the try
+    // now showing replaced.
+    struct ShadePreview {
+        bool active = false;
+        easeletch::LayerStack before;
+        int targetId = 0;
+        bool found = false;
+        easeletch::AreaOptions options;
+        easeletch::AreaShader shader;
+        QHash<easeletch::TileCoord, QImage> painted;
+    } m_shade;
+    easeletch::ShadeSettings m_lastShade;
+    easeletch::AreaOptions m_lastShadeOptions;
+    int m_lastShadeGradient = 0;
     easeletch::Filter m_lastFilters[easeletch::FilterTypeCount];
     int m_lastFilterType = -1;
     QAction *m_repeatFilterAct = nullptr;

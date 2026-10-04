@@ -1,6 +1,6 @@
 # Restoring old ink art
 
-How to take a scan or phone photo of an ink drawing on aged paper and end up with clean black line work you can shade or colour, without touching the original. Needs Easeletch 0.5 or later (0.6 for the Heal and Clone tools).
+How to take a scan or phone photo of an ink drawing on aged paper and end up with clean black line work you can shade or colour, without touching the original. Needs Easeletch 0.5 or later (0.6 for the Heal and Clone tools, 0.7 for Shade Areas).
 
 The drawing used here was made for this guide. Yours will have the same problems: paper that has gone brown, uneven light, print showing through from the other side of the page, stains and dust.
 
@@ -69,6 +69,17 @@ Put the colour on a layer of its own, set to Multiply, above the line art. Multi
 6. Press **Ctrl+D** and go on to the next area.
 
 ![The drawing shaded in greys: light on top, darker on the sides, a round engine tube](images/ink-5-shaded.png)
+
+### All the panels at once (0.7 and later)
+
+For a drawing made of many panels, **Layer > Shade Areas** does the steps above for every enclosed area in one go, on a Multiply layer it adds for you.
+
+1. Click *Line art* in the Layers panel and choose **Layer > Shade Areas**. Pick a gradient (Soft shading, or a metal), set the **Angle** the light falls at, and press OK. Every panel is now shaded.
+2. For the faces turned away from the light, press **L** and click loosely round that group of panels; they only need to be mostly inside. Run Shade Areas again with **Brightness** lowered. It replaces the shading on just those panels.
+3. Repeat for each face: three or four passes shade a whole object.
+4. For coloured metal, pick the colour first and tick **Tint with the current colour**.
+
+Close any gaps in the lines first (a small brush stroke in black): a panel with a gap in its outline isn't enclosed, and joins its neighbour or the page. Tubes and domes still look best done by hand with a Reflected or Radial gradient, as below.
 
 What makes flat areas look solid:
 

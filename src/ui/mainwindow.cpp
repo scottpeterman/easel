@@ -320,6 +320,9 @@ void MainWindow::createActions()
     }
     layer->addAction(tr("D&elete Layer"), this, &MainWindow::deleteLayer);
     layer->addSeparator();
+    layer->addAction(tr("&Shade Areas..."), this, &MainWindow::showShadeDialog)
+        ->setStatusTip(tr("A gradient on every enclosed area of a line drawing, on a Multiply layer above it"));
+    layer->addSeparator();
     layer->addAction(tr("Move &Up"), this, &MainWindow::raiseLayer);
     layer->addAction(tr("Move D&own"), this, &MainWindow::lowerLayer);
     layer->addSeparator();

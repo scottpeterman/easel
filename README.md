@@ -16,6 +16,8 @@ Transform: Free Transform scales, rotates and moves the selected pixels, or ever
 
 Fill and gradient: Fill floods the area of similar colour under a click with the current colour, with a tolerance, Contiguous, and All layers (find the area in the whole picture, so colour can go on its own layer under line art). Gradient is a drag from start to end. Its colours come from a list: the current colour to transparent, to an end colour, or shaded (a highlight, the colour, its shadow); metals (Chrome, Steel, Gold, Copper, Gunmetal, Spun metal) and a few skies and spectrums; and your own, built in the gradient editor with as many colours as you like, each with its own opacity, and saved under a name. Four shapes: Linear, Radial, Reflected (mirrored about the start: a metal gradient becomes a rod or pipe) and Conical (swept round the start: a disc or knob). Shaded with Radial, started where the highlight goes, makes a ball. Both tools stay inside the selection, fading with a feathered one, and both work on a layer mask. Edit > Fill with Colour fills the selection or the whole layer.
 
+Shade Areas (Layer menu) shades a whole line drawing at once. It finds every enclosed area of the active layer and lays a gradient on each, all running the same way, on a Multiply layer just above, so the lines show through and the drawing itself isn't touched. Pick soft shading or a metal (Chrome, Steel, Gunmetal, Gold, Copper), tint it with the current colour for red metal or brass, and set the angle and how light or dark the faces are; the canvas shows it as you go. With a selection it takes the areas that are mostly inside it, so a loose lasso round the panels of one face shades just those: run it lighter on the faces turned to the light and darker on those turned away. The page round the drawing, small areas (rivets, specks) and areas you've already coloured are left alone. An area only counts if it's closed: a gap in a line joins two panels into one.
+
 Adjustment layers: Levels, Curves, Hue / Saturation, Brightness / Contrast, Exposure, Black & White and Threshold. An adjustment layer has no pixels of its own: it changes the look of everything below it (inside a group, of that group only), and nothing underneath is altered, so it can be re-edited, faded with its opacity, limited with a mask, hidden or deleted at any time. Its settings are in the Adjustment panel and change the canvas as you drag; Curves is a line you bend by its points. Merge Down makes one permanent on the layer below. Threshold turns everything lighter than its level white and the rest black, for cleaning up scanned line art: raise the level until the paper goes white; Soften edges keeps lines smooth instead of stepped.
 
 Filters: Gaussian Blur, Sharpen, Add Noise, Pixelate and Despeckle, on the active layer or its mask, inside the selection (fading with a feathered one). The canvas shows the result while you set it; nothing is recorded until OK. Blur and Sharpen work in linear light, so colours don't darken where they meet and nothing bleeds out of transparent areas. Despeckle removes stray specks (the dots a fill leaves behind, dust on a scan): any patch up to the size you set that lies wholly inside one larger area takes that area's colour. Bigger things are left exactly as they were, so thin lines, dashes, corners and soft edges keep their shape.
@@ -64,6 +66,7 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Free transform | Ctrl+T (the selection, or the whole layer). Drag a corner to scale, Shift for any shape; a side to stretch; outside the box to rotate, Shift for 15° steps; inside to move; arrows nudge. Enter applies, Escape cancels |
 | Fill | G; click an area. Tolerance, Contiguous and All layers in the tool options |
 | Fill the selection (or the layer) with the current colour | Shift+F5 |
+| Shade every panel of a line drawing | Layer > Shade Areas. Lasso loosely round a group of panels first to shade only those |
 | Gradient | Shift+G; drag from start to end, Shift for 45° steps. Colours (presets, metals, your own), shape (Linear, Radial, Reflected, Conical) and Reverse in the tool options |
 | Edit a gradient | Edit… in the gradient options: click the bar to add a colour, drag a marker to move it, Delete removes it. Save as Preset keeps it in the list |
 | Add an adjustment layer | Layer > New Adjustment Layer, or the buttons in the Adjustment panel (it shares a tab with Color) |
@@ -155,8 +158,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.6.0
-git push origin v0.6.0
+git tag v0.7.0
+git push origin v0.7.0
 ```
 
 | Platform | Package |
