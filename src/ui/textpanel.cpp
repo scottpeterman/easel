@@ -62,12 +62,23 @@ TextPanel::TextPanel(QWidget *parent)
     column->addLayout(row);
 
     row = new QHBoxLayout;
+    m_colorButton = new QToolButton(this);
+    m_colorButton->setObjectName(QStringLiteral("textColor"));
+    m_colorButton->setToolTip(tr("The letters' colour. The Color panel sets it too."));
+    m_colorButton->setFixedWidth(36);
+    connect(m_colorButton, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_color, this, tr("Text colour"));
+        if (c.isValid())
+            emit colorPicked(c);
+    });
+    setColor(m_color);
     m_outline = new QSpinBox(this);
     m_outline->setRange(0, TextSettings::MaxOutline);
     m_outline->setSpecialValueText(tr("None"));
     m_outline->setSuffix(tr(" px"));
     m_outline->setToolTip(tr("A line round the letters, so they read on any picture"));
     m_outlineColorButton = new QToolButton(this);
+    m_outlineColorButton->setObjectName(QStringLiteral("outlineColor"));
     m_outlineColorButton->setToolTip(tr("The outline's colour"));
     m_outlineColorButton->setFixedWidth(36);
     connect(m_outlineColorButton, &QToolButton::clicked, this, [this] {
@@ -82,6 +93,9 @@ TextPanel::TextPanel(QWidget *parent)
     m_box->setSpecialValueText(tr("Off"));
     m_box->setSuffix(tr(" px"));
     m_box->setToolTip(tr("Wrap the words inside this width. Off: lines break only where you press Enter."));
+    row->addWidget(new QLabel(tr("Colour"), this));
+    row->addWidget(m_colorButton);
+    row->addSpacing(12);
     row->addWidget(new QLabel(tr("Outline"), this));
     row->addWidget(m_outline);
     row->addWidget(m_outlineColorButton);
@@ -97,7 +111,7 @@ TextPanel::TextPanel(QWidget *parent)
     m_edit->setMinimumSize(320, 110);
     column->addWidget(m_edit, 1);
 
-    auto *hint = new QLabel(tr("Colour comes from the Color panel. Drag on the canvas to move the text."), this);
+    auto *hint = new QLabel(tr("The colour and outline are for all of the text. Drag on the canvas to move it."), this);
     hint->setEnabled(false);
     hint->setWordWrap(true);
     column->addWidget(hint);
@@ -128,6 +142,9 @@ TextPanel::TextPanel(QWidget *parent)
     connect(m_align, &QComboBox::currentIndexChanged, this, &TextPanel::changed);
     connect(m_smooth, &QCheckBox::toggled, this, &TextPanel::changed);
     connect(m_outline, &QSpinBox::valueChanged, this, &TextPanel::changed);
+    // With no outline its colour does nothing: the button says so by being off.
+    connect(m_outline, &QSpinBox::valueChanged, this, [this](int width) { m_outlineColorButton->setEnabled(width > 0); });
+    m_outlineColorButton->setEnabled(m_outline->value() > 0);
     connect(m_box, &QSpinBox::valueChanged, this, &TextPanel::changed);
 }
 
@@ -203,6 +220,13 @@ void TextPanel::setSmooth(bool on)
     m_smooth->setChecked(on);
 }
 
+void TextPanel::setColor(const QColor &color)
+{
+    m_color = color;
+    m_colorButton->setStyleSheet(
+        QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }").arg(color.name()));
+}
+
 void TextPanel::setOutline(int width)
 {
     m_outline->setValue(width);
@@ -213,7 +237,8 @@ void TextPanel::setOutlineColor(const QColor &color)
     const bool same = color == m_outlineColor;
     m_outlineColor = color;
     m_outlineColorButton->setStyleSheet(
-        QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }").arg(color.name()));
+        QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }"
+                       "QToolButton:disabled { background: palette(window); }").arg(color.name()));
     if (!same)
         emit changed();
 }

@@ -657,6 +657,10 @@ void MainWindow::createDocks()
     colorDock->raise();
     connect(m_color, &ColorPanel::colorChanged, m_brush, &BrushTool::setColor);
     connect(m_color, &ColorPanel::colorChanged, this, &MainWindow::updateText);
+    // The Text window shows the same colour, and its own button sets it.
+    connect(m_color, &ColorPanel::colorChanged, m_textPanel, &TextPanel::setColor);
+    connect(m_textPanel, &TextPanel::colorPicked, m_color, &ColorPanel::setColor);
+    m_textPanel->setColor(m_color->color());
     connect(m_color, &ColorPanel::colorChanged, m_eyedropper, &EyedropperTool::setCurrentColor);
     connect(m_eyedropper, &EyedropperTool::colorPicked, m_color, &ColorPanel::setColor);
     m_brush->setColor(m_color->color());

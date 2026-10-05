@@ -36,6 +36,10 @@ public:
     void setItalic(bool on);
     void setAlignment(Qt::Alignment align);
     void setSmooth(bool on);
+    // The letters' colour, as the button shows it. It's the painting colour:
+    // the window keeps this and the Color panel the same.
+    void setColor(const QColor &color);
+    QColor color() const { return m_color; }
     // A line round the letters, in pixels (0 = none), and its colour.
     void setOutline(int width);
     void setOutlineColor(const QColor &color);
@@ -52,6 +56,8 @@ public:
 signals:
     // The text or how it's drawn changed.
     void changed();
+    // A colour for the letters was chosen with the panel's own button.
+    void colorPicked(const QColor &color);
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -64,6 +70,8 @@ private:
     QToolButton *m_italic = nullptr;
     QComboBox *m_align = nullptr;
     QCheckBox *m_smooth = nullptr;
+    QToolButton *m_colorButton = nullptr;
+    QColor m_color = Qt::black;
     QSpinBox *m_outline = nullptr;
     QToolButton *m_outlineColorButton = nullptr;
     QColor m_outlineColor = Qt::black;

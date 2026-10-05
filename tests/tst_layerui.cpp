@@ -1105,6 +1105,60 @@ private slots:
         QVERIFY(!w.editText(text));
         QVERIFY(!w.isTyping());
     }
+
+    void textColourChangesFromEitherPanel()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorPanel()->setColor(Qt::black);
+        w.textPanel()->setPixelSize(60);
+        w.textPanel()->setBold(true);
+        w.textPanel()->setOutline(0);
+        w.beginText({40, 60});
+        w.textPanel()->setText(QStringLiteral("HELLO"));
+        w.commitText();
+        const int text = w.layers().activeId();
+        const auto count = [&](const QColor &want) {
+            int n = 0;
+            for (int y = 0; y < 300; ++y)
+                for (int x = 0; x < 400; ++x) {
+                    const QColor c = at(w.layers().layer(text)->store, x, y);
+                    n += c.alpha() == 255 && near(c, want);
+                }
+            return n;
+        };
+        const int ink = count(Qt::black);
+        QVERIFY(ink > 500);
+
+        // Open again, the Text window shows the text's own colour.
+        w.colorPanel()->setColor(Qt::red);
+        QVERIFY(w.editText(text));
+        QCOMPARE(w.textPanel()->color(), QColor(Qt::black));
+        // The Color panel recolours all of it, and the window's button follows.
+        const QColor green(0x38, 0x8e, 0x3c);
+        w.colorPanel()->setColor(green);
+        QCOMPARE(w.textPanel()->color(), green);
+        QCOMPARE(count(green), ink);
+        QCOMPARE(count(Qt::black), 0);
+        // The window's own button does the same, through the Color panel.
+        emit w.textPanel()->colorPicked(Qt::blue);
+        QCOMPARE(w.colorPanel()->color(), QColor(Qt::blue));
+        QCOMPARE(w.textPanel()->color(), QColor(Qt::blue));
+        QCOMPARE(count(Qt::blue), ink);
+        w.commitText();
+        QCOMPARE(w.layers().layer(text)->text.color, QColor(Qt::blue));
+        QCOMPARE(count(Qt::blue), ink);
+        QVERIFY(w.layers().layer(text)->isText());
+        w.undo();
+        QCOMPARE(count(Qt::black), ink);
+
+        // The outline's colour button is off while there's no outline.
+        auto *outline = w.textPanel()->findChild<QWidget *>(QStringLiteral("outlineColor"));
+        QVERIFY(outline && !outline->isEnabled());
+        w.textPanel()->setOutline(3);
+        QVERIFY(outline->isEnabled());
+        w.textPanel()->setOutline(0);
+    }
 };
 
 QTEST_MAIN(TestLayerUi)
