@@ -248,6 +248,9 @@ void LayerPanel::addItems(QTreeWidgetItem *parentItem, int parentId)
             item->setToolTip(kNameColumn, tr("An adjustment layer: it changes the look of everything below it. "
                                              "Its settings are in the Adjustment panel."));
         }
+        if (l->isText())
+            item->setToolTip(kNameColumn, tr("Text: click it on the canvas with the Text tool (T) to change it. "
+                                             "Painting on it or filtering it turns it into ordinary pixels."));
         item->setFlags(flags);
         if (l->group) {
             addItems(item, l->id);

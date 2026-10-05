@@ -98,7 +98,10 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 - Any font installed on the machine, any size, bold or italic, aligned left, centre or right
 - Smooth, or hard-edged for pixel art
-- Shown on the canvas as you type; placed on a layer of its own as pixels
+- An outline round the letters in any colour and width, so words read on any picture
+- Wrap at a width: the words break to fit, and realign as you change them
+- Shown on the canvas as you type; placed on a layer of its own
+- Placed text stays text: click it with the Text tool to change the words, font, size, colour, outline or wrap, and it's saved that way in the document. Moving the layer or cropping the canvas keeps it text; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the text back)
 
 ### Pages
 
@@ -124,7 +127,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 ### Not there yet
 
-Shapes, layer effects, text you can retype after placing it, and autosave.
+Shapes, layer effects, frames and speech balloons for text, and autosave.
 
 ## Guides
 
@@ -159,6 +162,7 @@ Whole jobs, step by step, with pictures.
 | Clone | C; hold Alt and click what to copy, then paint it somewhere else |
 | Heal | H; dab or drag over a blemish and let go |
 | Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
+| Change placed text | With the Text tool, click the words. The Text window opens with them; Ctrl+Enter (or Update) keeps the change, Escape drops it |
 | Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |
 
 ### Layers and masks
@@ -292,8 +296,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.8.0
-git push origin v0.8.0
+git tag v0.9.0
+git push origin v0.9.0
 ```
 
 | Platform | Package |

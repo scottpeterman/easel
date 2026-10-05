@@ -1,6 +1,7 @@
 #pragma once
 
 #include "adjust.h"
+#include "textrender.h"
 #include "tilestore.h"
 
 #include <QImage>
@@ -67,7 +68,24 @@ struct Layer {
     bool hasMask = false;
     bool maskEnabled = true;
     TileStore mask{Qt::white};
+
+    // A text layer is a raster layer that remembers what it says: the words
+    // and how they're drawn, and the point they hang from. Its pixels are
+    // drawn from that, so the text can be changed later. Paint on it, filter
+    // it or transform it and it's an ordinary layer from then on (undo brings
+    // the text back): isText() is true only while the pixels are still
+    // exactly what the text drew.
+    bool hasText = false;
+    TextSettings text;
+    QPoint textAnchor;
+    QRect textBox;        // the block of text on the canvas (what a click has to hit)
+    TileStore textPixels; // the layer as the text drew it
+    bool isText() const;
 };
+
+// Draws a text layer's pixels again from its words, replacing what's there.
+// Nothing outside the canvas is kept.
+void drawTextLayer(Layer &layer, const QRect &canvas);
 
 // How much a mask pixel lets through, 0..1.
 float maskValue(const Pixel &p);

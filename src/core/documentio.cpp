@@ -126,6 +126,18 @@ QString readPage(const QJsonObject &m, PendingPage &page)
             l.maskEnabled = mo.value(QLatin1String("enabled")).toBool(true);
             l.mask.setDefaultPixel(pixelFromJson(mo.value(QLatin1String("default")).toArray()));
         }
+        // A text layer is a raster layer with its words kept alongside.
+        if (const QJsonValue text = o.value(QLatin1String("text")); text.isObject() && l.hasPixels()) {
+            const QJsonObject to = text.toObject();
+            const QJsonArray anchor = to.value(QLatin1String("anchor")).toArray();
+            const QJsonArray box = to.value(QLatin1String("box")).toArray();
+            if (anchor.size() == 2 && box.size() == 4) {
+                l.hasText = true;
+                l.text = TextSettings::fromJson(to);
+                l.textAnchor = QPoint(anchor.at(0).toInt(), anchor.at(1).toInt());
+                l.textBox = QRect(box.at(0).toInt(), box.at(1).toInt(), box.at(2).toInt(), box.at(3).toInt());
+            }
+        }
         if (l.id <= 0)
             return QObject::tr("The document is damaged (layer %1).").arg(i);
         page.byEntry.insert(i, int(list.size()));
@@ -172,6 +184,15 @@ QJsonArray layersToJson(const LayerStack &stack, const QString &prefix)
         if (l.hasPixels()) {
             o.insert(QLatin1String("default"), pixelToJson(l.store.defaultPixel()));
             o.insert(QLatin1String("chunks"), prefix + QStringLiteral("layers/%1/chunks/").arg(i));
+        }
+        // Only while the pixels are still the text's own. Builds from before
+        // text layers skip this and open the layer as the pixels it is.
+        if (l.isText()) {
+            QJsonObject text = l.text.toJson();
+            text.insert(QLatin1String("anchor"), QJsonArray{l.textAnchor.x(), l.textAnchor.y()});
+            text.insert(QLatin1String("box"), QJsonArray{l.textBox.x(), l.textBox.y(), l.textBox.width(),
+                                                         l.textBox.height()});
+            o.insert(QLatin1String("text"), text);
         }
         if (l.hasMask) {
             o.insert(QLatin1String("mask"),
@@ -416,6 +437,10 @@ LoadedDocument loadNativeDocument(const QString &path)
     doc.activePage = std::clamp(m.value(QLatin1String("activePage")).toInt(0), 0, int(pages.size()) - 1);
     for (int i = 0; i < pages.size(); ++i) {
         PendingPage &page = pages[i];
+        // The pixels read are what the text drew.
+        for (Layer &l : page.list)
+            if (l.hasText)
+                l.textPixels = l.store.snapshot();
         auto stack = std::make_unique<LayerStack>();
         stack->setSize(page.size);
         stack->replaceLayers(std::move(page.list), page.activeLayer);

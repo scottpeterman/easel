@@ -1,5 +1,9 @@
 #include "layerstack.h"
 
+#include "regionops.h"
+
+#include <cstring>
+
 #include "srgblut.h"
 
 #include <QFloat16>
@@ -12,6 +16,38 @@
 #include <thread>
 
 namespace easeletch {
+
+bool Layer::isText() const
+{
+    if (!hasText || !hasPixels() || store.tileCount() != textPixels.tileCount())
+        return false;
+    const QList<TileCoord> coords = textPixels.tileCoords();
+    for (const TileCoord c : coords) {
+        const QImage now = store.tile(c);
+        if (now.isNull())
+            return false;
+        const QImage drawn = textPixels.tile(c);
+        // Usually the very same tile (tiles are shared until written to).
+        if (now.cacheKey() != drawn.cacheKey()
+            && std::memcmp(now.constBits(), drawn.constBits(), size_t(TileStore::BytesPerTile)) != 0)
+            return false;
+    }
+    return true;
+}
+
+void drawTextLayer(Layer &layer, const QRect &canvas)
+{
+    layer.store.clear();
+    const TextLayout layout = layoutText(layer.text, layer.textAnchor);
+    if (!layout.image.isNull()) {
+        FloatingContent content;
+        content.paste(&layer.store, layout.image, layout.origin, {}, canvas);
+        content.commit();
+    }
+    layer.textBox = layout.box;
+    layer.textPixels = layer.store.snapshot();
+}
+
 
 namespace {
 

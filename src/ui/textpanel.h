@@ -8,6 +8,7 @@ class QCheckBox;
 class QComboBox;
 class QFontComboBox;
 class QPlainTextEdit;
+class QPushButton;
 class QSettings;
 class QSpinBox;
 class QToolButton;
@@ -25,6 +26,8 @@ public:
 
     // Everything but the colour, which the window supplies.
     easeletch::TextSettings settings() const;
+    // Fills the panel from text already placed, to change it.
+    void setSettings(const easeletch::TextSettings &settings);
     QString text() const;
     void setText(const QString &text);
     void setFontFamily(const QString &family);
@@ -33,6 +36,13 @@ public:
     void setItalic(bool on);
     void setAlignment(Qt::Alignment align);
     void setSmooth(bool on);
+    // A line round the letters, in pixels (0 = none), and its colour.
+    void setOutline(int width);
+    void setOutlineColor(const QColor &color);
+    // The width the words wrap inside (0 = no wrapping).
+    void setBoxWidth(int width);
+    // What the button that places the text says: "Place", or "Update".
+    void setEditing(bool editing);
     // Puts the cursor in the text box.
     void focusText();
 
@@ -54,4 +64,9 @@ private:
     QToolButton *m_italic = nullptr;
     QComboBox *m_align = nullptr;
     QCheckBox *m_smooth = nullptr;
+    QSpinBox *m_outline = nullptr;
+    QToolButton *m_outlineColorButton = nullptr;
+    QColor m_outlineColor = Qt::black;
+    QSpinBox *m_box = nullptr;
+    QPushButton *m_place = nullptr;
 };

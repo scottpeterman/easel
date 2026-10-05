@@ -504,6 +504,7 @@ void MainWindow::createToolBars()
     m_textAct = tools->addAction(tr("Text"), this, [this] { activateTool(m_textTool, false); });
     m_textAct->setShortcut(QKeySequence(Qt::Key_T));
     m_textAct->setToolTip(tr("Text (T): click where it goes, type, drag to move it, then Place. "
+                             "Click text already placed to change it. "
                              "It lands on a new layer."));
     m_moveAct = tools->addAction(tr("Move"), this, [this] { activateTool(m_move, false); });
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
@@ -1004,9 +1005,16 @@ bool MainWindow::liftForMove()
     m_selectionBeforeFloat = m_selection;
     m_floatLayer = m_stack->activeId();
     m_floatMask = m_editMask;
+    // A whole text layer on the move stays text: it's drawn again where it lands.
+    const easeletch::Layer *active = m_stack->active();
+    m_floatText = m_selection.isEmpty() && !m_editMask && active && active->isText();
+    m_floatTextBefore = m_floatText ? m_stack->snapshot() : easeletch::LayerStack();
     m_floating.lift(store, sel, canvasRect());
-    if (!m_floating.isActive())
+    if (!m_floating.isActive()) {
+        m_floatText = false;
+        m_floatTextBefore = easeletch::LayerStack();
         return false;
+    }
     m_floatLabel = tr("Move");
     m_floatPasted = false;
     m_floatStart = m_floating.position();
@@ -1067,6 +1075,26 @@ void MainWindow::commitFloating()
         m_xf.dragging = false;
         applyTransform(true); // a drag may have left a quick preview
     }
+    if (m_floatText && !m_floatPasted && !m_xf.active) {
+        // Moved, not changed: the text is drawn again from its words at the
+        // new place (so nothing is lost if part of it was off the canvas),
+        // and the step recorded is the layer as a whole, words and all.
+        const QPoint delta = m_floating.position() - m_floatStart;
+        m_floating.commit();
+        if (easeletch::Layer *l = m_stack->layer(m_floatLayer)) {
+            l->textAnchor += delta;
+            easeletch::drawTextLayer(*l, canvasRect());
+        }
+        m_history.pushState(m_floatLabel, std::move(m_floatTextBefore), *m_stack);
+        m_floatText = false;
+        m_floatTextBefore = easeletch::LayerStack();
+        m_moveDragging = false;
+        setSelection({});
+        layersChanged();
+        return;
+    }
+    m_floatText = false;
+    m_floatTextBefore = easeletch::LayerStack();
     // The outline around floating pixels is only there to show what's being
     // placed. Once they're down it stays only if the user had selected that
     // area themselves: a paste, or a move or transform of the whole layer,
@@ -1146,10 +1174,16 @@ void MainWindow::cropCanvasTo(const QRect &rect, const QString &label)
         return;
     easeletch::LayerStack before = m_stack->snapshot();
     for (const easeletch::Layer &l : m_stack->layers()) {
-        if (!l.group)
-            easeletch::cropStore(m_stack->layer(l.id)->store, rect);
+        easeletch::Layer *layer = m_stack->layer(l.id);
+        if (l.isText()) {
+            // Text stays text: it's drawn again at its place on the new canvas.
+            layer->textAnchor -= rect.topLeft();
+            easeletch::drawTextLayer(*layer, QRect(QPoint(0, 0), rect.size()));
+        } else if (!l.group) {
+            easeletch::cropStore(layer->store, rect);
+        }
         if (l.hasMask)
-            easeletch::cropStore(m_stack->layer(l.id)->mask, rect);
+            easeletch::cropStore(layer->mask, rect);
     }
     m_stack->setSize(rect.size());
     m_history.pushState(label, std::move(before), *m_stack);
@@ -1178,6 +1212,19 @@ void MainWindow::growSelection(int pixels)
 
 // --- Text -------------------------------------------------------------------------
 
+namespace {
+
+// What a text layer is called: what it says, cut short.
+QString textLayerName(const QString &text)
+{
+    QString name = text.simplified();
+    if (name.size() > 24)
+        name = name.left(24) + QStringLiteral("…");
+    return name;
+}
+
+} // namespace
+
 void MainWindow::beginText(const QPoint &pos)
 {
     if (!m_stack || m_view->isStroking())
@@ -1200,12 +1247,74 @@ void MainWindow::beginText(const QPoint &pos)
     m_stack->setActive(id);
     m_editMask = false;
     m_text.active = true;
+    m_text.editing = false;
+    m_text.nameBefore.clear();
     m_text.layerId = id;
     m_text.anchor = pos;
     m_text.placed = pos;
+    m_text.box = QRect();
     m_text.dragging = false;
     layersChanged();
 
+    m_textPanel->setEditing(false);
+    showTextPanel(pos);
+    updateText();
+}
+
+int MainWindow::textLayerAt(const QPoint &pos) const
+{
+    if (!m_stack)
+        return 0;
+    const QList<easeletch::Layer> &layers = m_stack->layers();
+    for (auto it = layers.crbegin(); it != layers.crend(); ++it)
+        if (it->textBox.contains(pos) && m_stack->isShown(it->id) && it->isText())
+            return it->id;
+    return 0;
+}
+
+bool MainWindow::editText(int layerId)
+{
+    if (!m_stack || m_view->isStroking())
+        return false;
+    commitFloating();
+    easeletch::Layer *l = m_stack->layer(layerId);
+    if (!l || !l->isText())
+        return false;
+    if (m_stack->isLocked(layerId)) {
+        statusBar()->showMessage(tr("\"%1\" is locked").arg(l->name), 4000);
+        return false;
+    }
+    const easeletch::TextSettings settings = l->text;
+    const QPoint anchor = l->textAnchor;
+    // The panels show the text as it is: its words and font, and its colour.
+    m_color->setColor(settings.color);
+    {
+        const QSignalBlocker block(m_textPanel);
+        m_textPanel->setSettings(settings);
+    }
+    m_text.before = m_stack->snapshot();
+    // The words float again, over an empty layer, exactly as while first typed.
+    l->store.clear();
+    m_stack->setActive(layerId);
+    m_editMask = false;
+    m_text.active = true;
+    m_text.editing = true;
+    m_text.nameBefore = textLayerName(settings.text);
+    m_text.layerId = layerId;
+    m_text.anchor = anchor;
+    m_text.placed = anchor;
+    m_text.box = QRect();
+    m_text.dragging = false;
+    layersChanged();
+
+    m_textPanel->setEditing(true);
+    showTextPanel(anchor);
+    updateText();
+    return true;
+}
+
+void MainWindow::showTextPanel(const QPoint &pos)
+{
     if (!m_textPanel->isVisible()) {
         // Out of the way of the canvas: in a lower corner of it, the one
         // further from where the text is going. After that it stays wherever
@@ -1224,7 +1333,6 @@ void MainWindow::beginText(const QPoint &pos)
     m_textPanel->raise();
     m_textPanel->activateWindow();
     m_textPanel->focusText();
-    updateText();
 }
 
 void MainWindow::updateText()
@@ -1241,23 +1349,15 @@ void MainWindow::updateText()
     }
     easeletch::TextSettings s = m_textPanel->settings();
     s.color = m_color->color();
-    QPoint inset;
-    int width = 0;
-    const QImage image = easeletch::renderText(s, &inset, &width);
-    if (image.isNull()) {
+    const easeletch::TextLayout layout = easeletch::layoutText(s, m_text.anchor);
+    if (layout.image.isNull()) {
         m_view->setSelectionOutline(m_selection.outlines());
         m_view->refresh();
         return;
     }
-    // Left-aligned text starts at the point clicked; centred text is centred
-    // on it; right-aligned text ends there.
-    QPoint corner = m_text.anchor;
-    if (s.align & Qt::AlignHCenter)
-        corner.rx() -= width / 2;
-    else if (s.align & Qt::AlignRight)
-        corner.rx() -= width;
-    m_text.placed = corner - inset;
-    m_floating.paste(&l->store, image, m_text.placed, {}, canvasRect());
+    m_text.placed = layout.origin;
+    m_text.box = layout.box;
+    m_floating.paste(&l->store, layout.image, m_text.placed, {}, canvasRect());
     m_floatLayer = l->id;
     m_floatMask = false;
     showFloatingOutline();
@@ -1321,7 +1421,13 @@ void MainWindow::textReleased(const QPointF &pos)
     m_text.clickStarts = false;
     const QPoint at(int(std::floor(pos.x())), int(std::floor(pos.y())));
     QTimer::singleShot(0, this, [this, at] {
-        if (!m_text.active && m_view->tool() == m_textTool)
+        if (m_text.active || m_view->tool() != m_textTool)
+            return;
+        // On words already placed, the click changes them; anywhere else it
+        // starts new ones.
+        if (const int id = textLayerAt(at))
+            editText(id);
+        else
             beginText(at);
     });
 }
@@ -1331,23 +1437,33 @@ void MainWindow::commitText()
     if (!m_text.active)
         return;
     if (!m_floating.isActive()) {
-        cancelText(); // nothing was typed
+        cancelText(); // nothing was typed (or, changing text, all of it was deleted)
         return;
     }
-    m_floating.commit(); // the pixels stay; the step recorded is "the document before the text layer"
+    // It may have been dragged since it was last drawn.
+    const QPoint moved = m_floating.position() - m_text.placed;
+    m_floating.commit(); // the pixels stay; the step recorded is the document before
+    const bool editing = m_text.editing;
     m_text.active = false;
     m_text.dragging = false;
     m_moveDragging = false;
     if (easeletch::Layer *l = m_stack->layer(m_text.layerId)) {
-        // Named after what it says.
-        QString name = m_textPanel->text().simplified();
-        if (name.size() > 24)
-            name = name.left(24) + QStringLiteral("…");
-        if (!name.isEmpty())
+        easeletch::TextSettings s = m_textPanel->settings();
+        s.color = m_color->color();
+        // Named after what it says, unless it's been given a name of its own.
+        const QString name = textLayerName(s.text);
+        if (!name.isEmpty() && (!editing || l->name == m_text.nameBefore))
             l->name = name;
+        // The layer keeps its words, so they can be changed later.
+        l->hasText = true;
+        l->text = s;
+        l->textAnchor = m_text.anchor + moved;
+        l->textBox = m_text.box.translated(moved);
+        l->textPixels = l->store.snapshot();
     }
-    m_history.pushState(tr("Text"), std::move(m_text.before), *m_stack);
+    m_history.pushState(editing ? tr("Edit Text") : tr("Text"), std::move(m_text.before), *m_stack);
     m_text.before = easeletch::LayerStack();
+    m_text.editing = false;
     m_view->setSelectionOutline(m_selection.outlines());
     hideTextPanel();
     layersChanged();
@@ -1360,6 +1476,7 @@ void MainWindow::hideTextPanel()
     const bool wasTyping = m_textPanel->isVisible();
     const QSignalBlocker block(m_textPanel);
     m_textPanel->setText(QString());
+    m_textPanel->setBoxWidth(0); // wrapping belongs to one piece of text, not the next
     m_textPanel->hide();
     // The keyboard goes back to the canvas, so the next key (Delete, Ctrl+Z,
     // a tool letter) acts on the picture and not on a window that's gone.
@@ -1377,7 +1494,9 @@ void MainWindow::cancelText()
     m_text.active = false;
     m_text.dragging = false;
     m_moveDragging = false;
-    // Back to the document as it was before the text layer was made.
+    m_text.editing = false;
+    // Back to the document as it was before the text layer was made, or
+    // before its words were opened again.
     m_stack->swapState(m_text.before);
     m_text.before = easeletch::LayerStack();
     m_view->setSelectionOutline(m_selection.outlines());
@@ -1536,6 +1655,8 @@ void MainWindow::cancelFloating()
     if (!m_floating.isActive())
         return;
     m_floating.cancel();
+    m_floatText = false;
+    m_floatTextBefore = easeletch::LayerStack();
     m_moveDragging = false;
     endTransform();
     setSelection(m_selectionBeforeFloat);

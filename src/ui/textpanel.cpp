@@ -1,6 +1,7 @@
 #include "textpanel.h"
 
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFontComboBox>
@@ -60,6 +61,36 @@ TextPanel::TextPanel(QWidget *parent)
     row->addStretch(1);
     column->addLayout(row);
 
+    row = new QHBoxLayout;
+    m_outline = new QSpinBox(this);
+    m_outline->setRange(0, TextSettings::MaxOutline);
+    m_outline->setSpecialValueText(tr("None"));
+    m_outline->setSuffix(tr(" px"));
+    m_outline->setToolTip(tr("A line round the letters, so they read on any picture"));
+    m_outlineColorButton = new QToolButton(this);
+    m_outlineColorButton->setToolTip(tr("The outline's colour"));
+    m_outlineColorButton->setFixedWidth(36);
+    connect(m_outlineColorButton, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_outlineColor, this, tr("Outline colour"));
+        if (c.isValid())
+            setOutlineColor(c);
+    });
+    setOutlineColor(m_outlineColor);
+    m_box = new QSpinBox(this);
+    m_box->setRange(0, TextSettings::MaxBoxWidth);
+    m_box->setSingleStep(10);
+    m_box->setSpecialValueText(tr("Off"));
+    m_box->setSuffix(tr(" px"));
+    m_box->setToolTip(tr("Wrap the words inside this width. Off: lines break only where you press Enter."));
+    row->addWidget(new QLabel(tr("Outline"), this));
+    row->addWidget(m_outline);
+    row->addWidget(m_outlineColorButton);
+    row->addSpacing(12);
+    row->addWidget(new QLabel(tr("Wrap at"), this));
+    row->addWidget(m_box);
+    row->addStretch(1);
+    column->addLayout(row);
+
     m_edit = new QPlainTextEdit(this);
     m_edit->setPlaceholderText(tr("Type here. The canvas shows it as you go."));
     m_edit->setTabChangesFocus(true);
@@ -72,8 +103,8 @@ TextPanel::TextPanel(QWidget *parent)
     column->addWidget(hint);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Place"));
-    buttons->button(QDialogButtonBox::Ok)->setToolTip(tr("Put the text on its own new layer (Ctrl+Enter)"));
+    m_place = buttons->button(QDialogButtonBox::Ok);
+    setEditing(false);
     // Enter belongs to the text box: it starts a new line.
     buttons->button(QDialogButtonBox::Ok)->setAutoDefault(false);
     buttons->button(QDialogButtonBox::Ok)->setDefault(false);
@@ -96,6 +127,8 @@ TextPanel::TextPanel(QWidget *parent)
     connect(m_italic, &QToolButton::toggled, this, &TextPanel::changed);
     connect(m_align, &QComboBox::currentIndexChanged, this, &TextPanel::changed);
     connect(m_smooth, &QCheckBox::toggled, this, &TextPanel::changed);
+    connect(m_outline, &QSpinBox::valueChanged, this, &TextPanel::changed);
+    connect(m_box, &QSpinBox::valueChanged, this, &TextPanel::changed);
 }
 
 TextSettings TextPanel::settings() const
@@ -108,7 +141,25 @@ TextSettings TextPanel::settings() const
     s.italic = m_italic->isChecked();
     s.align = Qt::Alignment(m_align->currentData().toInt());
     s.smooth = m_smooth->isChecked();
+    s.outline = m_outline->value();
+    s.outlineColor = m_outlineColor;
+    s.boxWidth = m_box->value();
     return s;
+}
+
+void TextPanel::setSettings(const TextSettings &s)
+{
+    setText(s.text);
+    if (!s.family.isEmpty())
+        setFontFamily(s.family);
+    setPixelSize(s.pixelSize);
+    setBold(s.bold);
+    setItalic(s.italic);
+    setAlignment(s.align);
+    setSmooth(s.smooth);
+    setOutline(s.outline);
+    setOutlineColor(s.outlineColor);
+    setBoxWidth(s.boxWidth);
 }
 
 QString TextPanel::text() const
@@ -152,6 +203,33 @@ void TextPanel::setSmooth(bool on)
     m_smooth->setChecked(on);
 }
 
+void TextPanel::setOutline(int width)
+{
+    m_outline->setValue(width);
+}
+
+void TextPanel::setOutlineColor(const QColor &color)
+{
+    const bool same = color == m_outlineColor;
+    m_outlineColor = color;
+    m_outlineColorButton->setStyleSheet(
+        QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }").arg(color.name()));
+    if (!same)
+        emit changed();
+}
+
+void TextPanel::setBoxWidth(int width)
+{
+    m_box->setValue(width);
+}
+
+void TextPanel::setEditing(bool editing)
+{
+    m_place->setText(editing ? tr("Update") : tr("Place"));
+    m_place->setToolTip(editing ? tr("Change the text on its layer (Ctrl+Enter)")
+                                : tr("Put the text on its own new layer (Ctrl+Enter)"));
+}
+
 void TextPanel::focusText()
 {
     m_edit->setFocus();
@@ -168,6 +246,9 @@ void TextPanel::loadSettings(QSettings &s)
     setItalic(s.value(QStringLiteral("italic"), false).toBool());
     setAlignment(Qt::Alignment(s.value(QStringLiteral("align"), int(Qt::AlignLeft)).toInt()));
     setSmooth(s.value(QStringLiteral("smooth"), true).toBool());
+    setOutline(s.value(QStringLiteral("outline"), 0).toInt());
+    if (const QColor c = QColor::fromString(s.value(QStringLiteral("outlineColor")).toString()); c.isValid())
+        setOutlineColor(c);
     s.endGroup();
 }
 
@@ -181,6 +262,8 @@ void TextPanel::saveSettings(QSettings &s) const
     s.setValue(QStringLiteral("italic"), t.italic);
     s.setValue(QStringLiteral("align"), int(t.align));
     s.setValue(QStringLiteral("smooth"), t.smooth);
+    s.setValue(QStringLiteral("outline"), t.outline);
+    s.setValue(QStringLiteral("outlineColor"), t.outlineColor.name());
     s.endGroup();
 }
 

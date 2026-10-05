@@ -104,7 +104,14 @@ public:
     // Starts a block of text with its corner at a canvas point (what a click
     // with the Text tool does). The words come from the text panel.
     void beginText(const QPoint &pos);
-    // Places the text on its new layer (one undo step) / drops it.
+    // Opens a text layer's words in the text panel again, to change them or
+    // how they're drawn (what a click on placed text with the Text tool
+    // does). False if the layer isn't text any more, or can't be changed.
+    bool editText(int layerId);
+    // The topmost text layer with its words under a canvas point; 0 if none.
+    int textLayerAt(const QPoint &pos) const;
+    // Places the text on its layer (one undo step) / drops it, or the
+    // changes to it.
     void commitText();
     void cancelText();
     TransformTool *transformTool() const { return m_transformTool; }
@@ -375,6 +382,8 @@ private:
     void textDragged(const QPointF &pos);
     void textReleased(const QPointF &pos);
     void hideTextPanel();
+    // Shows the text panel, the first time in a corner away from pos.
+    void showTextPanel(const QPoint &pos);
     // Marching ants around floating pixels where they are now.
     void showFloatingOutline();
     void cropCanvasTo(const QRect &rect, const QString &label);
@@ -493,9 +502,12 @@ private:
     struct TextSession {
         bool active = false;
         int layerId = 0;
+        bool editing = false; // changing text already placed, not typing new
+        QString nameBefore;   // the name the layer would have been given for its old words
         easeletch::LayerStack before;
         QPoint anchor;  // the point the text hangs from (its corner, or centre / right edge)
         QPoint placed;  // where the floating image was last put
+        QRect box;      // the block of text, where it was last put
         bool dragging = false;
         bool clickStarts = false; // the press under way will start new text when it ends
         bool movingLayer = false; // ... or it became a drag, and is moving the layer
@@ -587,6 +599,9 @@ private:
     int m_opacityLayer = 0;
     quint64 m_opacityState = 0;
     mutable bool m_opacityRedrawPending = false;
+    // A move of a whole text layer: the text goes with it (see commitFloating).
+    bool m_floatText = false;
+    easeletch::LayerStack m_floatTextBefore;
     QPoint m_floatStart;                     // where the floating pixels began
     QPointF m_dragStart;
     QPoint m_dragOrigin;

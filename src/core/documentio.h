@@ -18,7 +18,11 @@ namespace easeletch {
 //   manifest.json            canvas size, pixel format, and the layers bottom to top:
 //                            id, name, type (raster / group / adjustment), parent (the
 //                            group it's in, 0 for none), visible, locked, opacity, blend;
-//                            an adjustment layer's settings are in "adjustment"
+//                            an adjustment layer's settings are in "adjustment";
+//                            a text layer is a raster layer that also has "text": its
+//                            words, font, size, colour, outline, wrap width, and the
+//                            "anchor" and "box" it sits at (no new format version:
+//                            builds from before text layers open it as its pixels)
 //   preview.png              flattened 8-bit sRGB image, at most 2048 px on its long side
 //   layers/<n>/mask/<cx>_<cy>
 //                            the same for layer n's mask, when it has one (the

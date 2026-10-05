@@ -931,6 +931,180 @@ private slots:
         w.undo();
         QCOMPARE(w.layers().count(), 2);
     }
+
+    void placedTextCanBeChanged()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorPanel()->setColor(Qt::black);
+        w.textPanel()->setPixelSize(60);
+        w.textPanel()->setBold(true);
+        w.textPanel()->setAlignment(Qt::AlignLeft);
+        w.textPanel()->setOutline(0);
+        w.canvasView()->setTool(w.textTool());
+        w.beginText({40, 60});
+        w.textPanel()->setText(QStringLiteral("HELLO"));
+        w.commitText();
+        const int text = w.layers().activeId();
+        const auto layerOf = [&] { return w.layers().layer(text); };
+        const auto inkIn = [&](const QRect &r) {
+            int n = 0;
+            for (int y = r.top(); y <= r.bottom(); ++y)
+                for (int x = r.left(); x <= r.right(); ++x)
+                    n += at(layerOf()->store, x, y).alpha() > 128;
+            return n;
+        };
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(layerOf()->text.text, QStringLiteral("HELLO"));
+        QCOMPARE(layerOf()->textAnchor, QPoint(40, 60));
+        const int inkHello = inkIn(QRect(0, 0, 400, 300));
+        const QRect box = layerOf()->textBox;
+        QVERIFY(box.contains(QPoint(100, 90)));
+        QCOMPARE(w.textLayerAt({100, 90}), text);
+        QCOMPARE(w.textLayerAt({100, 250}), 0);
+
+        // The colour and font in the panels are someone else's by now.
+        w.colorPanel()->setColor(Qt::red);
+        w.textPanel()->setPixelSize(20);
+        w.setActiveLayer(w.layers().children(0).first());
+
+        // A click on the words with the Text tool opens them again.
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 90}));
+        QTRY_VERIFY(w.isTyping());
+        QCOMPARE(w.layers().count(), 2); // no new layer
+        QCOMPARE(w.layers().activeId(), text);
+        QCOMPARE(w.textPanel()->text(), QStringLiteral("HELLO"));
+        QCOMPARE(w.textPanel()->settings().pixelSize, 60);
+        QCOMPARE(w.colorPanel()->color(), QColor(Qt::black));
+        QCOMPARE(inkIn(QRect(0, 0, 400, 300)), inkHello); // shown as it was
+
+        // Escape leaves it as it was, still text.
+        w.textPanel()->setText(QStringLiteral("HELLO WORLD"));
+        w.cancelText();
+        QCOMPARE(w.history().count(), 1);
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(layerOf()->text.text, QStringLiteral("HELLO"));
+        QCOMPARE(inkIn(QRect(0, 0, 400, 300)), inkHello);
+
+        // Changed and placed: one undo step, same layer, renamed after the new words.
+        QVERIFY(w.editText(text));
+        w.textPanel()->setText(QStringLiteral("HI"));
+        w.commitText();
+        QCOMPARE(w.layers().count(), 2);
+        QCOMPARE(w.history().count(), 2);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Edit Text"));
+        QCOMPARE(layerOf()->name, QStringLiteral("HI"));
+        QCOMPARE(layerOf()->text.text, QStringLiteral("HI"));
+        QCOMPARE(layerOf()->textAnchor, QPoint(40, 60));
+        QVERIFY(layerOf()->isText());
+        const int inkHi = inkIn(QRect(0, 0, 400, 300));
+        QVERIFY(inkHi > 200 && inkHi < inkHello);
+        w.undo();
+        QCOMPARE(layerOf()->text.text, QStringLiteral("HELLO"));
+        QCOMPARE(inkIn(QRect(0, 0, 400, 300)), inkHello);
+        QVERIFY(layerOf()->isText());
+        w.redo();
+        QCOMPARE(layerOf()->text.text, QStringLiteral("HI"));
+
+        // A name of the user's own is kept.
+        w.renameLayer(text, QStringLiteral("Title"));
+        QVERIFY(w.editText(text));
+        w.textPanel()->setText(QStringLiteral("HELLO"));
+        w.commitText();
+        QCOMPARE(layerOf()->name, QStringLiteral("Title"));
+
+        // Moving the layer moves the text with it: still text, at the new place.
+        w.canvasView()->setTool(w.textTool());
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 90}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {100, 140}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {110, 190}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {110, 190}));
+        QTest::qWait(20);
+        QVERIFY(!w.isTyping());
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(layerOf()->textAnchor, QPoint(50, 160));
+        QCOMPARE(inkIn(QRect(0, 0, 400, 300)), inkHello);
+        QCOMPARE(inkIn(QRect(0, 0, 400, 150)), 0);
+        QCOMPARE(w.textLayerAt({110, 190}), text);
+        w.undo();
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(layerOf()->textAnchor, QPoint(40, 60));
+        QCOMPARE(inkIn(QRect(0, 150, 400, 150)), 0);
+        w.redo();
+
+        // Pushed half off the canvas and brought back, nothing is lost.
+        w.canvasView()->setTool(w.moveTool());
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {110, 190}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {60, 190}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {10, 190}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {10, 190}));
+        w.commitFloating(); // the Move tool keeps it floating until it's placed
+        QVERIFY(inkIn(QRect(0, 0, 400, 300)) < inkHello);
+        QVERIFY(layerOf()->isText());
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {10, 190}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {60, 190}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {110, 190}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {110, 190}));
+        w.commitFloating();
+        QCOMPARE(inkIn(QRect(0, 0, 400, 300)), inkHello);
+        QCOMPARE(layerOf()->textAnchor, QPoint(50, 160));
+        QVERIFY(w.selection().isEmpty());
+
+        // Cropping the canvas keeps it text, at its place in the new canvas.
+        w.setSelection(Selection::rect(QRect(20, 100, 360, 180)));
+        w.cropToSelection();
+        QCOMPARE(w.canvasSize(), QSize(360, 180));
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(layerOf()->textAnchor, QPoint(30, 60));
+        QCOMPARE(inkIn(QRect(0, 0, 360, 180)), inkHello);
+        w.undo();
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(layerOf()->textAnchor, QPoint(50, 160));
+
+        // It survives a save: reopened, a click still opens the words.
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("text.easeletch"));
+        QVERIFY(w.saveDocumentTo(path, true));
+        {
+            MainWindow w2;
+            w2.resize(1200, 800);
+            w2.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&w2));
+            QSignalSpy opened(&w2, &MainWindow::documentOpened);
+            w2.openDocument(path);
+            QVERIFY(opened.wait(10000));
+            QVERIFY(opened.first().at(1).toBool());
+            const int id = w2.textLayerAt({110, 190});
+            QVERIFY(id != 0);
+            QVERIFY(w2.editText(id));
+            QCOMPARE(w2.textPanel()->text(), QStringLiteral("HELLO"));
+            QCOMPARE(w2.textPanel()->settings().pixelSize, 60);
+            w2.cancelText();
+        }
+
+        // Painted on, it's ordinary pixels: there's nothing to open. Undo
+        // brings the text back.
+        w.canvasView()->setTool(w.brushTool());
+        stroke(w, {60, 190}, {300, 190});
+        QVERIFY(!layerOf()->isText());
+        QCOMPARE(w.textLayerAt({110, 190}), 0);
+        QVERIFY(!w.editText(text));
+        QVERIFY(!w.isTyping());
+        w.undo();
+        QVERIFY(layerOf()->isText());
+        QCOMPARE(w.textLayerAt({110, 190}), text);
+
+        // The same for a flip: the pixels aren't what the words draw any more.
+        w.flipHorizontal();
+        QVERIFY(!layerOf()->isText());
+        w.undo();
+        QVERIFY(layerOf()->isText());
+
+        // A locked text layer isn't opened.
+        w.setLayerLocked(text, true);
+        QVERIFY(!w.editText(text));
+        QVERIFY(!w.isTyping());
+    }
 };
 
 QTEST_MAIN(TestLayerUi)
