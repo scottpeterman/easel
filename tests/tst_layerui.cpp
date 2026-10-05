@@ -1392,21 +1392,35 @@ private slots:
         QCOMPARE(w.canvasView()->handles().size(), 4);
         QCOMPARE(pix(160, 60), QColor(Qt::black)); // shown as it was
 
+        // Where the window puts the canvas decides which screen pixel a canvas
+        // point lands on, so a click can be a canvas pixel off: positions
+        // are compared to within one.
+        const auto close = [](const QPointF &a, const QPointF &b) {
+            return qAbs(a.x() - b.x()) <= 1.0 && qAbs(a.y() - b.y()) <= 1.0;
+        };
+        const QList<QPointF> placed = w.shapePoints();
+        QVERIFY(close(placed.at(0), {60, 60}) && close(placed.at(1), {260, 60}));
+        QVERIFY(close(placed.at(2), {260, 200}) && close(placed.at(3), {60, 200}));
+
         // Dragging a point moves it; the sides follow.
         drag({260, 60}, {320, 30});
-        QCOMPARE(w.shapePoints().at(1), QPointF(320, 30));
+        QVERIFY(close(w.shapePoints().at(1), {320, 30}));
+        QCOMPARE(w.shapePoints().at(0), placed.at(0)); // the others stay put
         QCOMPARE(pix(160, 60).alpha(), 0);
         // Dragging a side adds a point there.
         drag({60, 130}, {30, 130});
         QCOMPARE(w.shapePoints().size(), 5);
-        QCOMPARE(w.shapePoints().at(4), QPointF(30, 130));
+        QVERIFY(close(w.shapePoints().at(4), {30, 130}));
         // Delete removes the point last touched.
         QTest::keyClick(w.canvasView(), Qt::Key_Delete);
         QCOMPARE(w.shapePoints().size(), 4);
         // Dragging inside moves all of it.
+        const QList<QPointF> before = w.shapePoints();
         drag({160, 150}, {170, 170});
-        QCOMPARE(w.shapePoints().at(0), QPointF(70, 80));
-        QCOMPARE(w.shapePoints().at(1), QPointF(330, 50));
+        const QPointF shift = w.shapePoints().at(0) - before.at(0);
+        QVERIFY(close(shift, {10, 20}));
+        for (int i = 0; i < before.size(); ++i)
+            QCOMPARE(w.shapePoints().at(i), before.at(i) + shift); // every point by the same amount
         // The fill is the painting colour; the options change it as it stands.
         o = w.shapeOptions();
         o.filled = true;
@@ -1421,7 +1435,7 @@ private slots:
         QTest::keyClick(w.canvasView(), Qt::Key_Escape);
         QVERIFY(!w.isShaping());
         QCOMPARE(w.history().count(), 1);
-        QCOMPARE(w.layers().layer(shape)->shape.points.at(1), QPointF(260, 60));
+        QCOMPARE(w.layers().layer(shape)->shape.points, placed);
         QVERIFY(w.layers().layer(shape)->isShape());
         QCOMPARE(pix(160, 60), QColor(Qt::black));
 
@@ -1451,15 +1465,16 @@ private slots:
         drag({160, 130}, {180, 150});
         w.commitFloating();
         QVERIFY(w.layers().layer(shape)->isShape());
-        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), QPointF(80, 80));
+        const QPointF moved = w.layers().layer(shape)->shape.points.at(0);
+        QVERIFY(close(moved - placed.at(0), {20, 20}));
         QCOMPARE(pix(180, 150), QColor(Qt::red));
         // ... and so does a crop.
         w.setSelection(Selection::rect(QRect(20, 20, 360, 260)));
         w.cropToSelection();
         QVERIFY(w.layers().layer(shape)->isShape());
-        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), QPointF(60, 60));
+        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), moved - QPointF(20, 20));
         w.undo();
-        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), QPointF(80, 80));
+        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), moved);
 
         // It survives a save.
         QTemporaryDir dir;
