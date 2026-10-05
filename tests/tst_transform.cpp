@@ -410,6 +410,120 @@ private slots:
         for (const TileCoord c : TileStore::tilesIntersecting(canvas))
             QVERIFY(store.tile(c) == original.tile(c));
     }
+
+    void warpPutsEachCornerWhereItIsTold()
+    {
+        // A 100 x 60 block: red left half, blue right half, a green corner at top-left.
+        QImage src = blank(100, 60);
+        for (int y = 0; y < 60; ++y)
+            for (int x = 0; x < 100; ++x)
+                set(src, x, y, x < 10 && y < 10 ? Qt::green : x < 50 ? Qt::red : Qt::blue);
+        const QSizeF size(100, 60);
+
+        // Corners left where they are: nothing changes, to the pixel.
+        const QPolygonF same({{20, 30}, {120, 30}, {120, 90}, {20, 90}});
+        bool ok = false;
+        QTransform m = warpMatrix(size, same, &ok);
+        QVERIFY(ok);
+        QVERIFY(m.isAffine());
+        QPoint origin;
+        QImage out = transformImage(src, m, true, &origin);
+        QCOMPARE(origin, QPoint(20, 30));
+        QCOMPARE(out.size(), src.size());
+        QCOMPARE(colorAt(out, 3, 3), QColor(Qt::green));
+        QCOMPARE(colorAt(out, 80, 40), QColor(Qt::blue));
+
+        // The right side pulled in, top and bottom: a wall going away to the right.
+        const QPolygonF wall({{20, 30}, {220, 60}, {220, 100}, {20, 130}});
+        m = warpMatrix(size, wall, &ok);
+        QVERIFY(ok);
+        QVERIFY(!m.isAffine());
+        for (int i = 0; i < 4; ++i) {
+            const QPointF corner = QPolygonF(QRectF(0, 0, 100, 60)).at(i);
+            const QPointF put = m.map(corner);
+            QVERIFY(qAbs(put.x() - wall.at(i).x()) < 1e-6 && qAbs(put.y() - wall.at(i).y()) < 1e-6);
+        }
+        out = transformImage(src, m, true, &origin);
+        QCOMPARE(origin, QPoint(20, 30));
+        QCOMPARE(out.size(), QSize(200, 100));
+        const auto put = [&](int x, int y) { return colorAt(out, x - origin.x(), y - origin.y()); };
+        // Each corner's colour is at its corner, a few pixels in.
+        QCOMPARE(put(24, 36), QColor(Qt::green));
+        QCOMPARE(put(24, 124), QColor(Qt::red));
+        QCOMPARE(put(214, 64), QColor(Qt::blue));
+        QCOMPARE(put(214, 96), QColor(Qt::blue));
+        // Outside the four corners nothing is drawn, inside is solid.
+        QCOMPARE(put(200, 40).alpha(), 0);
+        QCOMPARE(put(200, 125).alpha(), 0);
+        QCOMPARE(put(120, 80).alpha(), 255);
+        // The slanted edge is soft, not stepped.
+        int soft = 0;
+        for (int x = 40; x < 200; ++x)
+            for (int y = 30; y < 60; ++y) {
+                const float a = float(at(out, x - origin.x(), y - origin.y()).a);
+                soft += a > 0.05f && a < 0.95f;
+            }
+        QVERIFY(soft > 100);
+        // In perspective the far half is narrower: the join between red and
+        // blue, halfway along the source, lands past the middle of the result.
+        int join = 0;
+        for (int x = 20; x < 220; ++x)
+            if (put(x, 80).red() > 128)
+                join = x;
+        QVERIFY2(join > 135 && join < 200, qPrintable(QString::number(join)));
+
+        // Hard pixels: the same shape with no in-between pixels.
+        const QImage hard = transformImage(src, m, false, &origin);
+        QCOMPARE(hard.size(), out.size());
+        for (int y = 0; y < hard.height(); ++y)
+            for (int x = 0; x < hard.width(); ++x)
+                QVERIFY(float(at(hard, x, y).a) == 0.0f || float(at(hard, x, y).a) == 1.0f);
+        // Only what's inside the clip is made.
+        const QImage clipped = transformImage(src, m, true, &origin, QRect(100, 50, 60, 40));
+        QCOMPARE(origin, QPoint(100, 50));
+        QCOMPARE(clipped.size(), QSize(60, 40));
+        QCOMPARE(colorAt(clipped, 10, 20), put(110, 70));
+
+        // A selection's shape goes through the same warp.
+        const Selection shape = transformShape(Selection::rect(QRect(0, 0, 100, 60)), src.size(), m);
+        QVERIFY(shape.contains(100, 50));  // (120, 80) on the canvas
+        QVERIFY(!shape.contains(180, 5));  // above the slanted top edge
+        QCOMPARE(shape.bounds().size(), QSize(200, 100));
+
+        // Shrunk a great deal, every source pixel still counts: fine stripes
+        // come out as their average, not as whichever stripe was hit.
+        QImage stripes = blank(400, 400);
+        for (int y = 0; y < 400; ++y)
+            for (int x = 0; x < 400; ++x)
+                set(stripes, x, y, x % 2 ? Qt::white : Qt::black);
+        m = warpMatrix(QSizeF(400, 400), QPolygonF({{0, 0}, {50, 5}, {50, 45}, {0, 50}}), &ok);
+        QVERIFY(ok);
+        const QImage small = transformImage(stripes, m, true, &origin);
+        const QColor grey = colorAt(small, 25, 25);
+        QVERIFY2(grey.red() > 120 && grey.red() < 250, qPrintable(QString::number(grey.red())));
+    }
+
+    void cornersThatCannotBeDrawnAreRefused()
+    {
+        const QSizeF size(100, 60);
+        bool ok = true;
+        // Folded over itself (a bow tie).
+        QVERIFY(!isWarpable(QPolygonF({{0, 0}, {100, 60}, {100, 0}, {0, 60}})));
+        // Dented inwards.
+        QVERIFY(!isWarpable(QPolygonF({{0, 0}, {100, 0}, {30, 20}, {0, 60}})));
+        // Squashed flat, or to a line at one corner.
+        QVERIFY(!isWarpable(QPolygonF({{0, 0}, {100, 0}, {100, 0.2}, {0, 0.2}})));
+        QVERIFY(!isWarpable(QPolygonF({{0, 0}, {50, 0}, {100, 0}, {0, 60}})));
+        QVERIFY(!isWarpable(QPolygonF({{0, 0}, {100, 0}, {100, 60}})));
+        // Turned over (a flip) is fine: it's still a shape.
+        QVERIFY(isWarpable(QPolygonF({{100, 0}, {0, 0}, {0, 60}, {100, 60}})));
+        QVERIFY(isWarpable(QPolygonF({{0, 0}, {100, 10}, {90, 60}, {10, 50}})));
+        const QTransform m = warpMatrix(size, QPolygonF({{0, 0}, {100, 60}, {100, 0}, {0, 60}}), &ok);
+        QVERIFY(!ok);
+        QVERIFY(m.isIdentity());
+        warpMatrix(QSizeF(0, 60), QPolygonF({{0, 0}, {100, 0}, {100, 60}, {0, 60}}), &ok);
+        QVERIFY(!ok);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestTransform)

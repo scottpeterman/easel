@@ -80,6 +80,7 @@ void MainWindow::createTransformOptions()
     link->setChecked(true);
     link->setToolTip(tr("Changing the width or the height changes the other to match"));
     row->addWidget(link);
+    m_xfBoxOnly << m_xfWidth << m_xfHeight << link;
 
     row->addSpacing(8);
     row->addWidget(new QLabel(tr("Angle"), host));
@@ -89,6 +90,14 @@ void MainWindow::createTransformOptions()
     m_xfAngle->setSuffix(tr("°"));
     m_xfAngle->setKeyboardTracking(false);
     row->addWidget(m_xfAngle);
+    m_xfBoxOnly << m_xfAngle;
+
+    m_xfWarp = new QCheckBox(tr("Corners"), host);
+    m_xfWarp->setObjectName(QStringLiteral("transformWarp"));
+    m_xfWarp->setToolTip(tr("Warp: drag each corner on its own, and what's between follows in perspective. "
+                            "Lays a flat texture on a wing or a wall seen at an angle."));
+    row->addSpacing(8);
+    row->addWidget(m_xfWarp);
 
     m_xfSmooth = new QCheckBox(tr("Smooth"), host);
     m_xfSmooth->setToolTip(tr("Blend pixels for smooth edges. Untick to keep hard pixels (sprites, pixel art)."));
@@ -106,9 +115,9 @@ void MainWindow::createTransformOptions()
         return b;
     };
     row->addSpacing(8);
-    button(tr("Flip H"), tr("Flip left to right"), &MainWindow::flipHorizontal);
-    button(tr("Flip V"), tr("Flip top to bottom"), &MainWindow::flipVertical);
-    button(tr("Turn 90°"), tr("Rotate a quarter turn clockwise"), [this] { rotateQuarter(1); });
+    m_xfBoxOnly << button(tr("Flip H"), tr("Flip left to right"), &MainWindow::flipHorizontal);
+    m_xfBoxOnly << button(tr("Flip V"), tr("Flip top to bottom"), &MainWindow::flipVertical);
+    m_xfBoxOnly << button(tr("Turn 90°"), tr("Rotate a quarter turn clockwise"), [this] { rotateQuarter(1); });
     row->addSpacing(12);
     button(tr("Apply"), tr("Apply the transform (Enter)"), &MainWindow::commitFloating);
     button(tr("Cancel"), tr("Put everything back (Escape)"), &MainWindow::cancelFloating);
@@ -139,6 +148,7 @@ void MainWindow::createTransformOptions()
             setTransform(m_xf.box.scaleX, m_xf.box.scaleY, v);
     });
     connect(m_xfSmooth, &QCheckBox::toggled, this, &MainWindow::setTransformSmooth);
+    connect(m_xfWarp, &QCheckBox::toggled, this, &MainWindow::setTransformWarp);
 
     addToolBar(Qt::TopToolBarArea, m_transformOptions);
 }
@@ -202,7 +212,21 @@ void MainWindow::applyTransform(bool final)
 {
     if (!m_xf.active || !m_floating.isActive())
         return;
-    if (m_xf.box.isIdentity()) {
+    if (m_xf.warp) {
+        bool ok = false;
+        const QTransform matrix = easeletch::warpMatrix(m_xf.source.size(), m_xf.quad, &ok);
+        if (!ok)
+            return; // corners that can't be drawn never get this far; nothing to redraw if they do
+        const bool smooth = m_transformSmooth && (final || !m_xf.changed || m_lastSmoothMs <= kSmoothPreviewBudgetMs);
+        QElapsedTimer timer;
+        timer.start();
+        QPoint origin;
+        const QImage image = easeletch::transformImage(m_xf.source, matrix, smooth, &origin, canvasRect());
+        if (smooth)
+            m_lastSmoothMs = timer.elapsed();
+        m_floating.replace(image, easeletch::transformShape(m_xf.shape, m_xf.source.size(), matrix, canvasRect()),
+                           origin);
+    } else if (m_xf.box.isIdentity()) {
         const QPointF corner = m_xf.box.center
                                - QPointF(m_xf.source.width() / 2.0, m_xf.source.height() / 2.0);
         m_floating.replace(m_xf.source, m_xf.shape,
@@ -236,11 +260,24 @@ void MainWindow::updateTransformOutline()
     // The box, and a small square on each handle: eight screen pixels wide,
     // whatever the zoom.
     const FreeTransform &box = m_xf.box;
-    QPolygonF frame = box.corners();
+    QPolygonF frame = m_xf.warp ? m_xf.quad : box.corners();
     frame << frame.first();
     QList<QPolygonF> handles;
 
     const double half = 4.0 / qMax(m_view->zoom(), 0.01);
+    if (m_xf.warp) {
+        // A square on each corner, and nothing on the sides: there's no
+        // scaling here, only corners to put where they go.
+        for (const QPointF &c : std::as_const(m_xf.quad)) {
+            QPolygonF s;
+            s << c + QPointF(-half, -half) << c + QPointF(half, -half) << c + QPointF(half, half)
+              << c + QPointF(-half, half);
+            handles << s;
+        }
+        m_view->setSelectionOutline({frame});
+        m_view->setHandles(handles);
+        return;
+    }
     const QTransform turn = QTransform().rotate(box.angle);
     const bool small = std::abs(box.size.width() * box.scaleX) < half * 8.0
                        || std::abs(box.size.height() * box.scaleY) < half * 8.0;
@@ -273,11 +310,56 @@ void MainWindow::syncTransformOptions()
     m_xfHeight->setValue(m_xf.active ? m_xf.box.scaleY * 100.0 : 100.0);
     m_xfAngle->setValue(m_xf.active ? m_xf.box.angle : 0.0);
     m_xfSmooth->setChecked(m_transformSmooth);
+    const bool warp = m_xf.active && m_xf.warp;
+    {
+        const QSignalBlocker b5(m_xfWarp);
+        m_xfWarp->setChecked(warp);
+    }
+    m_xfWarp->setEnabled(m_xf.active);
+    for (QWidget *w : std::as_const(m_xfBoxOnly))
+        w->setEnabled(!warp);
+}
+
+void MainWindow::setTransformWarp(bool on)
+{
+    if (!m_xf.active || m_xf.warp == on) {
+        syncTransformOptions();
+        return;
+    }
+    m_xf.warp = on;
+    m_xf.corner = -1;
+    // From the box as it stands; and back to it, as it was left.
+    m_xf.quad = m_xf.box.corners();
+    applyTransform(true);
+    if (on)
+        statusBar()->showMessage(tr("Drag a corner to put it where it goes, inside the shape to move it. "
+                                    "Enter applies, Escape cancels."),
+                                 10000);
+}
+
+QPolygonF MainWindow::transformCorners() const
+{
+    if (!m_xf.active)
+        return {};
+    return m_xf.warp ? m_xf.quad : m_xf.box.corners();
+}
+
+bool MainWindow::setTransformCorner(int corner, const QPointF &pos)
+{
+    if (!m_xf.active || !m_xf.warp || corner < 0 || corner > 3)
+        return false;
+    QPolygonF quad = m_xf.quad;
+    quad[corner] = pos;
+    if (!easeletch::isWarpable(quad))
+        return false;
+    m_xf.quad = quad;
+    applyTransform(true);
+    return true;
 }
 
 void MainWindow::setTransform(double scaleX, double scaleY, double angle)
 {
-    if (!m_xf.active || scaleX == 0.0 || scaleY == 0.0)
+    if (!m_xf.active || m_xf.warp || scaleX == 0.0 || scaleY == 0.0)
         return;
     m_xf.box.scaleX = scaleX;
     m_xf.box.scaleY = scaleY;
@@ -301,6 +383,10 @@ void MainWindow::quickTransform(const QString &label, void (FreeTransform::*chan
 {
     if (!m_stack || m_view->isStroking())
         return;
+    if (m_xf.active && m_xf.warp) {
+        statusBar()->showMessage(tr("Flip or turn it before turning Corners on"), 5000);
+        return;
+    }
     if (m_xf.active) {
         (m_xf.box.*change)();
         applyTransform(true);
@@ -347,6 +433,23 @@ void MainWindow::transformPressed(const QPointF &pos)
 {
     if (!m_xf.active)
         return;
+    if (m_xf.warp) {
+        // The nearest corner within reach; failing that, inside moves all four.
+        const double grab = 8.0 / qMax(m_view->zoom(), 0.01);
+        m_xf.corner = -1;
+        double best = grab;
+        for (int i = 0; i < m_xf.quad.size(); ++i) {
+            const double d = QLineF(pos, m_xf.quad.at(i)).length();
+            if (d <= best) {
+                best = d;
+                m_xf.corner = i;
+            }
+        }
+        m_xf.quadStart = m_xf.quad;
+        m_xf.dragFrom = pos;
+        m_xf.dragging = m_xf.corner >= 0 || m_xf.quad.containsPoint(pos, Qt::OddEvenFill);
+        return;
+    }
     m_xf.handle = easeletch::hitTest(m_xf.box, pos, 8.0 / qMax(m_view->zoom(), 0.01));
     m_xf.start = m_xf.box;
     m_xf.dragFrom = pos;
@@ -357,6 +460,20 @@ void MainWindow::transformDragged(const QPointF &pos)
 {
     if (!m_xf.active || !m_xf.dragging)
         return;
+    if (m_xf.warp) {
+        QPolygonF quad = m_xf.quadStart;
+        const QPointF delta = pos - m_xf.dragFrom;
+        if (m_xf.corner >= 0)
+            quad[m_xf.corner] += delta;
+        else
+            quad.translate(QPointF(std::round(delta.x()), std::round(delta.y())));
+        // A corner dragged across the others would fold it: it stops where it last made sense.
+        if (!easeletch::isWarpable(quad) || quad == m_xf.quad)
+            return;
+        m_xf.quad = quad;
+        applyTransform(false);
+        return;
+    }
     const bool shift = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
     m_xf.box = easeletch::dragHandle(m_xf.start, m_xf.handle, m_xf.dragFrom, pos, shift);
     applyTransform(false);
@@ -366,6 +483,14 @@ void MainWindow::transformReleased(const QPointF &pos)
 {
     if (!m_xf.active || !m_xf.dragging)
         return;
+    if (m_xf.warp) {
+        transformDragged(pos);
+        m_xf.dragging = false;
+        m_xf.corner = -1;
+        if (m_xf.quad != m_xf.quadStart)
+            applyTransform(true); // the drag may have left a quick preview
+        return;
+    }
     const bool shift = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
     m_xf.box = easeletch::dragHandle(m_xf.start, m_xf.handle, m_xf.dragFrom, pos, shift);
     m_xf.dragging = false;

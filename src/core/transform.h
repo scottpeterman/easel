@@ -69,11 +69,21 @@ TransformHandle hitTest(const FreeTransform &t, const QPointF &pos, double toler
 FreeTransform dragHandle(const FreeTransform &start, TransformHandle handle, const QPointF &from,
                          const QPointF &to, bool constrain);
 
+// A four-corner warp: the matrix that puts a size's corners (top-left,
+// top-right, bottom-right, bottom-left) on the four points of quad, with
+// everything between following in perspective. ok is false, and the matrix
+// the identity, when the corners don't make a shape that can be drawn: one
+// folded over itself or dented inwards, or with no area.
+QTransform warpMatrix(const QSizeF &size, const QPolygonF &quad, bool *ok = nullptr);
+// Whether four corners make such a shape.
+bool isWarpable(const QPolygonF &quad);
+
 // Resamples an image (tile format: RGBA16F, linear, premultiplied) through a
 // transform. origin gets where the result's top-left belongs on the canvas.
 // smooth: bilinear, averaged over the source pixels each result pixel covers
 // when shrinking; otherwise nearest neighbour, which keeps pixel art hard.
-// Flips and quarter turns are exact either way.
+// Flips and quarter turns are exact either way. The matrix may be a
+// perspective one (warpMatrix()).
 // clip: when given, only the part of the result inside it (the canvas) is made.
 QImage transformImage(const QImage &source, const QTransform &matrix, bool smooth, QPoint *origin,
                       const QRect &clip = QRect());

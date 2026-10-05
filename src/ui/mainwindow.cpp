@@ -121,6 +121,8 @@ MainWindow::MainWindow(QWidget *parent)
         if (!m_xf.active || m_xf.dragging)
             return;
         m_xf.box.center += QPointF(delta);
+        if (m_xf.warp)
+            m_xf.quad.translate(QPointF(delta));
         applyTransform(true);
     });
     m_shapeTool = new ShapeTool(this);

@@ -5,6 +5,7 @@
 #include "mainwindow.h"
 #include "selecttools.h"
 
+#include <QCheckBox>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QMouseEvent>
@@ -328,6 +329,113 @@ private slots:
         QVERIFY(w.addLayer()); // any change to the layers applies it first
         QVERIFY(!w.isTransforming());
         QCOMPARE(w.history().label(w.history().count() - 2), QStringLiteral("Transform"));
+    }
+
+    void cornersCanBeDraggedOnTheirOwn()
+    {
+        MainWindow w;
+        setupWindow(w);
+        // A second layer with a 100 x 60 block at (100, 100): red left half, blue right.
+        QVERIFY(w.addLayer());
+        w.layer()->fillRect(QRect(100, 100, 50, 60), QColor(Qt::red));
+        w.layer()->fillRect(QRect(150, 100, 50, 60), QColor(Qt::blue));
+        w.canvasView()->refresh();
+        const qsizetype steps = w.history().count();
+        auto *corners = w.findChild<QCheckBox *>(QStringLiteral("transformWarp"));
+        QVERIFY(corners);
+
+        QVERIFY(w.beginTransform());
+        QVERIFY(!w.transformWarp());
+        QVERIFY(corners->isEnabled() && !corners->isChecked());
+        QCOMPARE(w.canvasView()->handles().size(), 8);
+        // Turned on, it starts from the box as it is: four corners, nothing moved.
+        corners->setChecked(true);
+        QVERIFY(w.transformWarp());
+        QCOMPARE(w.canvasView()->handles().size(), 4);
+        const QPolygonF box = w.transformCorners();
+        QCOMPARE(box, QPolygonF({{100, 100}, {200, 100}, {200, 160}, {100, 160}}));
+        QCOMPARE(pixel(w, 120, 130), QColor(Qt::red));
+        QCOMPARE(pixel(w, 180, 130), QColor(Qt::blue));
+
+        // Dragging one corner moves that corner only; the picture follows.
+        drag(w, {200, 100}, {260, 120});
+        const QPolygonF pulled = w.transformCorners();
+        QVERIFY(qAbs(pulled.at(1).x() - 260) <= 1.5 && qAbs(pulled.at(1).y() - 120) <= 1.5);
+        QCOMPARE(pulled.at(0), box.at(0));
+        QCOMPARE(pulled.at(2), box.at(2));
+        QCOMPARE(pulled.at(3), box.at(3));
+        QCOMPARE(pixel(w, 240, 125), QColor(Qt::blue)); // stretched out to the corner
+        QCOMPARE(pixel(w, 190, 104).alpha(), 0);        // the top edge slants down now
+        QCOMPARE(pixel(w, 110, 150), QColor(Qt::red));
+        QVERIFY(w.isFloating());
+        QCOMPARE(w.history().count(), steps); // nothing recorded yet
+
+        // A corner can't be dragged across the others: it stays where it last made sense.
+        QVERIFY(!w.setTransformCorner(0, {250, 170}));
+        QCOMPARE(w.transformCorners(), pulled);
+        drag(w, {100, 100}, {250, 170});
+        QVERIFY(isWarpable(w.transformCorners()));
+        QVERIFY(w.transformCorners().at(0).x() < 250);
+        QVERIFY(w.setTransformCorner(0, box.at(0)));
+
+        // Dragging inside moves all four; the arrows nudge them.
+        drag(w, {150, 130}, {160, 150});
+        const QPointF shift = w.transformCorners().at(0) - box.at(0);
+        QVERIFY(qAbs(shift.x() - 10) <= 1 && qAbs(shift.y() - 20) <= 1);
+        QCOMPARE(w.transformCorners().at(2), box.at(2) + shift);
+        key(w, Qt::Key_Left);
+        QCOMPARE(w.transformCorners().at(2), box.at(2) + shift + QPointF(-1, 0));
+        // Flips and sizes belong to the box: they're off while the corners are free.
+        const QPolygonF before = w.transformCorners();
+        w.flipHorizontal();
+        w.setTransform(2.0, 2.0, 0.0);
+        QCOMPARE(w.transformCorners(), before);
+
+        // Enter applies it as one step; undo puts the block back as it was.
+        key(w, Qt::Key_Return);
+        QVERIFY(!w.isTransforming());
+        QVERIFY(!w.isFloating());
+        QVERIFY(!corners->isChecked());
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Transform"));
+        QCOMPARE(pixel(w, 250 + int(shift.x()) - 12, 125 + int(shift.y())), QColor(Qt::blue));
+        w.undo();
+        QCOMPARE(pixel(w, 120, 130), QColor(Qt::red));
+        QCOMPARE(pixel(w, 180, 130), QColor(Qt::blue));
+        QCOMPARE(pixel(w, 240, 125).alpha(), 0);
+
+        // Turned off again before applying, it's the box once more; Escape drops everything.
+        QVERIFY(w.beginTransform());
+        w.setTransformWarp(true);
+        QVERIFY(w.setTransformCorner(2, {300, 250}));
+        QCOMPARE(pixel(w, 270, 220), QColor(Qt::blue));
+        w.setTransformWarp(false);
+        QCOMPARE(w.transformCorners(), box);
+        QCOMPARE(w.canvasView()->handles().size(), 8);
+        QCOMPARE(pixel(w, 270, 220).alpha(), 0);
+        QCOMPARE(pixel(w, 180, 130), QColor(Qt::blue));
+        w.setTransformWarp(true);
+        QVERIFY(w.setTransformCorner(2, {300, 250}));
+        key(w, Qt::Key_Escape);
+        QVERIFY(!w.isTransforming());
+        QCOMPARE(w.history().position(), steps); // still where the undo left it
+        QCOMPARE(pixel(w, 270, 220).alpha(), 0);
+        QCOMPARE(pixel(w, 180, 130), QColor(Qt::blue));
+
+        // A selection is warped on its own, and what's left behind is cleared.
+        w.setSelection(Selection::rect(QRect(150, 100, 50, 60)));
+        QVERIFY(w.beginTransform());
+        w.setTransformWarp(true);
+        QCOMPARE(w.transformCorners(), QPolygonF({{150, 100}, {200, 100}, {200, 160}, {150, 160}}));
+        QVERIFY(w.setTransformCorner(1, {280, 60}));
+        QVERIFY(w.setTransformCorner(2, {280, 200}));
+        key(w, Qt::Key_Return);
+        QCOMPARE(pixel(w, 260, 130), QColor(Qt::blue));
+        QCOMPARE(pixel(w, 120, 130), QColor(Qt::red)); // the red half never moved
+        QCOMPARE(pixel(w, 260, 70).alpha() > 0, true);
+        QVERIFY(!w.selection().isEmpty());             // and it's what's selected now
+        QVERIFY(w.selection().contains(260, 130));
+        QVERIFY(!w.selection().contains(160, 80));
     }
 };
 

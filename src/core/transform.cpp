@@ -65,11 +65,120 @@ QRect coveredRect(const QRectF &r)
     return QRect(x0, y0, std::max(1, x1 - x0), std::max(1, y1 - y0));
 }
 
+// The same as resample() below, for a matrix with perspective in it: where a
+// result pixel comes from is no longer the same sum for every pixel, so each
+// one is traced back on its own.
+std::vector<float> resampleProjective(const std::vector<float> &src, int w, int h, int channels,
+                                      const QTransform &matrix, bool smooth, const QRect &clip, QRect *outRect)
+{
+    QRect out = coveredRect(matrix.map(QPolygonF(QRectF(0, 0, w, h))).boundingRect());
+    if (!clip.isNull()) {
+        const QRect kept = out & clip;
+        out = kept.isEmpty() ? QRect(out.topLeft(), QSize(1, 1)) : kept;
+    }
+    *outRect = out;
+    std::vector<float> dst(size_t(out.width()) * size_t(out.height()) * size_t(channels), 0.0f);
+    bool invertible = false;
+    const QTransform inv = matrix.inverted(&invertible);
+    if (!invertible)
+        return dst;
+    const double a = inv.m11(), b = inv.m12(), p13 = inv.m13(), c = inv.m21(), d = inv.m22(), p23 = inv.m23(),
+                 e = inv.m31(), f = inv.m32(), p33 = inv.m33();
+    // The divisor has one sign everywhere on the picture; past the horizon
+    // (where a flat thing tilted that far would vanish) it has the other,
+    // and there's nothing there.
+    const QPointF middle = matrix.map(QPointF(w / 2.0, h / 2.0));
+    const double sign = (p13 * middle.x() + p23 * middle.y() + p33) < 0.0 ? -1.0 : 1.0;
+    struct Source {
+        double u, v;
+        bool ok;
+    };
+    const auto trace = [&](double X, double Y) {
+        const double W = (p13 * X + p23 * Y + p33) * sign;
+        if (W <= 1e-9)
+            return Source{0.0, 0.0, false};
+        return Source{(a * X + c * Y + e) * sign / W, (b * X + d * Y + f) * sign / W, true};
+    };
+    const auto at = [&](int x, int y) {
+        return &src[(size_t(std::clamp(y, 0, h - 1)) * size_t(w) + size_t(std::clamp(x, 0, w - 1))) * size_t(channels)];
+    };
+    const auto addBilinear = [&](float *px, double u, double v, float share) {
+        const double fu = u - 0.5, fv = v - 0.5;
+        const int x0 = int(std::floor(fu)), y0 = int(std::floor(fv));
+        const float tx = float(fu - x0), ty = float(fv - y0);
+        const float k[4] = {(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty};
+        const float *s[4] = {at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1)};
+        for (int i = 0; i < 4; ++i)
+            for (int ch = 0; ch < channels; ++ch)
+                px[ch] += s[i][ch] * k[i] * share;
+    };
+
+    // Where each corner of each result pixel comes from: one row of them at a
+    // time, each shared by the pixels either side.
+    const int cols = out.width() + 1;
+    const size_t count = size_t(cols);
+    std::vector<Source> above(count), below(count);
+    const auto traceRow = [&](std::vector<Source> &row, int y) {
+        for (int x = 0; x < cols; ++x)
+            row[size_t(x)] = trace(out.left() + x, y);
+    };
+    traceRow(below, out.top());
+    for (int oy = 0; oy < out.height(); ++oy) {
+        std::swap(above, below);
+        traceRow(below, out.top() + oy + 1);
+        float *row = &dst[size_t(oy) * size_t(out.width()) * size_t(channels)];
+        for (int ox = 0; ox < out.width(); ++ox) {
+            float *px = row + size_t(ox) * size_t(channels);
+            const double X = out.left() + ox, Y = out.top() + oy;
+            if (!smooth) {
+                const Source s = trace(X + 0.5, Y + 0.5);
+                if (s.ok && s.u >= 0.0 && s.v >= 0.0 && s.u < w && s.v < h) {
+                    const float *from = at(int(std::floor(s.u)), int(std::floor(s.v)));
+                    std::copy(from, from + channels, px);
+                }
+                continue;
+            }
+            const Source corner[4] = {above[size_t(ox)], above[size_t(ox + 1)], below[size_t(ox)],
+                                      below[size_t(ox + 1)]};
+            const bool traced = corner[0].ok && corner[1].ok && corner[2].ok && corner[3].ok;
+            double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+            if (traced) {
+                u0 = std::min({corner[0].u, corner[1].u, corner[2].u, corner[3].u});
+                u1 = std::max({corner[0].u, corner[1].u, corner[2].u, corner[3].u});
+                v0 = std::min({corner[0].v, corner[1].v, corner[2].v, corner[3].v});
+                v1 = std::max({corner[0].v, corner[1].v, corner[2].v, corner[3].v});
+                if (u1 <= 0.0 || v1 <= 0.0 || u0 >= w || v0 >= h)
+                    continue; // nowhere near the source
+                // Well inside it, and no smaller than it was: one reading does.
+                if (u0 >= 0.0 && v0 >= 0.0 && u1 <= w && v1 <= h && u1 - u0 <= 1.5 && v1 - v0 <= 1.5) {
+                    addBilinear(px, (corner[0].u + corner[1].u + corner[2].u + corner[3].u) / 4.0,
+                                (corner[0].v + corner[1].v + corner[2].v + corner[3].v) / 4.0, 1.0f);
+                    continue;
+                }
+            }
+            // On the edge, or shrunk: several readings across the pixel, so
+            // the edge comes out soft and nothing in the source is skipped.
+            const double span = traced ? std::max(u1 - u0, v1 - v0) : 1.0;
+            const int n = std::clamp(int(std::ceil(span - 1e-3)), 3, 8);
+            const float share = 1.0f / float(n * n);
+            for (int sy = 0; sy < n; ++sy)
+                for (int sx = 0; sx < n; ++sx) {
+                    const Source s = trace(X + (sx + 0.5) / n, Y + (sy + 0.5) / n);
+                    if (s.ok && s.u >= 0.0 && s.v >= 0.0 && s.u <= w && s.v <= h)
+                        addBilinear(px, s.u, s.v, share);
+                }
+        }
+    }
+    return dst;
+}
+
 // Resamples a w x h image of float pixels with `channels` values each.
 // Outside the source is zero (transparent).
 std::vector<float> resample(const std::vector<float> &src, int w, int h, int channels, const QTransform &matrix,
                             bool smooth, const QRect &clip, QRect *outRect)
 {
+    if (!matrix.isAffine())
+        return resampleProjective(src, w, h, channels, matrix, smooth, clip, outRect);
     QRect out = coveredRect(matrix.mapRect(QRectF(0, 0, w, h)));
     if (!clip.isNull()) {
         // Only what can land on the canvas is worked out, so scaling up a
@@ -298,6 +407,38 @@ FreeTransform dragHandle(const FreeTransform &start, TransformHandle handle, con
     if (start.size.height() > 0.0)
         t.scaleY = h / start.size.height();
     return t;
+}
+
+bool isWarpable(const QPolygonF &quad)
+{
+    if (quad.size() != 4)
+        return false;
+    // Every corner turns the same way, and by enough to be a corner: neither
+    // folded, dented, nor squashed flat.
+    double area = 0.0, longest = 0.0;
+    int turns = 0;
+    for (int i = 0; i < 4; ++i) {
+        const QPointF p = quad.at(i), q = quad.at((i + 1) % 4), r = quad.at((i + 2) % 4);
+        const double cross = (q.x() - p.x()) * (r.y() - q.y()) - (q.y() - p.y()) * (r.x() - q.x());
+        if (std::abs(cross) < 1.0)
+            return false;
+        turns += cross > 0.0 ? 1 : -1;
+        area += p.x() * q.y() - q.x() * p.y();
+        longest = std::max(longest, std::hypot(q.x() - p.x(), q.y() - p.y()));
+    }
+    // At least a pixel thick, measured across its longest side.
+    area = std::abs(area) / 2.0;
+    return std::abs(turns) == 4 && area >= 4.0 && area / longest >= 1.0;
+}
+
+QTransform warpMatrix(const QSizeF &size, const QPolygonF &quad, bool *ok)
+{
+    QTransform matrix;
+    const bool good = size.width() > 0.0 && size.height() > 0.0 && isWarpable(quad)
+                      && QTransform::quadToQuad(QPolygonF(QRectF(QPointF(0, 0), size)).mid(0, 4), quad, matrix);
+    if (ok)
+        *ok = good;
+    return good ? matrix : QTransform();
 }
 
 QImage transformImage(const QImage &source, const QTransform &matrix, bool smooth, QPoint *origin,

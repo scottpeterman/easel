@@ -279,6 +279,18 @@ public slots:
     // Smooth resampling, or hard pixels (nearest neighbour) for sprites.
     void setTransformSmooth(bool smooth);
     bool transformSmooth() const { return m_transformSmooth; }
+    // Four-corner warp: each corner of the transform under way is dragged on
+    // its own, and what's between follows in perspective (a texture laid on
+    // a wing, a sign on a wall seen at an angle). Turning it on starts from
+    // the box as it stands; turning it off goes back to that box.
+    void setTransformWarp(bool on);
+    bool transformWarp() const { return m_xf.active && m_xf.warp; }
+    // The four corners on the canvas: top-left, top-right, bottom-right,
+    // bottom-left of what's being transformed.
+    QPolygonF transformCorners() const;
+    // Puts one corner somewhere (what dragging its handle does). False if
+    // that would fold the shape over or dent it; nothing changes then.
+    bool setTransformCorner(int corner, const QPointF &pos);
     // Each acts on the transform under way, or is one undo step of its own.
     void flipHorizontal();
     void flipVertical();
@@ -676,7 +688,15 @@ private:
         bool hadSelection = false; // otherwise it's the whole layer, and nothing stays selected
         bool changed = false;
         CanvasTool *previousTool = nullptr;
+        // Four-corner warp: the corners are where they've been put, not
+        // where the box would have them.
+        bool warp = false;
+        QPolygonF quad;
+        QPolygonF quadStart; // when the drag under way began
+        int corner = -1;     // the corner the drag is moving; -1: all of them
     } m_xf;
+    QCheckBox *m_xfWarp = nullptr;
+    QList<QWidget *> m_xfBoxOnly; // the options that only mean something without the warp
     bool m_editMask = false;
     bool m_floatMask = false; // the floating pixels are on a mask
     QToolBar *m_wandOptions = nullptr;

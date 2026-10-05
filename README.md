@@ -68,6 +68,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 ### Transform
 
 - Free Transform: scale, stretch, rotate and move the selection or the whole layer, by dragging or by typing a size and angle
+- Four-corner warp: tick Corners and drag each corner on its own; what's between follows in perspective, so a flat texture or a line of lettering sits on a wing, a hull side or a wall seen at an angle
 - Smooth for photos and art, or hard pixels for sprites
 - Redrawn from the original pixels until you apply, so trying sizes costs no quality
 
@@ -138,7 +139,6 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 Not built yet, roughly in the order planned:
 
-- Four-corner warp in Transform: drag each corner on its own, so a texture sits on a wing or a hull side at an angle
 - Mesh warp: a grid of points to bend a texture round a curved panel, such as a car door or a fuselage
 - Layer effects
 - Autosave
@@ -221,6 +221,7 @@ Whole jobs, step by step, with pictures.
 
 | Action | Input |
 | --- | --- |
+| Warp by the corners | Ctrl+T, then tick Corners in the options. Drag a corner to put it where it goes; inside to move all four; arrows nudge. Enter applies, Escape cancels. Flip or turn first: those are off while Corners is on |
 | Free transform | Ctrl+T (the selection, or the whole layer). Drag a corner to scale, Shift for any shape; a side to stretch; outside the box to rotate, Shift for 15° steps; inside to move; arrows nudge. Enter applies, Escape cancels |
 | Fill | G; click an area. Tolerance, Contiguous and All layers in the tool options |
 | Fill the selection (or the layer) with the current colour | Shift+F5 |
