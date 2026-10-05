@@ -1159,6 +1159,72 @@ private slots:
         QVERIFY(outline->isEnabled());
         w.textPanel()->setOutline(0);
     }
+
+    void framedTextStaysEditable()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorPanel()->setColor(Qt::black);
+        w.textPanel()->setPixelSize(30);
+        w.textPanel()->setBold(false);
+        w.textPanel()->setOutline(0);
+        w.textPanel()->setAlignment(Qt::AlignLeft);
+        TextFrame frame;
+        frame.style = FrameStyle::Double;
+        frame.line = 4;
+        frame.lineColor = Qt::blue;
+        frame.filled = true;
+        frame.fill = Qt::yellow;
+        frame.padding = 24;
+        w.beginText({120, 120});
+        w.textPanel()->setFrame(frame);
+        w.textPanel()->setText(QStringLiteral("Card"));
+        w.commitText();
+        const int text = w.layers().activeId();
+        const Layer *l = w.layers().layer(text);
+        QVERIFY(l->isText());
+        QCOMPARE(l->text.frame.style, FrameStyle::Double);
+        QCOMPARE(l->textAnchor, QPoint(120, 120));
+        // The fill is behind the words, in the padding; the frame is part of
+        // what a click hits.
+        QCOMPARE(at(l->store, 108, 140), QColor(Qt::yellow));
+        QVERIFY(l->textBox.contains(QPoint(100, 110)));
+        QCOMPARE(w.textLayerAt({100, 110}), text);
+        QCOMPARE(w.textLayerAt({40, 40}), 0);
+
+        // The next text starts with the same frame; text with none turns it
+        // off but keeps its line and colours for later.
+        QCOMPARE(w.textPanel()->frame().style, FrameStyle::Double);
+        w.textPanel()->setFrame(TextFrame());
+        w.canvasView()->setTool(w.textTool());
+        QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {100, 110}));
+        QTRY_VERIFY(w.isTyping());
+        QCOMPARE(w.layers().activeId(), text);
+        QCOMPARE(w.textPanel()->frame().style, FrameStyle::Double);
+        QCOMPARE(w.textPanel()->frame().lineColor, QColor(Qt::blue));
+        QCOMPARE(w.textPanel()->frame().padding, 24);
+
+        // Another stencil, and the frame taken off again: each one undo step.
+        TextFrame looped = w.textPanel()->frame();
+        looped.style = FrameStyle::Looped;
+        w.textPanel()->setFrame(looped);
+        w.commitText();
+        QCOMPARE(w.layers().layer(text)->text.frame.style, FrameStyle::Looped);
+        QVERIFY(w.layers().layer(text)->isText());
+        QCOMPARE(w.layers().layer(text)->textAnchor, QPoint(120, 120)); // the words didn't move
+        QVERIFY(w.editText(text));
+        TextFrame off = w.textPanel()->frame();
+        off.style = FrameStyle::None;
+        w.textPanel()->setFrame(off);
+        w.commitText();
+        QVERIFY(!w.layers().layer(text)->text.frame.isActive());
+        QCOMPARE(at(w.layers().layer(text)->store, 108, 140).alpha(), 0);
+        w.undo();
+        QCOMPARE(w.layers().layer(text)->text.frame.style, FrameStyle::Looped);
+        QCOMPARE(at(w.layers().layer(text)->store, 108, 140), QColor(Qt::yellow));
+        w.undo();
+        QCOMPARE(w.layers().layer(text)->text.frame.style, FrameStyle::Double);
+    }
 };
 
 QTEST_MAIN(TestLayerUi)

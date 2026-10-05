@@ -16,7 +16,20 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+using easeletch::FrameStyle;
+using easeletch::TextFrame;
 using easeletch::TextSettings;
+
+namespace {
+
+void paintSwatch(QToolButton *button, const QColor &color)
+{
+    button->setStyleSheet(QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }"
+                                         "QToolButton:disabled { background: palette(window); }")
+                              .arg(color.name()));
+}
+
+} // namespace
 
 TextPanel::TextPanel(QWidget *parent)
     : QDialog(parent, Qt::Tool)
@@ -105,6 +118,68 @@ TextPanel::TextPanel(QWidget *parent)
     row->addStretch(1);
     column->addLayout(row);
 
+    // The frame: a stencil round the words, for cards and captions.
+    row = new QHBoxLayout;
+    m_frameStyle = new QComboBox(this);
+    m_frameStyle->setObjectName(QStringLiteral("frameStyle"));
+    m_frameStyle->addItem(tr("None"), int(FrameStyle::None));
+    m_frameStyle->addItem(tr("Single line"), int(FrameStyle::Single));
+    m_frameStyle->addItem(tr("Double line"), int(FrameStyle::Double));
+    m_frameStyle->addItem(tr("Rounded"), int(FrameStyle::Rounded));
+    m_frameStyle->addItem(tr("Corner marks"), int(FrameStyle::Corners));
+    m_frameStyle->addItem(tr("Notched corners"), int(FrameStyle::Notched));
+    m_frameStyle->addItem(tr("Looped corners"), int(FrameStyle::Looped));
+    m_frameStyle->setToolTip(tr("A frame round the words. It sizes itself to them (and to Wrap at)."));
+    m_frameLine = new QSpinBox(this);
+    m_frameLine->setRange(TextFrame::MinLine, TextFrame::MaxLine);
+    m_frameLine->setValue(3);
+    m_frameLine->setSuffix(tr(" px"));
+    m_frameLine->setToolTip(tr("How heavy the frame's line is"));
+    m_frameLineColorButton = new QToolButton(this);
+    m_frameLineColorButton->setToolTip(tr("The frame's colour"));
+    m_frameLineColorButton->setFixedWidth(36);
+    connect(m_frameLineColorButton, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_frameLineColor, this, tr("Frame colour"));
+        if (c.isValid()) {
+            TextFrame f = frame();
+            f.lineColor = c;
+            setFrame(f);
+        }
+    });
+    row->addWidget(new QLabel(tr("Frame"), this));
+    row->addWidget(m_frameStyle, 1);
+    row->addWidget(m_frameLine);
+    row->addWidget(m_frameLineColorButton);
+    column->addLayout(row);
+
+    row = new QHBoxLayout;
+    m_frameFilled = new QCheckBox(tr("Fill"), this);
+    m_frameFilled->setToolTip(tr("A flat colour behind the words, inside the frame"));
+    m_frameFillButton = new QToolButton(this);
+    m_frameFillButton->setToolTip(tr("The fill's colour"));
+    m_frameFillButton->setFixedWidth(36);
+    connect(m_frameFillButton, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_frameFill, this, tr("Fill colour"));
+        if (c.isValid()) {
+            TextFrame f = frame();
+            f.fill = c;
+            setFrame(f);
+        }
+    });
+    m_framePadding = new QSpinBox(this);
+    m_framePadding->setRange(0, TextFrame::MaxPadding);
+    m_framePadding->setValue(16);
+    m_framePadding->setSuffix(tr(" px"));
+    m_framePadding->setToolTip(tr("Space between the words and the frame"));
+    row->addWidget(m_frameFilled);
+    row->addWidget(m_frameFillButton);
+    row->addSpacing(12);
+    row->addWidget(new QLabel(tr("Padding"), this));
+    row->addWidget(m_framePadding);
+    row->addStretch(1);
+    column->addLayout(row);
+    syncFrameControls();
+
     m_edit = new QPlainTextEdit(this);
     m_edit->setPlaceholderText(tr("Type here. The canvas shows it as you go."));
     m_edit->setTabChangesFocus(true);
@@ -146,6 +221,16 @@ TextPanel::TextPanel(QWidget *parent)
     connect(m_outline, &QSpinBox::valueChanged, this, [this](int width) { m_outlineColorButton->setEnabled(width > 0); });
     m_outlineColorButton->setEnabled(m_outline->value() > 0);
     connect(m_box, &QSpinBox::valueChanged, this, &TextPanel::changed);
+    connect(m_frameStyle, &QComboBox::currentIndexChanged, this, [this] {
+        syncFrameControls();
+        emit changed();
+    });
+    connect(m_frameLine, &QSpinBox::valueChanged, this, &TextPanel::changed);
+    connect(m_frameFilled, &QCheckBox::toggled, this, [this] {
+        syncFrameControls();
+        emit changed();
+    });
+    connect(m_framePadding, &QSpinBox::valueChanged, this, &TextPanel::changed);
 }
 
 TextSettings TextPanel::settings() const
@@ -161,6 +246,7 @@ TextSettings TextPanel::settings() const
     s.outline = m_outline->value();
     s.outlineColor = m_outlineColor;
     s.boxWidth = m_box->value();
+    s.frame = frame();
     return s;
 }
 
@@ -177,6 +263,55 @@ void TextPanel::setSettings(const TextSettings &s)
     setOutline(s.outline);
     setOutlineColor(s.outlineColor);
     setBoxWidth(s.boxWidth);
+    // Text without a frame leaves the frame's line, colours and padding as
+    // they are, ready for the next one.
+    TextFrame f = s.frame;
+    if (!f.isActive()) {
+        f = frame();
+        f.style = FrameStyle::None;
+    }
+    setFrame(f);
+}
+
+TextFrame TextPanel::frame() const
+{
+    TextFrame f;
+    f.style = FrameStyle(m_frameStyle->currentData().toInt());
+    f.line = m_frameLine->value();
+    f.lineColor = m_frameLineColor;
+    f.filled = m_frameFilled->isChecked();
+    f.fill = m_frameFill;
+    f.padding = m_framePadding->value();
+    return f;
+}
+
+void TextPanel::setFrame(const TextFrame &f)
+{
+    {
+        // One change, one redraw.
+        const QSignalBlocker a(m_frameStyle), b(m_frameLine), c(m_frameFilled), d(m_framePadding);
+        const int i = m_frameStyle->findData(int(f.style));
+        m_frameStyle->setCurrentIndex(i < 0 ? 0 : i);
+        m_frameLine->setValue(f.line);
+        m_frameFilled->setChecked(f.filled);
+        m_framePadding->setValue(f.padding);
+    }
+    m_frameLineColor = f.lineColor;
+    m_frameFill = f.fill;
+    syncFrameControls();
+    emit changed();
+}
+
+void TextPanel::syncFrameControls()
+{
+    const bool on = FrameStyle(m_frameStyle->currentData().toInt()) != FrameStyle::None;
+    m_frameLine->setEnabled(on);
+    m_frameLineColorButton->setEnabled(on);
+    m_frameFilled->setEnabled(on);
+    m_frameFillButton->setEnabled(on && m_frameFilled->isChecked());
+    m_framePadding->setEnabled(on);
+    paintSwatch(m_frameLineColorButton, m_frameLineColor);
+    paintSwatch(m_frameFillButton, m_frameFill);
 }
 
 QString TextPanel::text() const

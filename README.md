@@ -100,6 +100,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - Smooth, or hard-edged for pixel art
 - An outline round the letters in any colour and width, so words read on any picture
 - Wrap at a width: the words break to fit, and realign as you change them
+- Frames for cards and captions: single line, double line, rounded, corner marks, notched corners or looped corners, in any colour and weight, with an optional fill behind the words. The frame sizes itself to the words and stays editable with them
 - Shown on the canvas as you type; placed on a layer of its own
 - Placed text stays text: click it with the Text tool to change the words, font, size, colour, outline or wrap, and it's saved that way in the document. Moving the layer or cropping the canvas keeps it text; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the text back)
 
@@ -127,7 +128,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 ### Not there yet
 
-Shapes, layer effects, frames and speech balloons for text, and autosave.
+Shapes, layer effects, speech balloons for text, and autosave.
 
 ## Guides
 

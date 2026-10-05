@@ -45,6 +45,9 @@ public:
     void setOutlineColor(const QColor &color);
     // The width the words wrap inside (0 = no wrapping).
     void setBoxWidth(int width);
+    // The frame round the text: which stencil, its line, fill and padding.
+    void setFrame(const easeletch::TextFrame &frame);
+    easeletch::TextFrame frame() const;
     // What the button that places the text says: "Place", or "Update".
     void setEditing(bool editing);
     // Puts the cursor in the text box.
@@ -76,5 +79,14 @@ private:
     QToolButton *m_outlineColorButton = nullptr;
     QColor m_outlineColor = Qt::black;
     QSpinBox *m_box = nullptr;
+    QComboBox *m_frameStyle = nullptr;
+    QSpinBox *m_frameLine = nullptr;
+    QToolButton *m_frameLineColorButton = nullptr;
+    QColor m_frameLineColor = Qt::black;
+    QCheckBox *m_frameFilled = nullptr;
+    QToolButton *m_frameFillButton = nullptr;
+    QColor m_frameFill = Qt::white;
+    QSpinBox *m_framePadding = nullptr;
+    void syncFrameControls();
     QPushButton *m_place = nullptr;
 };

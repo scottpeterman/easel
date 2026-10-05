@@ -9,6 +9,40 @@
 
 namespace easeletch {
 
+// A frame drawn round a block of text: what makes a caption a card. It sits
+// outside the words by its padding, so adding one doesn't move them.
+enum class FrameStyle {
+    None,
+    Single,  // one line
+    Double,  // a heavy line with a fine one inside it
+    Rounded, // one line, round corners
+    Corners, // marks at the four corners only
+    Notched, // corners bitten out in a quarter circle
+    Looped,  // the line curls round in a loop at each corner
+};
+inline constexpr int FrameStyleCount = 7;
+
+// Name used in .easeletch files ("single", "double", ...); "" for None.
+QString frameStyleKey(FrameStyle style);
+FrameStyle frameStyleFromKey(const QString &key);
+
+struct TextFrame {
+    FrameStyle style = FrameStyle::None;
+    int line = 3;      // line width in canvas pixels
+    QColor lineColor = Qt::black;
+    bool filled = false; // a flat colour behind the words, inside the frame
+    QColor fill = Qt::white;
+    int padding = 16;  // space between the words and the frame
+
+    static constexpr int MinLine = 1;
+    static constexpr int MaxLine = 100;
+    static constexpr int MaxPadding = 1000;
+
+    bool isActive() const { return style != FrameStyle::None; }
+    QJsonObject toJson() const;
+    static TextFrame fromJson(const QJsonObject &o);
+};
+
 struct TextSettings {
     QString text;       // may hold several lines
     QString family;     // a font installed on this machine; empty = the default
@@ -27,6 +61,7 @@ struct TextSettings {
     // The width the words wrap inside, in canvas pixels; 0 = lines break only
     // where the text does. Alignment is then against this width.
     int boxWidth = 0;
+    TextFrame frame;
 
     static constexpr int MinSize = 4;
     static constexpr int MaxSize = 2000;
@@ -44,14 +79,17 @@ struct TextSettings {
 // out of their box. Null when there's nothing to draw.
 // inset: where the top-left of the text block sits inside the image.
 // width: the width of the longest line.
-QImage renderText(const TextSettings &settings, QPoint *inset = nullptr, int *width = nullptr);
+// frame: the area the frame takes up inside the image, decoration included;
+// empty when there's no frame.
+QImage renderText(const TextSettings &settings, QPoint *inset = nullptr, int *width = nullptr,
+                  QRect *frame = nullptr);
 
 // Text hung from a point: left-aligned text starts there, centred text is
 // centred on it, right-aligned text ends there.
 struct TextLayout {
     QImage image;  // as renderText() gives it; null when there's nothing to draw
     QPoint origin; // where the image's top-left goes on the canvas
-    QRect box;     // the block of text itself, without the image's margins
+    QRect box;     // the block of text itself (with its frame), without the image's margins
 };
 TextLayout layoutText(const TextSettings &settings, const QPoint &anchor);
 

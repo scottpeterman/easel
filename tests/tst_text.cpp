@@ -307,6 +307,118 @@ private slots:
         QVERIFY(!doc.stack->layer(flat)->hasText);
         QCOMPARE(doc.stack->layer(flat)->store.tileCount(), painted.store.tileCount());
     }
+
+    void framesGoRoundTheWordsWithoutMovingThem()
+    {
+        TextSettings s;
+        s.text = QStringLiteral("A card\nwith two lines");
+        s.pixelSize = 40;
+        s.color = Qt::black;
+        QPoint plainInset;
+        int plainWidth = 0;
+        QRect none(1, 1, 1, 1);
+        const QImage plain = renderText(s, &plainInset, &plainWidth, &none);
+        QVERIFY(none.isEmpty());
+        const TextLayout plainLayout = layoutText(s, QPoint(500, 300));
+
+        const QColor red(200, 0, 0), cream(250, 240, 200);
+        const auto count = [](const QImage &img, const QRect &area, const QColor &want) {
+            int n = 0;
+            for (int y = std::max(0, area.top()); y <= std::min(img.height() - 1, area.bottom()); ++y) {
+                const auto *row = reinterpret_cast<const Pixel *>(img.constScanLine(y));
+                for (int x = std::max(0, area.left()); x <= std::min(img.width() - 1, area.right()); ++x) {
+                    const QColor c = pixelToColor(row[x]);
+                    n += float(row[x].a) > 0.99f && qAbs(c.red() - want.red()) <= 2
+                         && qAbs(c.green() - want.green()) <= 2 && qAbs(c.blue() - want.blue()) <= 2;
+                }
+            }
+            return n;
+        };
+        for (int i = 1; i < FrameStyleCount; ++i) {
+            s.frame = TextFrame();
+            s.frame.style = FrameStyle(i);
+            s.frame.line = 4;
+            s.frame.lineColor = red;
+            s.frame.padding = 20;
+            QPoint inset;
+            int width = 0;
+            QRect frame;
+            const QImage img = renderText(s, &inset, &width, &frame);
+            QVERIFY2(!img.isNull(), qPrintable(frameStyleKey(s.frame.style)));
+            QCOMPARE(width, plainWidth);
+            QVERIFY(img.width() > plain.width());
+            QVERIFY(img.height() > plain.height());
+            // The frame's area is inside the image and reaches past the padding on every side.
+            QVERIFY(QRect(QPoint(0, 0), img.size()).contains(frame));
+            QVERIFY(frame.left() <= inset.x() - 20 && frame.right() >= inset.x() + width + 20 - 1);
+            QVERIFY(frame.top() <= inset.y() - 20);
+            // Its line is drawn, in its colour, and nothing is drawn outside its area.
+            QVERIFY2(count(img, frame, red) > 200, qPrintable(frameStyleKey(s.frame.style)));
+            int outside = 0;
+            for (int y = 0; y < img.height(); ++y)
+                for (int x = 0; x < img.width(); ++x)
+                    if (!frame.contains(x, y))
+                        outside += float(reinterpret_cast<const Pixel *>(img.constScanLine(y))[x].a) > 0.0f;
+            QCOMPARE(outside, 0);
+            // No fill: the middle of the padding is clear. Filled: it's the fill colour.
+            const QRect gap(inset.x() - 12, inset.y() + 30, 6, 6);
+            QCOMPARE(count(img, gap, cream), 0);
+            QCOMPARE(float(reinterpret_cast<const Pixel *>(img.constScanLine(gap.top()))[gap.left()].a), 0.0f);
+            s.frame.filled = true;
+            s.frame.fill = cream;
+            const QImage filled = renderText(s);
+            QCOMPARE(filled.size(), img.size());
+            QCOMPARE(count(filled, gap, cream), 36);
+            // The words are where they were: the frame goes on round them.
+            const TextLayout layout = layoutText(s, QPoint(500, 300));
+            QCOMPARE(layout.origin + inset, plainLayout.origin + plainInset);
+            QVERIFY(layout.box.contains(plainLayout.box.adjusted(0, plainInset.y(), 0, -plain.height() / 3)));
+            QVERIFY(layout.box.width() >= plainWidth + 40);
+            // Hard text: every pixel is whole.
+            s.smooth = false;
+            const QImage hard = renderText(s);
+            for (int y = 0; y < hard.height(); ++y)
+                for (int x = 0; x < hard.width(); ++x) {
+                    const float a = float(reinterpret_cast<const Pixel *>(hard.constScanLine(y))[x].a);
+                    QVERIFY(a == 0.0f || a == 1.0f);
+                }
+            s.smooth = true;
+        }
+
+        // A wider box makes a wider frame; more padding a bigger one.
+        s.frame = TextFrame();
+        s.frame.style = FrameStyle::Single;
+        QRect narrow, wide, roomy;
+        renderText(s, nullptr, nullptr, &narrow);
+        s.boxWidth = 600;
+        renderText(s, nullptr, nullptr, &wide);
+        QVERIFY(wide.width() >= 600 + 2 * s.frame.padding);
+        QVERIFY(wide.width() > narrow.width());
+        s.frame.padding = 60;
+        renderText(s, nullptr, nullptr, &roomy);
+        QCOMPARE(roomy.width(), wide.width() + 2 * (60 - 16));
+
+        // Frames survive the file; text without one writes none.
+        s.frame.style = FrameStyle::Looped;
+        s.frame.line = 7;
+        s.frame.lineColor = red;
+        s.frame.filled = true;
+        s.frame.fill = cream;
+        const TextSettings r = TextSettings::fromJson(s.toJson());
+        QCOMPARE(r.frame.style, FrameStyle::Looped);
+        QCOMPARE(r.frame.line, 7);
+        QCOMPARE(r.frame.lineColor, red);
+        QVERIFY(r.frame.filled);
+        QCOMPARE(r.frame.fill, cream);
+        QCOMPARE(r.frame.padding, 60);
+        s.frame.style = FrameStyle::None;
+        QVERIFY(!s.toJson().contains(QLatin1String("frame")));
+        QVERIFY(!TextSettings::fromJson(s.toJson()).frame.isActive());
+        // A stencil this build doesn't know reads as no frame, not as garbage.
+        QCOMPARE(frameStyleFromKey(QStringLiteral("starburst")), FrameStyle::None);
+        for (int i = 1; i < FrameStyleCount; ++i)
+            QCOMPARE(frameStyleFromKey(frameStyleKey(FrameStyle(i))), FrameStyle(i));
+    }
 };
 
 QTEST_MAIN(TestText)
