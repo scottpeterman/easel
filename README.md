@@ -16,6 +16,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 | Linux x86_64 | `Easeletch-linux-x86_64.AppImage`: make it executable and run it |
 | macOS (Apple Silicon and Intel) | `Easeletch-macos.dmg`: see the note under [Releases](#releases) about the quarantine flag |
 
+
 ## Features
 
 ### Painting
