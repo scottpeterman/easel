@@ -48,6 +48,9 @@ public:
     // The frame round the text: which stencil, its line, fill and padding.
     void setFrame(const easeletch::TextFrame &frame);
     easeletch::TextFrame frame() const;
+    // Where the frame's tail points, from the middle of the words (what
+    // dragging its handle on the canvas sets).
+    void setTailOffset(const QPoint &offset);
     // What the button that places the text says: "Place", or "Update".
     void setEditing(bool editing);
     // Puts the cursor in the text box.
@@ -87,6 +90,9 @@ private:
     QToolButton *m_frameFillButton = nullptr;
     QColor m_frameFill = Qt::white;
     QSpinBox *m_framePadding = nullptr;
+    QCheckBox *m_frameTail = nullptr;
+    QPoint m_tailOffset;
+    easeletch::FrameStyle m_lastStyle = easeletch::FrameStyle::None;
     void syncFrameControls();
     QPushButton *m_place = nullptr;
 };

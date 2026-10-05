@@ -101,6 +101,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - An outline round the letters in any colour and width, so words read on any picture
 - Wrap at a width: the words break to fit, and realign as you change them
 - Frames for cards and captions: single line, double line, rounded, corner marks, notched corners or looped corners, in any colour and weight, with an optional fill behind the words. The frame sizes itself to the words and stays editable with them
+- Comic balloons: speech, whisper (dashed), thought (a cloud with a trail of bubbles) and shout (a burst), each with a tail you aim by dragging its diamond on the canvas. A rounded box can have a tail too. Balloons size themselves to the words and stay editable with them
 - Shown on the canvas as you type; placed on a layer of its own
 - Placed text stays text: click it with the Text tool to change the words, font, size, colour, outline or wrap, and it's saved that way in the document. Moving the layer or cropping the canvas keeps it text; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the text back)
 
@@ -128,7 +129,13 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 ### Not there yet
 
-Shapes, layer effects, speech balloons for text, and autosave.
+Not built yet, roughly in the order planned:
+
+- Four-corner warp in Transform: drag each corner on its own, so a texture sits on a wing or a hull side at an angle
+- Mesh warp: a grid of points to bend a texture round a curved panel, such as a car door or a fuselage
+- Shapes you can go on editing: polygons with straight and curved sides, an outline and a fill, which also serve as the edge a warped texture is trimmed to
+- Layer effects
+- Autosave
 
 ## Guides
 
@@ -164,6 +171,7 @@ Whole jobs, step by step, with pictures.
 | Heal | H; dab or drag over a blemish and let go |
 | Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
 | Change placed text | With the Text tool, click the words. The Text window opens with them; Ctrl+Enter (or Update) keeps the change, Escape drops it |
+| Aim a balloon's tail | While the Text window is open, drag the diamond at the tail's tip |
 | Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |
 
 ### Layers and masks

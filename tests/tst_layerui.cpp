@@ -8,6 +8,8 @@
 #include "selecttools.h"
 #include "textpanel.h"
 
+#include <QCheckBox>
+#include <QComboBox>
 #include <QSignalSpy>
 #include <QStatusBar>
 #include <QTemporaryDir>
@@ -1224,6 +1226,89 @@ private slots:
         QCOMPARE(at(w.layers().layer(text)->store, 108, 140), QColor(Qt::yellow));
         w.undo();
         QCOMPARE(w.layers().layer(text)->text.frame.style, FrameStyle::Double);
+    }
+
+    void balloonTailIsAimedByDraggingItsHandle()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.colorPanel()->setColor(Qt::black);
+        w.textPanel()->setPixelSize(24);
+        w.textPanel()->setBold(false);
+        w.textPanel()->setOutline(0);
+        w.textPanel()->setAlignment(Qt::AlignLeft);
+        w.textPanel()->setFrame(TextFrame());
+        w.canvasView()->setTool(w.textTool());
+        w.beginText({150, 60});
+        // Picked in the panel, a balloon arrives filled, with a tail.
+        auto *style = w.textPanel()->findChild<QComboBox *>(QStringLiteral("frameStyle"));
+        auto *tail = w.textPanel()->findChild<QCheckBox *>(QStringLiteral("frameTail"));
+        QVERIFY(style && tail);
+        QVERIFY(!tail->isEnabled());
+        style->setCurrentIndex(style->findData(int(FrameStyle::Speech)));
+        QVERIFY(tail->isEnabled() && tail->isChecked());
+        QVERIFY(w.textPanel()->frame().filled);
+        w.textPanel()->setText(QStringLiteral("Hello"));
+        QCOMPARE(w.canvasView()->handles().size(), 1); // the tail's handle
+        const QPointF tip = w.canvasView()->handles().first().boundingRect().center();
+        QVERIFY(tip.y() > 90); // below the words
+
+        // Dragging the handle aims the tail; it doesn't move the words.
+        const int text = w.layers().activeId();
+        const auto solidAt = [&](int x, int y) { return at(w.layers().layer(text)->store, x, y).alpha() > 200; };
+        QVERIFY(!solidAt(330, 248));
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, tip));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {250, 200}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {330, 250}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {330, 250}));
+        QTest::qWait(20);
+        QVERIFY(w.isTyping());
+        QCOMPARE(w.layers().count(), 2); // no new text started
+        const QPointF moved = w.canvasView()->handles().first().boundingRect().center();
+        QVERIFY(qAbs(moved.x() - 330.5) <= 1.0 && qAbs(moved.y() - 250.5) <= 1.0);
+        bool drawn = false;
+        for (int dy = -8; dy <= 0 && !drawn; ++dy)
+            for (int dx = -8; dx <= 0 && !drawn; ++dx)
+                drawn = solidAt(330 + dx, 250 + dy);
+        QVERIFY(drawn);
+        const QPoint offset = w.textPanel()->frame().tailOffset;
+        QVERIFY(offset.x() > 100 && offset.y() > 100);
+
+        // Dragging the words takes the tail with them.
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {170, 75}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {160, 85}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {150, 95}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {150, 95}));
+        QCOMPARE(w.textPanel()->frame().tailOffset, offset);
+        const QPointF after = w.canvasView()->handles().first().boundingRect().center();
+        QVERIFY(qAbs(after.x() - 310.5) <= 1.0 && qAbs(after.y() - 270.5) <= 1.0);
+
+        // Placed, the handle goes; opened again, it's back where it was.
+        w.commitText();
+        QVERIFY(w.canvasView()->handles().isEmpty());
+        const Layer *l = w.layers().layer(text);
+        QVERIFY(l->isText());
+        QCOMPARE(l->text.frame.style, FrameStyle::Speech);
+        QVERIFY(l->text.frame.tail);
+        QCOMPARE(l->text.frame.tailOffset, offset);
+        QCOMPARE(l->textAnchor, QPoint(130, 80));
+        // A click on the tail out in the open doesn't open the text; one on the body does.
+        QCOMPARE(w.textLayerAt({300, 262}), 0);
+        QCOMPARE(w.textLayerAt({150, 95}), text);
+        // The next text keeps the balloon but not where this one's tail was aimed.
+        QCOMPARE(w.textPanel()->frame().style, FrameStyle::Speech);
+        QCOMPARE(w.textPanel()->frame().tailOffset, QPoint());
+        QVERIFY(w.editText(text));
+        QCOMPARE(w.textPanel()->frame().tailOffset, offset);
+        QCOMPARE(w.canvasView()->handles().size(), 1);
+        const QPointF again = w.canvasView()->handles().first().boundingRect().center();
+        QVERIFY(qAbs(again.x() - 310.5) <= 1.0 && qAbs(again.y() - 270.5) <= 1.0);
+        // Without its tail there's no handle.
+        tail->setChecked(false);
+        QVERIFY(w.canvasView()->handles().isEmpty());
+        w.cancelText();
+        QVERIFY(w.layers().layer(text)->text.frame.tail);
+        w.textPanel()->setFrame(TextFrame());
     }
 };
 

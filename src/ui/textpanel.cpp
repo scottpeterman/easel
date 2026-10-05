@@ -129,6 +129,11 @@ TextPanel::TextPanel(QWidget *parent)
     m_frameStyle->addItem(tr("Corner marks"), int(FrameStyle::Corners));
     m_frameStyle->addItem(tr("Notched corners"), int(FrameStyle::Notched));
     m_frameStyle->addItem(tr("Looped corners"), int(FrameStyle::Looped));
+    m_frameStyle->insertSeparator(m_frameStyle->count());
+    m_frameStyle->addItem(tr("Speech balloon"), int(FrameStyle::Speech));
+    m_frameStyle->addItem(tr("Whisper balloon"), int(FrameStyle::Whisper));
+    m_frameStyle->addItem(tr("Thought balloon"), int(FrameStyle::Thought));
+    m_frameStyle->addItem(tr("Shout balloon"), int(FrameStyle::Shout));
     m_frameStyle->setToolTip(tr("A frame round the words. It sizes itself to them (and to Wrap at)."));
     m_frameLine = new QSpinBox(this);
     m_frameLine->setRange(TextFrame::MinLine, TextFrame::MaxLine);
@@ -176,6 +181,11 @@ TextPanel::TextPanel(QWidget *parent)
     row->addSpacing(12);
     row->addWidget(new QLabel(tr("Padding"), this));
     row->addWidget(m_framePadding);
+    row->addSpacing(12);
+    m_frameTail = new QCheckBox(tr("Tail"), this);
+    m_frameTail->setObjectName(QStringLiteral("frameTail"));
+    m_frameTail->setToolTip(tr("A tail pointing at whoever is speaking. Drag its diamond on the canvas to aim it."));
+    row->addWidget(m_frameTail);
     row->addStretch(1);
     column->addLayout(row);
     syncFrameControls();
@@ -186,7 +196,8 @@ TextPanel::TextPanel(QWidget *parent)
     m_edit->setMinimumSize(320, 110);
     column->addWidget(m_edit, 1);
 
-    auto *hint = new QLabel(tr("The colour and outline are for all of the text. Drag on the canvas to move it."), this);
+    auto *hint = new QLabel(tr("The colour and outline are for all of the text. Drag on the canvas to move it; "
+                               "drag a tail's diamond to aim it."), this);
     hint->setEnabled(false);
     hint->setWordWrap(true);
     column->addWidget(hint);
@@ -222,9 +233,19 @@ TextPanel::TextPanel(QWidget *parent)
     m_outlineColorButton->setEnabled(m_outline->value() > 0);
     connect(m_box, &QSpinBox::valueChanged, this, &TextPanel::changed);
     connect(m_frameStyle, &QComboBox::currentIndexChanged, this, [this] {
+        // A balloon picked by hand comes as balloons usually are: filled,
+        // with a tail. Either can be turned off again.
+        const FrameStyle style = FrameStyle(m_frameStyle->currentData().toInt());
+        if (TextFrame::isBalloon(style) && !TextFrame::isBalloon(m_lastStyle)) {
+            const QSignalBlocker a(m_frameFilled), b(m_frameTail);
+            m_frameFilled->setChecked(true);
+            m_frameTail->setChecked(true);
+        }
+        m_lastStyle = style;
         syncFrameControls();
         emit changed();
     });
+    connect(m_frameTail, &QCheckBox::toggled, this, &TextPanel::changed);
     connect(m_frameLine, &QSpinBox::valueChanged, this, &TextPanel::changed);
     connect(m_frameFilled, &QCheckBox::toggled, this, [this] {
         syncFrameControls();
@@ -282,6 +303,8 @@ TextFrame TextPanel::frame() const
     f.filled = m_frameFilled->isChecked();
     f.fill = m_frameFill;
     f.padding = m_framePadding->value();
+    f.tail = m_frameTail->isChecked();
+    f.tailOffset = m_tailOffset;
     return f;
 }
 
@@ -289,7 +312,10 @@ void TextPanel::setFrame(const TextFrame &f)
 {
     {
         // One change, one redraw.
-        const QSignalBlocker a(m_frameStyle), b(m_frameLine), c(m_frameFilled), d(m_framePadding);
+        const QSignalBlocker a(m_frameStyle), b(m_frameLine), c(m_frameFilled), d(m_framePadding), e(m_frameTail);
+        m_frameTail->setChecked(f.tail);
+        m_tailOffset = f.tailOffset;
+        m_lastStyle = f.style;
         const int i = m_frameStyle->findData(int(f.style));
         m_frameStyle->setCurrentIndex(i < 0 ? 0 : i);
         m_frameLine->setValue(f.line);
@@ -302,9 +328,19 @@ void TextPanel::setFrame(const TextFrame &f)
     emit changed();
 }
 
+void TextPanel::setTailOffset(const QPoint &offset)
+{
+    if (offset == m_tailOffset)
+        return;
+    m_tailOffset = offset;
+    emit changed();
+}
+
 void TextPanel::syncFrameControls()
 {
-    const bool on = FrameStyle(m_frameStyle->currentData().toInt()) != FrameStyle::None;
+    const FrameStyle style = FrameStyle(m_frameStyle->currentData().toInt());
+    const bool on = style != FrameStyle::None;
+    m_frameTail->setEnabled(TextFrame::canHaveTail(style));
     m_frameLine->setEnabled(on);
     m_frameLineColorButton->setEnabled(on);
     m_frameFilled->setEnabled(on);

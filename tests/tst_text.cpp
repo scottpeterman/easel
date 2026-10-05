@@ -419,6 +419,123 @@ private slots:
         for (int i = 1; i < FrameStyleCount; ++i)
             QCOMPARE(frameStyleFromKey(frameStyleKey(FrameStyle(i))), FrameStyle(i));
     }
+
+    void balloonsHaveTailsThatPointWhereTheyAreTold()
+    {
+        TextSettings s;
+        s.text = QStringLiteral("Seriously,\nI got this.");
+        s.pixelSize = 36;
+        s.color = Qt::black;
+        s.align = Qt::AlignHCenter;
+        s.frame.line = 4;
+        s.frame.lineColor = Qt::black;
+        s.frame.filled = true;
+        s.frame.fill = Qt::white;
+        const auto solid = [](const QImage &img, const QPoint &p) {
+            return QRect(QPoint(0, 0), img.size()).contains(p)
+                   && float(reinterpret_cast<const Pixel *>(img.constScanLine(p.y()))[p.x()].a) > 0.99f;
+        };
+        for (const FrameStyle style : {FrameStyle::Speech, FrameStyle::Whisper, FrameStyle::Thought, FrameStyle::Shout,
+                                       FrameStyle::Rounded}) {
+            const QByteArray name = frameStyleKey(style).toLatin1();
+            s.frame.style = style;
+            s.frame.tail = false;
+            TextMetrics bare;
+            const QImage without = renderText(s, &bare);
+            QVERIFY2(!without.isNull(), name.constData());
+            QVERIFY(!bare.hasTail);
+            // The words sit on the fill, in the middle of the body.
+            QVERIFY2(solid(without, bare.centre), name.constData());
+            QVERIFY(bare.frame.contains(bare.centre));
+
+            // A tail aimed down and to the right: the image grows that way
+            // only, the body and the words stay as they were, and something
+            // is drawn at the tip.
+            s.frame.tail = true;
+            s.frame.tailOffset = QPoint(200, 260);
+            TextMetrics m;
+            const QImage with = renderText(s, &m);
+            QVERIFY2(m.hasTail, name.constData());
+            QCOMPARE(m.tailTip, m.centre + QPoint(200, 260));
+            QCOMPARE(m.inset, bare.inset); // nothing added above or to the left
+            QCOMPARE(m.frame, bare.frame);
+            QVERIFY(with.width() > without.width());
+            QVERIFY(with.height() > without.height() + 100);
+            QVERIFY(QRect(QPoint(0, 0), with.size()).contains(m.tailTip));
+            bool nearTip = false;
+            for (int dy = -8; dy <= 2 && !nearTip; ++dy)
+                for (int dx = -8; dx <= 2 && !nearTip; ++dx)
+                    nearTip = solid(with, m.tailTip + QPoint(dx, dy));
+            QVERIFY2(nearTip, name.constData());
+
+            // Aimed up and to the left, the image grows there instead, and
+            // the words are still where the layout says they are.
+            s.frame.tailOffset = QPoint(-300, -220);
+            const TextLayout up = layoutText(s, QPoint(1000, 1000));
+            s.frame.tail = false;
+            const TextLayout plain = layoutText(s, QPoint(1000, 1000));
+            QCOMPARE(up.centre, plain.centre);
+            QCOMPARE(up.box, plain.box);
+            QVERIFY(up.hasTail && !plain.hasTail);
+            QCOMPARE(up.tailTip, up.centre + QPoint(-300, -220));
+            QVERIFY(up.origin.x() < plain.origin.x() && up.origin.y() < plain.origin.y());
+            QVERIFY(QRect(up.origin, up.image.size()).contains(up.tailTip));
+
+            // With no place given it points somewhere sensible: below the body.
+            s.frame.tail = true;
+            s.frame.tailOffset = QPoint();
+            TextMetrics d;
+            renderText(s, &d);
+            QVERIFY(d.hasTail);
+            QVERIFY(d.tailTip.y() > d.frame.bottom());
+            QVERIFY(d.frame.left() < d.tailTip.x() && d.tailTip.x() < d.frame.right());
+
+            // Aimed inside the body there's nothing to draw, but it's still a
+            // tail (its handle is there to drag out again).
+            s.frame.tailOffset = QPoint(3, 3);
+            TextMetrics in;
+            const QImage inside = renderText(s, &in);
+            QVERIFY(in.hasTail);
+            QCOMPARE(inside.size(), without.size());
+        }
+
+        // The stencil frames have no tails, whatever the setting says.
+        s.frame.style = FrameStyle::Double;
+        s.frame.tail = true;
+        s.frame.tailOffset = QPoint(200, 260);
+        TextMetrics none;
+        renderText(s, &none);
+        QVERIFY(!none.hasTail);
+        QVERIFY(!s.frame.hasTail());
+        QVERIFY(!s.toJson().value(QLatin1String("frame")).toObject().contains(QLatin1String("tail")));
+
+        // A whisper's line is dashed: there are gaps in it a speech balloon's doesn't have.
+        s.frame.tail = false;
+        s.frame.filled = false;
+        const auto lineInk = [&](FrameStyle style) {
+            s.frame.style = style;
+            const QImage img = renderText(s);
+            int n = 0;
+            for (int y = 0; y < img.height(); ++y)
+                for (int x = 0; x < img.width(); ++x)
+                    n += float(reinterpret_cast<const Pixel *>(img.constScanLine(y))[x].a) > 0.99f;
+            return n;
+        };
+        const int speech = lineInk(FrameStyle::Speech);
+        const int whisper = lineInk(FrameStyle::Whisper);
+        QVERIFY(whisper < speech);
+
+        // The tail survives the file.
+        s.frame.style = FrameStyle::Thought;
+        s.frame.tail = true;
+        s.frame.tailOffset = QPoint(-40, 175);
+        const TextSettings r = TextSettings::fromJson(s.toJson());
+        QCOMPARE(r.frame.style, FrameStyle::Thought);
+        QVERIFY(r.frame.tail);
+        QCOMPARE(r.frame.tailOffset, QPoint(-40, 175));
+        s.frame.tail = false;
+        QVERIFY(!TextSettings::fromJson(s.toJson()).frame.tail);
+    }
 };
 
 QTEST_MAIN(TestText)

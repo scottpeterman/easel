@@ -19,8 +19,14 @@ enum class FrameStyle {
     Corners, // marks at the four corners only
     Notched, // corners bitten out in a quarter circle
     Looped,  // the line curls round in a loop at each corner
+    // Comic balloons. These (and Rounded) can have a tail pointing at whoever
+    // is speaking.
+    Speech,  // an oval
+    Whisper, // an oval with a dashed line
+    Thought, // a cloud; its tail is a trail of bubbles
+    Shout,   // a burst of spikes
 };
-inline constexpr int FrameStyleCount = 7;
+inline constexpr int FrameStyleCount = 11;
 
 // Name used in .easeletch files ("single", "double", ...); "" for None.
 QString frameStyleKey(FrameStyle style);
@@ -33,6 +39,14 @@ struct TextFrame {
     bool filled = false; // a flat colour behind the words, inside the frame
     QColor fill = Qt::white;
     int padding = 16;  // space between the words and the frame
+    // A tail from the frame to a point, for the styles that can have one.
+    // tailOffset: where it points, from the middle of the block of words, in
+    // canvas pixels; (0, 0) = a usual place, below and a little to the left.
+    bool tail = false;
+    QPoint tailOffset;
+    static bool canHaveTail(FrameStyle style);
+    static bool isBalloon(FrameStyle style);
+    bool hasTail() const { return tail && canHaveTail(style); }
 
     static constexpr int MinLine = 1;
     static constexpr int MaxLine = 100;
@@ -84,12 +98,27 @@ struct TextSettings {
 QImage renderText(const TextSettings &settings, QPoint *inset = nullptr, int *width = nullptr,
                   QRect *frame = nullptr);
 
+// The same, with everything there is to know about where things landed, all
+// in the image's own coordinates.
+struct TextMetrics {
+    QPoint inset;   // the top-left of the block of words
+    int width = 0;  // the width of the longest line (or of the wrap box)
+    QPoint centre;  // the middle of the block of words: what a tail's offset is from
+    QRect frame;    // the frame's body, decoration included, without any tail; empty if no frame
+    bool hasTail = false;
+    QPoint tailTip; // where the tail points
+};
+QImage renderText(const TextSettings &settings, TextMetrics *metrics);
+
 // Text hung from a point: left-aligned text starts there, centred text is
 // centred on it, right-aligned text ends there.
 struct TextLayout {
     QImage image;  // as renderText() gives it; null when there's nothing to draw
     QPoint origin; // where the image's top-left goes on the canvas
     QRect box;     // the block of text itself (with its frame), without the image's margins
+    QPoint centre; // the middle of the block of words
+    bool hasTail = false;
+    QPoint tailTip; // where the frame's tail points
 };
 TextLayout layoutText(const TextSettings &settings, const QPoint &anchor);
 

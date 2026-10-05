@@ -384,6 +384,9 @@ private:
     void hideTextPanel();
     // Shows the text panel, the first time in a corner away from pos.
     void showTextPanel(const QPoint &pos);
+    // A diamond on the tip of the frame's tail, to drag it by; nothing when
+    // there's no tail.
+    void showTailHandle();
     // Marching ants around floating pixels where they are now.
     void showFloatingOutline();
     void cropCanvasTo(const QRect &rect, const QString &label);
@@ -508,6 +511,10 @@ private:
         QPoint anchor;  // the point the text hangs from (its corner, or centre / right edge)
         QPoint placed;  // where the floating image was last put
         QRect box;      // the block of text, where it was last put
+        QPoint centre;  // the middle of the words, where they were last put
+        bool hasTail = false;
+        QPoint tailTip; // where the frame's tail pointed when last drawn
+        bool draggingTail = false;
         bool dragging = false;
         bool clickStarts = false; // the press under way will start new text when it ends
         bool movingLayer = false; // ... or it became a drag, and is moving the layer

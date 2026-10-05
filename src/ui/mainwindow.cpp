@@ -1355,17 +1355,38 @@ void MainWindow::updateText()
     s.color = m_color->color();
     const easeletch::TextLayout layout = easeletch::layoutText(s, m_text.anchor);
     if (layout.image.isNull()) {
+        m_text.hasTail = false;
+        showTailHandle();
         m_view->setSelectionOutline(m_selection.outlines());
         m_view->refresh();
         return;
     }
     m_text.placed = layout.origin;
     m_text.box = layout.box;
+    m_text.centre = layout.centre;
+    m_text.hasTail = layout.hasTail;
+    m_text.tailTip = layout.tailTip;
     m_floating.paste(&l->store, layout.image, m_text.placed, {}, canvasRect());
     m_floatLayer = l->id;
     m_floatMask = false;
     showFloatingOutline();
+    showTailHandle();
     m_view->refresh();
+}
+
+void MainWindow::showTailHandle()
+{
+    if (!m_text.active || !m_text.hasTail || !m_floating.isActive()) {
+        if (!m_xf.active)
+            m_view->setHandles({});
+        return;
+    }
+    // Twelve screen pixels across, whatever the zoom, where the tail points now.
+    const QPointF tip = QPointF(m_text.tailTip + m_floating.position() - m_text.placed) + QPointF(0.5, 0.5);
+    const double half = 6.0 / qMax(m_view->zoom(), 0.01);
+    QPolygonF diamond;
+    diamond << tip + QPointF(0, -half) << tip + QPointF(half, 0) << tip + QPointF(0, half) << tip + QPointF(-half, 0);
+    m_view->setHandles({diamond});
 }
 
 void MainWindow::textPressed(const QPointF &pos)
@@ -1377,6 +1398,14 @@ void MainWindow::textPressed(const QPointF &pos)
     m_dragStart = pos;
     if (!m_text.active)
         return;
+    // On the tail's handle, the drag aims the tail; anywhere else it moves the text.
+    if (m_text.hasTail && m_floating.isActive()) {
+        const QPointF tip = QPointF(m_text.tailTip + m_floating.position() - m_text.placed) + QPointF(0.5, 0.5);
+        if (QLineF(pos, tip).length() * m_view->zoom() <= 10.0) {
+            m_text.draggingTail = true;
+            return;
+        }
+    }
     m_text.dragging = m_floating.isActive();
     m_dragStart = pos;
     m_dragOrigin = m_floating.position();
@@ -1398,17 +1427,28 @@ void MainWindow::textDragged(const QPointF &pos)
             moveDragged(pos);
         return;
     }
+    if (m_text.draggingTail) {
+        // From the middle of the words as they sit now (they may have been dragged).
+        const QPoint centre = m_text.centre + m_floating.position() - m_text.placed;
+        m_textPanel->setTailOffset(QPoint(int(std::floor(pos.x())), int(std::floor(pos.y()))) - centre);
+        return;
+    }
     if (!m_text.dragging || !m_floating.isActive())
         return;
     const QPointF d = pos - m_dragStart;
     m_floating.moveTo(m_dragOrigin + QPoint(int(std::lround(d.x())), int(std::lround(d.y()))));
     showFloatingOutline();
+    showTailHandle();
     m_view->refresh();
 }
 
 void MainWindow::textReleased(const QPointF &pos)
 {
     m_text.dragging = false;
+    if (m_text.draggingTail) {
+        m_text.draggingTail = false;
+        return;
+    }
     if (m_text.movingLayer) {
         // The drag moved the layer: drop it where it is, as one undo step.
         m_text.movingLayer = false;
@@ -1481,6 +1521,9 @@ void MainWindow::hideTextPanel()
     const QSignalBlocker block(m_textPanel);
     m_textPanel->setText(QString());
     m_textPanel->setBoxWidth(0); // wrapping belongs to one piece of text, not the next
+    m_textPanel->setTailOffset(QPoint()); // ... and so does where its tail was aimed
+    if (!m_xf.active)
+        m_view->setHandles({});
     m_textPanel->hide();
     // The keyboard goes back to the canvas, so the next key (Delete, Ctrl+Z,
     // a tool letter) acts on the picture and not on a window that's gone.
