@@ -149,6 +149,7 @@ Whole jobs, step by step, with pictures.
 
 - [Restoring old ink art](docs/restoring-ink-art.md): from a photo of an ink drawing on aged paper to clean line work, then shading under the lines.
 - [From a render to an ink plate](docs/render-to-ink-plate.md): a detailed colour picture turned into pencil and ink, the two combined, and a background put behind it.
+- [Metal on a line drawing](docs/metal-on-line-art.md): an ink drawing of a machine given dark polished plates, trim in a second colour, lettering laid on a slanted side, and a dark page behind it.
 
 ## Keys and controls
 
@@ -315,8 +316,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.9.0
-git push origin v0.9.0
+git tag v0.10.0
+git push origin v0.10.0
 ```
 
 | Platform | Package |
