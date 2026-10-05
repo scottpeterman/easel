@@ -1325,6 +1325,11 @@ private slots:
         o.lineColor = Qt::black;
         w.setShapeOptions(o);
         w.canvasView()->setTool(w.shapeTool());
+        // As in real use: the window is the active one, so its menu shortcuts
+        // (Delete among them) are live while the shape is drawn.
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.canvasView()->setFocus();
         const auto click = [&](QPointF p) {
             QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, p));
             QTest::qWait(QApplication::doubleClickInterval() + 60); // separate clicks, not a double-click
@@ -1412,8 +1417,6 @@ private slots:
         QVERIFY(w.isShaping());
 
         // Escape drops the changes; Enter keeps them, as one undo step.
-        w.activateWindow();
-        QVERIFY(QTest::qWaitForWindowActive(&w));
         w.canvasView()->setFocus();
         QTest::keyClick(w.canvasView(), Qt::Key_Escape);
         QVERIFY(!w.isShaping());
@@ -1498,6 +1501,9 @@ private slots:
         o.closed = false;
         w.setShapeOptions(o);
         w.canvasView()->setTool(w.shapeTool());
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.canvasView()->setFocus();
         // Through the window's own calls: an open line of three points, placed with Enter.
         w.beginShape({50, 50});
         w.addShapePoint({200, 50});

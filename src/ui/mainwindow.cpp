@@ -910,6 +910,13 @@ void MainWindow::deleteSelection()
 {
     if (!m_stack || m_view->isStroking())
         return;
+    // While a shape is being drawn or changed, Delete and Backspace take a
+    // point away. They arrive here, not at the Shape tool, whenever the
+    // window is active: a menu shortcut is offered a key before the canvas is.
+    if (m_shape.active) {
+        shapeKey(Qt::Key_Delete);
+        return;
+    }
     // With something selected, Delete clears those pixels. With nothing
     // selected it means the highlighted layer, wherever the keyboard focus is.
     if (m_selection.isEmpty() && !m_floating.isActive() && !m_text.active && !m_shape.active) {
