@@ -192,6 +192,9 @@ bool MainWindow::deletePage(int index)
             m_text = TextSession();
             hideTextPanel();
         }
+        m_shape = ShapeSession();
+        m_shapeTool->setWorking(false);
+        m_view->setHandles({});
         parkPage();
         m_pages.erase(m_pages.begin() + index);
         ++m_pagesRevision;

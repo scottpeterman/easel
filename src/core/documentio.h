@@ -22,7 +22,9 @@ namespace easeletch {
 //                            a text layer is a raster layer that also has "text": its
 //                            words, font, size, colour, outline, wrap width, and the
 //                            "anchor" and "box" it sits at (no new format version:
-//                            builds from before text layers open it as its pixels)
+//                            builds from before text layers open it as its pixels);
+//                            a shape layer likewise has "shape": its points, whether
+//                            it's closed and curved, its line and its fill
 //   preview.png              flattened 8-bit sRGB image, at most 2048 px on its long side
 //   layers/<n>/mask/<cx>_<cy>
 //                            the same for layer n's mask, when it has one (the

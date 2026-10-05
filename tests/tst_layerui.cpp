@@ -8,6 +8,7 @@
 #include "selecttools.h"
 #include "textpanel.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QSignalSpy>
@@ -1309,6 +1310,252 @@ private slots:
         w.cancelText();
         QVERIFY(w.layers().layer(text)->text.frame.tail);
         w.textPanel()->setFrame(TextFrame());
+    }
+
+    // --- Shapes ---
+
+    void shapeIsDrawnPointByPointAndChangedAfterwards()
+    {
+        MainWindow w;
+        setupWindow(w);
+        const int bg = w.layers().activeId();
+        w.colorPanel()->setColor(Qt::blue);
+        MainWindow::ShapeOptions o;
+        o.line = 4;
+        o.lineColor = Qt::black;
+        w.setShapeOptions(o);
+        w.canvasView()->setTool(w.shapeTool());
+        const auto click = [&](QPointF p) {
+            QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, p));
+            QTest::qWait(QApplication::doubleClickInterval() + 60); // separate clicks, not a double-click
+        };
+        const auto drag = [&](QPointF from, QPointF to) {
+            QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, from));
+            QTest::mouseMove(w.canvasView(), viewPos(w, (from + to) / 2));
+            QTest::mouseMove(w.canvasView(), viewPos(w, to));
+            QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, to));
+            QTest::qWait(QApplication::doubleClickInterval() + 60);
+        };
+
+        // The first click makes a layer for it; each click after adds a point.
+        click({60, 60});
+        QTRY_VERIFY(w.isShaping());
+        QCOMPARE(w.layers().count(), 2);
+        QCOMPARE(w.history().count(), 0);
+        QCOMPARE(w.shapePoints().size(), 1);
+        QCOMPARE(w.canvasView()->handles().size(), 1);
+        const int shape = w.layers().activeId();
+        click({260, 60});
+        click({260, 200});
+        QCOMPARE(w.shapePoints().size(), 3);
+        QCOMPARE(w.canvasView()->handles().size(), 3);
+        const auto pix = [&](int x, int y) { return at(w.layers().layer(shape)->store, x, y); };
+        QCOMPARE(pix(160, 60), QColor(Qt::black)); // drawn as it goes
+        QCOMPARE(w.layers().layer(bg)->store.tileCount(), 0);
+        // Backspace takes the last point back.
+        QTest::keyClick(w.canvasView(), Qt::Key_Backspace);
+        QCOMPARE(w.shapePoints().size(), 2);
+        click({260, 200});
+        click({60, 200});
+        QCOMPARE(w.shapePoints().size(), 4);
+        // A click on the first point closes it and puts it down: one undo step.
+        click({61, 61});
+        QTRY_VERIFY(!w.isShaping());
+        QCOMPARE(w.history().count(), 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Shape"));
+        QVERIFY(w.canvasView()->handles().isEmpty());
+        QVERIFY(w.layers().layer(shape)->isShape());
+        QCOMPARE(w.layers().layer(shape)->shape.points.size(), 4);
+        QCOMPARE(pix(60, 130), QColor(Qt::black)); // the closing side
+        QCOMPARE(pix(160, 130).alpha(), 0);        // not filled
+        QVERIFY(w.selection().isEmpty());
+        w.undo();
+        QCOMPARE(w.layers().count(), 1);
+        w.redo();
+        QCOMPARE(w.layers().count(), 2);
+        QVERIFY(w.layers().layer(shape)->isShape());
+
+        // A click on it opens it again: its points are back as handles.
+        QCOMPARE(w.shapeLayerAt({160, 61}), shape);
+        QCOMPARE(w.shapeLayerAt({160, 130}), shape); // inside counts
+        QCOMPARE(w.shapeLayerAt({330, 250}), 0);
+        w.setActiveLayer(bg);
+        click({160, 61});
+        QTRY_VERIFY(w.isShaping());
+        QCOMPARE(w.layers().count(), 2);
+        QCOMPARE(w.layers().activeId(), shape);
+        QCOMPARE(w.canvasView()->handles().size(), 4);
+        QCOMPARE(pix(160, 60), QColor(Qt::black)); // shown as it was
+
+        // Dragging a point moves it; the sides follow.
+        drag({260, 60}, {320, 30});
+        QCOMPARE(w.shapePoints().at(1), QPointF(320, 30));
+        QCOMPARE(pix(160, 60).alpha(), 0);
+        // Dragging a side adds a point there.
+        drag({60, 130}, {30, 130});
+        QCOMPARE(w.shapePoints().size(), 5);
+        QCOMPARE(w.shapePoints().at(4), QPointF(30, 130));
+        // Delete removes the point last touched.
+        QTest::keyClick(w.canvasView(), Qt::Key_Delete);
+        QCOMPARE(w.shapePoints().size(), 4);
+        // Dragging inside moves all of it.
+        drag({160, 150}, {170, 170});
+        QCOMPARE(w.shapePoints().at(0), QPointF(70, 80));
+        QCOMPARE(w.shapePoints().at(1), QPointF(330, 50));
+        // The fill is the painting colour; the options change it as it stands.
+        o = w.shapeOptions();
+        o.filled = true;
+        w.setShapeOptions(o);
+        QCOMPARE(pix(170, 160), QColor(Qt::blue));
+        w.colorPanel()->setColor(Qt::green);
+        QCOMPARE(pix(170, 160), QColor(Qt::green));
+        QVERIFY(w.isShaping());
+
+        // Escape drops the changes; Enter keeps them, as one undo step.
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.canvasView()->setFocus();
+        QTest::keyClick(w.canvasView(), Qt::Key_Escape);
+        QVERIFY(!w.isShaping());
+        QCOMPARE(w.history().count(), 1);
+        QCOMPARE(w.layers().layer(shape)->shape.points.at(1), QPointF(260, 60));
+        QVERIFY(w.layers().layer(shape)->isShape());
+        QCOMPARE(pix(160, 60), QColor(Qt::black));
+
+        QVERIFY(w.editShape(shape));
+        o = w.shapeOptions();
+        QVERIFY(!o.filled); // the options show the shape as it is
+        o.filled = true;
+        o.curved = true;
+        w.setShapeOptions(o);
+        w.colorPanel()->setColor(Qt::red);
+        w.canvasView()->setFocus();
+        QTest::keyClick(w.canvasView(), Qt::Key_Return);
+        QVERIFY(!w.isShaping());
+        QCOMPARE(w.history().count(), 2);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Edit Shape"));
+        const Layer *l = w.layers().layer(shape);
+        QVERIFY(l->isShape() && l->shape.filled && l->shape.curved);
+        QCOMPARE(l->shape.fill, QColor(Qt::red));
+        QCOMPARE(pix(160, 130), QColor(Qt::red));
+        w.undo();
+        QVERIFY(!w.layers().layer(shape)->shape.filled);
+        QCOMPARE(pix(160, 130).alpha(), 0);
+        w.redo();
+
+        // Moving the layer takes the points with it: still a shape.
+        w.canvasView()->setTool(w.moveTool());
+        drag({160, 130}, {180, 150});
+        w.commitFloating();
+        QVERIFY(w.layers().layer(shape)->isShape());
+        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), QPointF(80, 80));
+        QCOMPARE(pix(180, 150), QColor(Qt::red));
+        // ... and so does a crop.
+        w.setSelection(Selection::rect(QRect(20, 20, 360, 260)));
+        w.cropToSelection();
+        QVERIFY(w.layers().layer(shape)->isShape());
+        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), QPointF(60, 60));
+        w.undo();
+        QCOMPARE(w.layers().layer(shape)->shape.points.at(0), QPointF(80, 80));
+
+        // It survives a save.
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("shape.easeletch"));
+        QVERIFY(w.saveDocumentTo(path, true));
+        {
+            MainWindow w2;
+            w2.resize(1200, 800);
+            w2.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&w2));
+            QSignalSpy opened(&w2, &MainWindow::documentOpened);
+            w2.openDocument(path);
+            QVERIFY(opened.wait(10000));
+            const int id = w2.shapeLayerAt({180, 150});
+            QVERIFY(id != 0);
+            QVERIFY(w2.editShape(id));
+            QCOMPARE(w2.shapePoints().size(), 4);
+            QVERIFY(w2.shapeOptions().curved);
+            w2.cancelShape();
+        }
+
+        // Painted on, it's ordinary pixels: nothing to open. Undo brings the shape back.
+        w.canvasView()->setTool(w.brushTool());
+        w.brushTool()->setColor(Qt::black);
+        stroke(w, {100, 150}, {250, 150});
+        QVERIFY(!w.layers().layer(shape)->isShape());
+        QCOMPARE(w.shapeLayerAt({180, 150}), 0);
+        QVERIFY(!w.editShape(shape));
+        w.undo();
+        QVERIFY(w.layers().layer(shape)->isShape());
+    }
+
+    void shapeFinishesOnDoubleClickOrEnterAndCanBeAnOpenLine()
+    {
+        MainWindow w;
+        setupWindow(w);
+        MainWindow::ShapeOptions o;
+        o.line = 6;
+        o.closed = false;
+        w.setShapeOptions(o);
+        w.canvasView()->setTool(w.shapeTool());
+        // Through the window's own calls: an open line of three points, placed with Enter.
+        w.beginShape({50, 50});
+        w.addShapePoint({200, 50});
+        w.addShapePoint({200, 200});
+        QVERIFY(w.isShaping());
+        const int line = w.layers().activeId();
+        w.commitFloating(); // what Enter does
+        QVERIFY(!w.isShaping());
+        const Layer *l = w.layers().layer(line);
+        QVERIFY(l->isShape() && !l->shape.closed);
+        QCOMPARE(at(l->store, 120, 50), QColor(Qt::black));
+        QCOMPARE(at(l->store, 125, 125).alpha(), 0); // no side back to the start
+
+        // One point isn't a shape: putting it down leaves nothing behind.
+        w.beginShape({300, 250});
+        QCOMPARE(w.layers().count(), 3);
+        w.commitShape();
+        QCOMPARE(w.layers().count(), 2);
+        QCOMPARE(w.history().count(), 1);
+        // Backspace on the only point drops it too.
+        w.beginShape({300, 250});
+        QTest::keyClick(w.canvasView(), Qt::Key_Backspace);
+        QVERIFY(!w.isShaping());
+        QCOMPARE(w.layers().count(), 2);
+
+        // A double-click on the last point finishes.
+        const auto clickAt = [&](QPointF p) {
+            QTest::mouseClick(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, p));
+        };
+        clickAt({300, 60});
+        QTRY_VERIFY(w.isShaping());
+        QTest::qWait(QApplication::doubleClickInterval() + 60);
+        clickAt({360, 120});
+        QTest::qWait(QApplication::doubleClickInterval() + 60);
+        clickAt({300, 180});
+        QCOMPARE(w.shapePoints().size(), 3);
+        clickAt({300, 180}); // again, straight away
+        QTRY_VERIFY(!w.isShaping());
+        QCOMPARE(w.layers().count(), 3);
+        QCOMPARE(w.layers().active()->shape.points.size(), 3);
+
+        // Switching tools puts a shape down; undo while drawing drops it.
+        w.beginShape({40, 220});
+        w.addShapePoint({120, 260});
+        w.canvasView()->setTool(w.shapeTool());
+        w.undo();
+        QVERIFY(!w.isShaping());
+        QCOMPARE(w.layers().count(), 3);
+        w.beginShape({40, 220});
+        w.addShapePoint({120, 260});
+        w.setActiveLayer(w.layers().children(0).first());
+        QVERIFY(!w.isShaping());
+        QCOMPARE(w.layers().count(), 4);
+        // A locked shape isn't opened.
+        w.setLayerLocked(line, true);
+        QVERIFY(!w.editShape(line));
+        MainWindow::ShapeOptions back;
+        w.setShapeOptions(back);
     }
 };
 

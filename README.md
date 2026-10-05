@@ -105,6 +105,12 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - Shown on the canvas as you type; placed on a layer of its own
 - Placed text stays text: click it with the Text tool to change the words, font, size, colour, outline or wrap, and it's saved that way in the document. Moving the layer or cropping the canvas keeps it text; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the text back)
 
+### Shapes
+
+- Polygons and lines drawn point by point, with straight sides or as a smooth curve through the points, closed or open
+- An outline in any colour and weight, a fill in the painting colour, or both; smooth, or hard-edged for pixel art
+- A placed shape stays a shape: click it with the Shape tool to drag its points, add one on a side, remove one, or move the whole thing, and change its line, fill or curve. It's saved that way in the document. Moving the layer or cropping the canvas keeps it a shape; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the shape back)
+
 ### Pages
 
 - One document holds any number of drawings, as tabs under the canvas
@@ -133,7 +139,6 @@ Not built yet, roughly in the order planned:
 
 - Four-corner warp in Transform: drag each corner on its own, so a texture sits on a wing or a hull side at an angle
 - Mesh warp: a grid of points to bend a texture round a curved panel, such as a car door or a fuselage
-- Shapes you can go on editing: polygons with straight and curved sides, an outline and a fill, which also serve as the edge a warped texture is trimmed to
 - Layer effects
 - Autosave
 
@@ -171,6 +176,8 @@ Whole jobs, step by step, with pictures.
 | Heal | H; dab or drag over a blemish and let go |
 | Text | T; click where it goes, type in the Text window, drag on the canvas to move it. Ctrl+Enter (or Place) puts it on a new layer; Escape or Cancel drops it |
 | Change placed text | With the Text tool, click the words. The Text window opens with them; Ctrl+Enter (or Update) keeps the change, Escape drops it |
+| Draw a shape | U; click point by point (hold and drag to place a point exactly). Click the first point, double-click, or press Enter to finish; Backspace takes back the last point; Escape drops it |
+| Change a placed shape | With the Shape tool, click it. Drag a point to move it, a side to add a point there, inside to move the shape; Delete removes the point last touched. Enter (or a click away from it) keeps the change, Escape drops it |
 | Aim a balloon's tail | While the Text window is open, drag the diamond at the tail's tip |
 | Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |
 

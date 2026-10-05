@@ -138,6 +138,11 @@ QString readPage(const QJsonObject &m, PendingPage &page)
                 l.textBox = QRect(box.at(0).toInt(), box.at(1).toInt(), box.at(2).toInt(), box.at(3).toInt());
             }
         }
+        // ... and a shape layer one with its points.
+        if (const QJsonValue shape = o.value(QLatin1String("shape")); shape.isObject() && l.hasPixels() && !l.hasText) {
+            l.shape = ShapeSettings::fromJson(shape.toObject());
+            l.hasShape = l.shape.isDrawable();
+        }
         if (l.id <= 0)
             return QObject::tr("The document is damaged (layer %1).").arg(i);
         page.byEntry.insert(i, int(list.size()));
@@ -194,6 +199,8 @@ QJsonArray layersToJson(const LayerStack &stack, const QString &prefix)
                                                          l.textBox.height()});
             o.insert(QLatin1String("text"), text);
         }
+        if (l.isShape())
+            o.insert(QLatin1String("shape"), l.shape.toJson());
         if (l.hasMask) {
             o.insert(QLatin1String("mask"),
                      QJsonObject{{QLatin1String("enabled"), l.maskEnabled},
@@ -441,6 +448,8 @@ LoadedDocument loadNativeDocument(const QString &path)
         for (Layer &l : page.list)
             if (l.hasText)
                 l.textPixels = l.store.snapshot();
+            else if (l.hasShape)
+                l.shapePixels = l.store.snapshot();
         auto stack = std::make_unique<LayerStack>();
         stack->setSize(page.size);
         stack->replaceLayers(std::move(page.list), page.activeLayer);

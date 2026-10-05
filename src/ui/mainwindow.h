@@ -14,6 +14,7 @@
 #include "transform.h"
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QMainWindow>
 #include <QSize>
 
@@ -34,6 +35,8 @@ class SelectTool;
 class WandTool;
 class LassoTool;
 class TextTool;
+class ShapeTool;
+class QSettings;
 class TextPanel;
 class TransformTool;
 class FillTool;
@@ -114,6 +117,38 @@ public:
     // changes to it.
     void commitText();
     void cancelText();
+    // Shapes: polygons and lines drawn point by point, each on a layer of
+    // its own that keeps its points, so they can be moved afterwards.
+    ShapeTool *shapeTool() const { return m_shapeTool; }
+    // How the Shape tool draws. The fill is the painting colour.
+    struct ShapeOptions {
+        int line = 3; // outline width; 0 = none
+        QColor lineColor = Qt::black;
+        bool filled = false;
+        bool curved = false; // a curve through the points
+        bool closed = true;  // the last point joins the first
+        bool smooth = true;  // soft edges; off for hard pixels
+    };
+    const ShapeOptions &shapeOptions() const { return m_shapeOpts; }
+    // Changes them, and the shape being drawn or changed with them.
+    void setShapeOptions(const ShapeOptions &options);
+    // A shape is being drawn or changed and hasn't been put down yet.
+    bool isShaping() const { return m_shape.active; }
+    QList<QPointF> shapePoints() const;
+    // Starts a shape at its first point / adds the next (what clicks with
+    // the Shape tool do).
+    void beginShape(const QPointF &first);
+    void addShapePoint(const QPointF &pos);
+    // Opens a shape layer's points again, to move, add or remove them (what
+    // a click on a placed shape with the Shape tool does). False if the
+    // layer isn't a shape any more, or can't be changed.
+    bool editShape(int layerId);
+    // The topmost shape layer under a canvas point; 0 if none.
+    int shapeLayerAt(const QPointF &pos) const;
+    // Puts the shape down on its layer (one undo step) / drops it, or the
+    // changes to it.
+    void commitShape();
+    void cancelShape();
     TransformTool *transformTool() const { return m_transformTool; }
     FillTool *fillTool() const { return m_fillTool; }
     GradientTool *gradientTool() const { return m_gradientTool; }
@@ -312,6 +347,17 @@ private:
     void createTransformOptions();
     void createFillOptions();
     void createGradientOptions();
+    void createShapeOptions();
+    void syncShapeOptions();
+    // Redraws the shape being worked on from its points and the options.
+    void updateShape();
+    void showShapeHandles();
+    void shapePressed(const QPointF &pos);
+    void shapeDragged(const QPointF &pos);
+    void shapeReleased(const QPointF &pos);
+    void shapeKey(int key);
+    void loadShapeSettings(QSettings &s);
+    void saveShapeSettings(QSettings &s) const;
     void syncFillOptions();
     void syncGradientOptions();
     void rebuildGradientPresets();
@@ -554,6 +600,36 @@ private:
     QAction *m_gradientAct = nullptr;
     QToolBar *m_fillOptions = nullptr;
     QToolBar *m_gradientOptions = nullptr;
+    QToolBar *m_shapeOptions = nullptr;
+    QSpinBox *m_shapeLine = nullptr;
+    QToolButton *m_shapeLineColor = nullptr;
+    QCheckBox *m_shapeFilled = nullptr;
+    QCheckBox *m_shapeCurved = nullptr;
+    QCheckBox *m_shapeClosed = nullptr;
+    QCheckBox *m_shapeSmooth = nullptr;
+    ShapeTool *m_shapeTool = nullptr;
+    QAction *m_shapeAct = nullptr;
+    ShapeOptions m_shapeOpts;
+    // A shape being drawn or changed. Like text being typed, it lives on its
+    // layer floating until it's put down; "before" is the document without it
+    // (or with it as it was).
+    struct ShapeSession {
+        bool active = false;
+        bool adding = false;  // clicks add points (a new shape); otherwise they move them
+        bool editing = false; // changing a shape already placed
+        int layerId = 0;
+        easeletch::LayerStack before;
+        easeletch::ShapeSettings shape;
+        int selected = -1;    // the point last touched
+        int dragPoint = -1;   // the point the drag under way is moving
+        bool dragWhole = false;
+        QList<QPointF> dragStart; // the points when a drag of the whole shape began
+        QPointF pressAt;
+        // What the press under way does once it's over.
+        enum After { Nothing, Start, Finish } afterRelease = Nothing;
+        QElapsedTimer lastClick; // for telling a double-click
+        QPointF lastClickAt;
+    } m_shape;
     FillOptions m_fill;
     GradientOptions m_gradient;
     QSpinBox *m_fillTolerance = nullptr;

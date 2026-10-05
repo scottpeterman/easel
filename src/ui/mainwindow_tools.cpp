@@ -154,8 +154,8 @@ bool MainWindow::startTransform(bool interactive)
         return false;
     if (m_xf.active)
         return true;
-    if (m_text.active)
-        commitFloating(); // text being typed is placed first, then it's the layer that's transformed
+    if (m_text.active || m_shape.active)
+        commitFloating(); // text being typed (or a shape being drawn) is placed first, then it's the layer that's transformed
     // Pixels already floating (a paste being placed) are transformed as they are.
     const bool wasFloating = m_floating.isActive();
     const bool hadSelection = !m_selection.isEmpty();
@@ -306,7 +306,7 @@ void MainWindow::quickTransform(const QString &label, void (FreeTransform::*chan
         applyTransform(true);
         return;
     }
-    const bool wasFloating = m_floating.isActive() && !m_text.active;
+    const bool wasFloating = m_floating.isActive() && !m_text.active && !m_shape.active;
     if (!startTransform(false))
         return;
     (m_xf.box.*change)();

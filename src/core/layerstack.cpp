@@ -17,22 +17,49 @@
 
 namespace easeletch {
 
-bool Layer::isText() const
+namespace {
+
+// Two stores hold the same tiles with the same pixels.
+bool sameTiles(const TileStore &now, const TileStore &drawn)
 {
-    if (!hasText || !hasPixels() || store.tileCount() != textPixels.tileCount())
+    if (now.tileCount() != drawn.tileCount())
         return false;
-    const QList<TileCoord> coords = textPixels.tileCoords();
+    const QList<TileCoord> coords = drawn.tileCoords();
     for (const TileCoord c : coords) {
-        const QImage now = store.tile(c);
-        if (now.isNull())
+        const QImage a = now.tile(c);
+        if (a.isNull())
             return false;
-        const QImage drawn = textPixels.tile(c);
+        const QImage b = drawn.tile(c);
         // Usually the very same tile (tiles are shared until written to).
-        if (now.cacheKey() != drawn.cacheKey()
-            && std::memcmp(now.constBits(), drawn.constBits(), size_t(TileStore::BytesPerTile)) != 0)
+        if (a.cacheKey() != b.cacheKey()
+            && std::memcmp(a.constBits(), b.constBits(), size_t(TileStore::BytesPerTile)) != 0)
             return false;
     }
     return true;
+}
+
+} // namespace
+
+bool Layer::isText() const
+{
+    return hasText && hasPixels() && sameTiles(store, textPixels);
+}
+
+bool Layer::isShape() const
+{
+    return hasShape && hasPixels() && sameTiles(store, shapePixels);
+}
+
+void drawShapeLayer(Layer &layer, const QRect &canvas)
+{
+    layer.store.clear();
+    const ShapeLayout layout = layoutShape(layer.shape);
+    if (!layout.image.isNull()) {
+        FloatingContent content;
+        content.paste(&layer.store, layout.image, layout.origin, {}, canvas);
+        content.commit();
+    }
+    layer.shapePixels = layer.store.snapshot();
 }
 
 void drawTextLayer(Layer &layer, const QRect &canvas)

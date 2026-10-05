@@ -166,3 +166,11 @@ void LassoTool::cancel()
     m_path.clear();
     emit pathChanged(m_path);
 }
+
+bool ShapeTool::keyPress(QKeyEvent *event)
+{
+    if (!m_working || (event->key() != Qt::Key_Backspace && event->key() != Qt::Key_Delete))
+        return false;
+    emit key(event->key());
+    return true;
+}

@@ -32,6 +32,8 @@ add_library(easeletch_core STATIC
     fillops.cpp
     transform.h
     transform.cpp
+    shapes.h
+    shapes.cpp
     textrender.h
     textrender.cpp
 )

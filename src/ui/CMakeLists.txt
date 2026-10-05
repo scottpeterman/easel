@@ -39,6 +39,7 @@ add_library(easeletch_ui STATIC
     mainwindow.cpp
     mainwindow_tools.cpp
     mainwindow_pages.cpp
+    mainwindow_shapes.cpp
 )
 
 target_include_directories(easeletch_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

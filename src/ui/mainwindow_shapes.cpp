@@ -1,0 +1,474 @@
+// MainWindow: shapes drawn point by point, and changing them afterwards.
+
+#include "mainwindow.h"
+
+#include "canvasview.h"
+#include "colorpanel.h"
+#include "selecttools.h"
+
+#include <QApplication>
+#include <QCheckBox>
+#include <QColorDialog>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineF>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSpinBox>
+#include <QStatusBar>
+#include <QTimer>
+#include <QToolBar>
+#include <QToolButton>
+
+#include <climits>
+#include <cmath>
+
+using easeletch::ShapeSettings;
+
+namespace {
+
+// Points sit on whole pixels: lines between them come out crisp.
+QPointF onPixel(const QPointF &p)
+{
+    return QPointF(std::round(p.x()), std::round(p.y()));
+}
+
+} // namespace
+
+void MainWindow::createShapeOptions()
+{
+    m_shapeOptions = new QToolBar(tr("Shape Options"), this);
+    m_shapeOptions->setObjectName(QStringLiteral("ShapeOptionsBar"));
+    m_shapeOptions->setMovable(false);
+
+    auto *host = new QWidget(m_shapeOptions);
+    auto *row = new QHBoxLayout(host);
+    row->setContentsMargins(6, 2, 6, 2);
+    row->setSpacing(6);
+    auto *title = new QLabel(tr("Shape"), host);
+    title->setStyleSheet(QStringLiteral("font-weight: 600;"));
+    row->addWidget(title);
+    row->addSpacing(8);
+    row->addWidget(new QLabel(tr("Line"), host));
+    m_shapeLine = new QSpinBox(host);
+    m_shapeLine->setObjectName(QStringLiteral("shapeLine"));
+    m_shapeLine->setRange(0, ShapeSettings::MaxLine);
+    m_shapeLine->setSpecialValueText(tr("None"));
+    m_shapeLine->setSuffix(tr(" px"));
+    m_shapeLine->setToolTip(tr("How heavy the outline is. None: just the fill."));
+    m_shapeLineColor = new QToolButton(host);
+    m_shapeLineColor->setFixedWidth(36);
+    m_shapeLineColor->setToolTip(tr("The outline's colour"));
+    m_shapeFilled = new QCheckBox(tr("Fill"), host);
+    m_shapeFilled->setToolTip(tr("Fill the shape with the painting colour (the Color panel's)"));
+    m_shapeCurved = new QCheckBox(tr("Curved"), host);
+    m_shapeCurved->setToolTip(tr("A smooth curve through the points, not straight sides"));
+    m_shapeClosed = new QCheckBox(tr("Closed"), host);
+    m_shapeClosed->setToolTip(tr("The last point joins back to the first. Off: an open line through the points."));
+    m_shapeSmooth = new QCheckBox(tr("Smooth"), host);
+    m_shapeSmooth->setToolTip(tr("Soft edges. Untick for hard pixels (sprites, pixel art)."));
+    auto *hint = new QLabel(tr("Click points; click the first, double-click or press Enter to finish. "
+                               "Click a shape to change it."),
+                            host);
+    hint->setEnabled(false);
+    row->addWidget(m_shapeLine);
+    row->addWidget(m_shapeLineColor);
+    row->addWidget(m_shapeFilled);
+    row->addWidget(m_shapeCurved);
+    row->addWidget(m_shapeClosed);
+    row->addWidget(m_shapeSmooth);
+    row->addSpacing(12);
+    row->addWidget(hint);
+    row->addStretch(1);
+    m_shapeOptions->addWidget(host);
+
+    const auto changed = [this] {
+        ShapeOptions o = m_shapeOpts;
+        o.line = m_shapeLine->value();
+        o.filled = m_shapeFilled->isChecked();
+        o.curved = m_shapeCurved->isChecked();
+        o.closed = m_shapeClosed->isChecked();
+        o.smooth = m_shapeSmooth->isChecked();
+        setShapeOptions(o);
+    };
+    connect(m_shapeLine, &QSpinBox::valueChanged, this, changed);
+    for (QCheckBox *box : {m_shapeFilled, m_shapeCurved, m_shapeClosed, m_shapeSmooth})
+        connect(box, &QCheckBox::toggled, this, changed);
+    connect(m_shapeLineColor, &QToolButton::clicked, this, [this] {
+        const QColor c = QColorDialog::getColor(m_shapeOpts.lineColor, this, tr("Outline colour"));
+        if (!c.isValid())
+            return;
+        ShapeOptions o = m_shapeOpts;
+        o.lineColor = c;
+        setShapeOptions(o);
+    });
+    addToolBar(Qt::TopToolBarArea, m_shapeOptions);
+    syncShapeOptions();
+}
+
+void MainWindow::syncShapeOptions()
+{
+    if (!m_shapeOptions)
+        return;
+    const QSignalBlocker a(m_shapeLine), b(m_shapeFilled), c(m_shapeCurved), d(m_shapeClosed), e(m_shapeSmooth);
+    m_shapeLine->setValue(m_shapeOpts.line);
+    m_shapeFilled->setChecked(m_shapeOpts.filled);
+    m_shapeCurved->setChecked(m_shapeOpts.curved);
+    m_shapeClosed->setChecked(m_shapeOpts.closed);
+    m_shapeSmooth->setChecked(m_shapeOpts.smooth);
+    m_shapeLineColor->setStyleSheet(QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }")
+                                        .arg(m_shapeOpts.lineColor.name()));
+}
+
+void MainWindow::setShapeOptions(const ShapeOptions &options)
+{
+    m_shapeOpts = options;
+    m_shapeOpts.line = std::clamp(m_shapeOpts.line, 0, ShapeSettings::MaxLine);
+    syncShapeOptions();
+    updateShape();
+}
+
+QList<QPointF> MainWindow::shapePoints() const
+{
+    return m_shape.active ? m_shape.shape.points : QList<QPointF>();
+}
+
+int MainWindow::shapeLayerAt(const QPointF &pos) const
+{
+    if (!m_stack)
+        return 0;
+    const double tolerance = 4.0 / qMax(m_view->zoom(), 0.01);
+    const QList<easeletch::Layer> &layers = m_stack->layers();
+    for (auto it = layers.crbegin(); it != layers.crend(); ++it)
+        if (it->hasShape && easeletch::shapeHit(it->shape, pos, tolerance) && m_stack->isShown(it->id)
+            && it->isShape())
+            return it->id;
+    return 0;
+}
+
+void MainWindow::beginShape(const QPointF &first)
+{
+    if (!m_stack || m_view->isStroking())
+        return;
+    commitFloating(); // places a shape or text already in progress, or anything else floating
+    m_shape = ShapeSession();
+    m_shape.before = m_stack->snapshot();
+
+    // A shape gets a layer of its own, above the active one.
+    easeletch::Layer l;
+    l.name = m_stack->uniqueName(tr("Shape"));
+    const easeletch::Layer *active = m_stack->active();
+    int id = 0;
+    if (active && active->group) {
+        id = m_stack->insert(std::move(l), active->id, INT_MAX);
+    } else {
+        const int parent = active ? active->parent : 0;
+        const int at = active ? int(m_stack->children(parent).indexOf(active->id)) + 1 : INT_MAX;
+        id = m_stack->insert(std::move(l), parent, at);
+    }
+    m_stack->setActive(id);
+    m_editMask = false;
+    m_shape.active = true;
+    m_shape.adding = true;
+    m_shape.layerId = id;
+    m_shape.shape.points = {onPixel(first)};
+    m_shape.selected = 0;
+    layersChanged();
+    updateShape();
+}
+
+void MainWindow::addShapePoint(const QPointF &pos)
+{
+    if (!m_shape.active || m_shape.shape.points.size() >= ShapeSettings::MaxPoints)
+        return;
+    m_shape.shape.points.append(onPixel(pos));
+    m_shape.selected = int(m_shape.shape.points.size()) - 1;
+    updateShape();
+}
+
+bool MainWindow::editShape(int layerId)
+{
+    if (!m_stack || m_view->isStroking())
+        return false;
+    commitFloating();
+    easeletch::Layer *l = m_stack->layer(layerId);
+    if (!l || !l->isShape())
+        return false;
+    if (m_stack->isLocked(layerId)) {
+        statusBar()->showMessage(tr("\"%1\" is locked").arg(l->name), 4000);
+        return false;
+    }
+    const ShapeSettings shape = l->shape;
+    // The options show the shape as it is, and its fill is the painting colour.
+    m_shapeOpts.line = shape.line;
+    m_shapeOpts.lineColor = shape.lineColor;
+    m_shapeOpts.filled = shape.filled;
+    m_shapeOpts.curved = shape.curved;
+    m_shapeOpts.closed = shape.closed;
+    m_shapeOpts.smooth = shape.smooth;
+    syncShapeOptions();
+    if (shape.filled)
+        m_color->setColor(shape.fill);
+
+    m_shape = ShapeSession();
+    m_shape.before = m_stack->snapshot();
+    // It floats again, over an empty layer, exactly as while first drawn.
+    l->store.clear();
+    m_stack->setActive(layerId);
+    m_editMask = false;
+    m_shape.active = true;
+    m_shape.editing = true;
+    m_shape.layerId = layerId;
+    m_shape.shape = shape;
+    layersChanged();
+    updateShape();
+    statusBar()->showMessage(tr("Drag a point to move it, a side to add a point, inside to move the shape. "
+                                "Delete removes the last point touched. Enter applies, Escape cancels."),
+                             10000);
+    return true;
+}
+
+void MainWindow::updateShape()
+{
+    if (!m_shape.active || !m_stack)
+        return;
+    easeletch::Layer *l = m_stack->layer(m_shape.layerId);
+    if (!l)
+        return;
+    m_floating.cancel();
+    ShapeSettings &s = m_shape.shape;
+    s.line = m_shapeOpts.line;
+    s.lineColor = m_shapeOpts.lineColor;
+    s.filled = m_shapeOpts.filled;
+    s.fill = m_color->color();
+    s.curved = m_shapeOpts.curved;
+    s.closed = m_shapeOpts.closed;
+    s.smooth = m_shapeOpts.smooth;
+    const easeletch::ShapeLayout layout = easeletch::layoutShape(s);
+    if (!layout.image.isNull()) {
+        m_floating.paste(&l->store, layout.image, layout.origin, {}, canvasRect());
+        m_floatLayer = l->id;
+        m_floatMask = false;
+    }
+    // The points are what shows it's being worked on: no marching ants round it.
+    m_view->setSelectionOutline(m_selection.outlines());
+    showShapeHandles();
+    m_view->refresh();
+}
+
+void MainWindow::showShapeHandles()
+{
+    m_shapeTool->setWorking(m_shape.active);
+    if (!m_shape.active) {
+        if (!m_xf.active)
+            m_view->setHandles({});
+        return;
+    }
+    // A small square on every point: eight screen pixels across whatever the
+    // zoom, twelve for the one last touched.
+    QList<QPolygonF> handles;
+    const QList<QPointF> &points = m_shape.shape.points;
+    for (int i = 0; i < points.size(); ++i) {
+        const double half = (i == m_shape.selected ? 6.0 : 4.0) / qMax(m_view->zoom(), 0.01);
+        const QPointF c = points.at(i);
+        QPolygonF square;
+        square << c + QPointF(-half, -half) << c + QPointF(half, -half) << c + QPointF(half, half)
+               << c + QPointF(-half, half);
+        handles << square;
+    }
+    m_view->setHandles(handles);
+}
+
+void MainWindow::shapePressed(const QPointF &pos)
+{
+    m_shape.pressAt = pos;
+    m_shape.dragPoint = -1;
+    m_shape.dragWhole = false;
+    m_shape.afterRelease = ShapeSession::Nothing;
+    const double grab = 8.0 / qMax(m_view->zoom(), 0.01);
+    if (!m_shape.active) {
+        // Starting (or opening) one changes the layers, which has to wait
+        // until the click is over: the canvas is in the middle of it here.
+        m_shape.afterRelease = ShapeSession::Start;
+        return;
+    }
+    ShapeSettings &s = m_shape.shape;
+    if (m_shape.adding) {
+        // A second click in the same place, or one on the first point, finishes it.
+        const bool again = m_shape.lastClick.isValid() && m_shape.lastClick.elapsed() < QApplication::doubleClickInterval()
+                           && QLineF(pos, m_shape.lastClickAt).length() * m_view->zoom() < 6.0;
+        m_shape.lastClick.start();
+        m_shape.lastClickAt = pos;
+        if (again) {
+            m_shape.afterRelease = ShapeSession::Finish;
+            return;
+        }
+        if (s.points.size() >= 3 && QLineF(pos, s.points.first()).length() <= grab) {
+            ShapeOptions o = m_shapeOpts;
+            o.closed = true;
+            setShapeOptions(o);
+            m_shape.afterRelease = ShapeSession::Finish;
+            return;
+        }
+        addShapePoint(pos);
+        m_shape.dragPoint = m_shape.selected; // holding on, it can still be put right
+        return;
+    }
+    // Changing one already placed.
+    const int point = easeletch::shapePointAt(s, pos, grab);
+    if (point >= 0) {
+        m_shape.selected = m_shape.dragPoint = point;
+        showShapeHandles();
+        m_view->refresh();
+        return;
+    }
+    const int side = easeletch::shapeSideAt(s, pos, grab);
+    if (side >= 0 && s.points.size() < ShapeSettings::MaxPoints) {
+        s.points.insert(side + 1, onPixel(pos));
+        m_shape.selected = m_shape.dragPoint = side + 1;
+        updateShape();
+        return;
+    }
+    if (easeletch::shapeHit(s, pos, grab)) {
+        m_shape.dragWhole = true;
+        m_shape.dragStart = s.points;
+        return;
+    }
+    // A click away from it puts it down.
+    m_shape.afterRelease = ShapeSession::Finish;
+}
+
+void MainWindow::shapeDragged(const QPointF &pos)
+{
+    if (!m_shape.active)
+        return;
+    ShapeSettings &s = m_shape.shape;
+    if (m_shape.dragPoint >= 0 && m_shape.dragPoint < s.points.size()) {
+        const QPointF to = onPixel(pos);
+        if (s.points.at(m_shape.dragPoint) == to)
+            return;
+        s.points[m_shape.dragPoint] = to;
+        updateShape();
+    } else if (m_shape.dragWhole && m_shape.dragStart.size() == s.points.size()) {
+        const QPointF delta = onPixel(pos - m_shape.pressAt);
+        for (int i = 0; i < s.points.size(); ++i)
+            s.points[i] = m_shape.dragStart.at(i) + delta;
+        updateShape();
+    }
+}
+
+void MainWindow::shapeReleased(const QPointF &pos)
+{
+    shapeDragged(pos);
+    m_shape.dragPoint = -1;
+    m_shape.dragWhole = false;
+    const ShapeSession::After after = m_shape.afterRelease;
+    m_shape.afterRelease = ShapeSession::Nothing;
+    if (after == ShapeSession::Nothing)
+        return;
+    const QPointF at = m_shape.pressAt;
+    QTimer::singleShot(0, this, [this, after, at] {
+        if (m_view->tool() != m_shapeTool)
+            return;
+        if (after == ShapeSession::Finish) {
+            commitShape();
+        } else if (!m_shape.active) {
+            // On a shape already placed, the click opens it; anywhere else it
+            // starts a new one.
+            if (const int id = shapeLayerAt(at))
+                editShape(id);
+            else
+                beginShape(at);
+            // A quick second click right here would otherwise count as a double-click.
+            m_shape.lastClick.start();
+            m_shape.lastClickAt = at;
+        }
+    });
+}
+
+void MainWindow::shapeKey(int key)
+{
+    if (!m_shape.active || (key != Qt::Key_Backspace && key != Qt::Key_Delete))
+        return;
+    ShapeSettings &s = m_shape.shape;
+    if (m_shape.adding) {
+        // Takes back the last point; with none left there's no shape.
+        if (s.points.size() <= 1) {
+            cancelShape();
+            return;
+        }
+        s.points.removeLast();
+        m_shape.selected = int(s.points.size()) - 1;
+        m_shape.lastClick.invalidate();
+        updateShape();
+        return;
+    }
+    if (m_shape.selected < 0 || m_shape.selected >= s.points.size() || s.points.size() <= 2)
+        return;
+    s.points.removeAt(m_shape.selected);
+    m_shape.selected = std::min(m_shape.selected, int(s.points.size()) - 1);
+    updateShape();
+}
+
+void MainWindow::commitShape()
+{
+    if (!m_shape.active)
+        return;
+    if (!m_floating.isActive() || !m_shape.shape.isDrawable()) {
+        cancelShape(); // one point isn't a shape
+        return;
+    }
+    m_floating.commit(); // the pixels stay; the step recorded is the document before
+    const bool editing = m_shape.editing;
+    if (easeletch::Layer *l = m_stack->layer(m_shape.layerId)) {
+        // The layer keeps its points, so they can be moved later.
+        l->hasShape = true;
+        l->shape = m_shape.shape;
+        l->shapePixels = l->store.snapshot();
+    }
+    m_history.pushState(editing ? tr("Edit Shape") : tr("Shape"), std::move(m_shape.before), *m_stack);
+    m_shape = ShapeSession();
+    m_moveDragging = false;
+    showShapeHandles();
+    m_view->setSelectionOutline(m_selection.outlines());
+    layersChanged();
+}
+
+void MainWindow::cancelShape()
+{
+    if (!m_shape.active)
+        return;
+    m_floating.cancel();
+    // Back to the document as it was before the shape's layer was made, or
+    // before the shape was opened again.
+    m_stack->swapState(m_shape.before);
+    m_shape = ShapeSession();
+    m_moveDragging = false;
+    showShapeHandles();
+    m_view->setSelectionOutline(m_selection.outlines());
+    layersChanged();
+}
+
+void MainWindow::loadShapeSettings(QSettings &s)
+{
+    s.beginGroup(QStringLiteral("shape"));
+    m_shapeOpts.line = std::clamp(s.value(QStringLiteral("line"), m_shapeOpts.line).toInt(), 0, ShapeSettings::MaxLine);
+    if (const QColor c = QColor::fromString(s.value(QStringLiteral("lineColor")).toString()); c.isValid())
+        m_shapeOpts.lineColor = c;
+    m_shapeOpts.filled = s.value(QStringLiteral("filled"), m_shapeOpts.filled).toBool();
+    m_shapeOpts.curved = s.value(QStringLiteral("curved"), m_shapeOpts.curved).toBool();
+    m_shapeOpts.smooth = s.value(QStringLiteral("smooth"), m_shapeOpts.smooth).toBool();
+    s.endGroup();
+    syncShapeOptions();
+}
+
+void MainWindow::saveShapeSettings(QSettings &s) const
+{
+    s.beginGroup(QStringLiteral("shape"));
+    s.setValue(QStringLiteral("line"), m_shapeOpts.line);
+    s.setValue(QStringLiteral("lineColor"), m_shapeOpts.lineColor.name());
+    s.setValue(QStringLiteral("filled"), m_shapeOpts.filled);
+    s.setValue(QStringLiteral("curved"), m_shapeOpts.curved);
+    s.setValue(QStringLiteral("smooth"), m_shapeOpts.smooth);
+    s.endGroup();
+}

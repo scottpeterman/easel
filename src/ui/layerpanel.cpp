@@ -251,6 +251,9 @@ void LayerPanel::addItems(QTreeWidgetItem *parentItem, int parentId)
         if (l->isText())
             item->setToolTip(kNameColumn, tr("Text: click it on the canvas with the Text tool (T) to change it. "
                                              "Painting on it or filtering it turns it into ordinary pixels."));
+        if (l->isShape())
+            item->setToolTip(kNameColumn, tr("A shape: click it on the canvas with the Shape tool (U) to move its points. "
+                                             "Painting on it or filtering it turns it into ordinary pixels."));
         item->setFlags(flags);
         if (l->group) {
             addItems(item, l->id);

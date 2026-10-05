@@ -1,6 +1,7 @@
 #pragma once
 
 #include "adjust.h"
+#include "shapes.h"
 #include "textrender.h"
 #include "tilestore.h"
 
@@ -81,11 +82,21 @@ struct Layer {
     QRect textBox;        // the block of text on the canvas (what a click has to hit)
     TileStore textPixels; // the layer as the text drew it
     bool isText() const;
+
+    // A shape layer, in the same way: a raster layer that remembers the
+    // points it was drawn from and how, so they can be moved later. isShape()
+    // is true only while the pixels are still exactly what the shape drew.
+    bool hasShape = false;
+    ShapeSettings shape;
+    TileStore shapePixels; // the layer as the shape drew it
+    bool isShape() const;
 };
 
 // Draws a text layer's pixels again from its words, replacing what's there.
 // Nothing outside the canvas is kept.
 void drawTextLayer(Layer &layer, const QRect &canvas);
+// The same for a shape layer, from its points.
+void drawShapeLayer(Layer &layer, const QRect &canvas);
 
 // How much a mask pixel lets through, 0..1.
 float maskValue(const Pixel &p);

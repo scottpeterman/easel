@@ -123,6 +123,11 @@ MainWindow::MainWindow(QWidget *parent)
         m_xf.box.center += QPointF(delta);
         applyTransform(true);
     });
+    m_shapeTool = new ShapeTool(this);
+    connect(m_shapeTool, &ShapeTool::pressed, this, &MainWindow::shapePressed);
+    connect(m_shapeTool, &ShapeTool::dragged, this, &MainWindow::shapeDragged);
+    connect(m_shapeTool, &ShapeTool::released, this, &MainWindow::shapeReleased);
+    connect(m_shapeTool, &ShapeTool::key, this, &MainWindow::shapeKey);
     m_lasso = new LassoTool(this);
     connect(m_lasso, &LassoTool::finished, this, &MainWindow::lassoFinished);
     // While it's being drawn, the path shows in place of the selection outline.
@@ -181,6 +186,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_transformOptions->hide(); // ... and with a transform
     m_fillOptions->hide();
     m_gradientOptions->hide();
+    m_shapeOptions->hide();
+    loadShapeSettings(settings);
     m_fill.tolerance = settings.value(QStringLiteral("fill/tolerance"), m_fill.tolerance).toDouble();
     m_fill.contiguous = settings.value(QStringLiteral("fill/contiguous"), m_fill.contiguous).toBool();
     m_fill.allLayers = settings.value(QStringLiteral("fill/allLayers"), m_fill.allLayers).toBool();
@@ -384,7 +391,7 @@ void MainWindow::createActions()
     connect(escapeAct, &QAction::triggered, this, [this] {
         if (m_lasso->isOpen())
             m_lasso->cancel();
-        else if (m_floating.isActive() || m_text.active)
+        else if (m_floating.isActive() || m_text.active || m_shape.active)
             cancelFloating();
         else
             deselect();
@@ -447,7 +454,7 @@ void MainWindow::createActions()
         m_viewMenu->addAction(dock->toggleViewAction());
     for (QToolBar *bar : findChildren<QToolBar *>())
         if (bar != m_wandOptions && bar != m_options && bar != m_transformOptions && bar != m_fillOptions
-            && bar != m_gradientOptions) // these follow the tool
+            && bar != m_gradientOptions && bar != m_shapeOptions) // these follow the tool
             m_viewMenu->addAction(bar->toggleViewAction());
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
@@ -506,6 +513,11 @@ void MainWindow::createToolBars()
     m_textAct->setToolTip(tr("Text (T): click where it goes, type, drag to move it, then Place. "
                              "Click text already placed to change it. "
                              "It lands on a new layer."));
+    m_shapeAct = tools->addAction(tr("Shape"), this, [this] { activateTool(m_shapeTool, false); });
+    m_shapeAct->setShortcut(QKeySequence(Qt::Key_U));
+    m_shapeAct->setToolTip(tr("Shape (U): click point by point to draw a polygon or a line; click the first point, "
+                              "double-click or press Enter to finish. Click a shape already placed to move its "
+                              "points. It lands on a new layer."));
     m_moveAct = tools->addAction(tr("Move"), this, [this] { activateTool(m_move, false); });
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));
     m_moveAct->setToolTip(tr("Move selected pixels (V). Arrows nudge 1 px, Shift+arrows 10. "
@@ -529,7 +541,8 @@ void MainWindow::createToolBars()
     m_transformAct->setToolTip(tr("Free transform (Ctrl+T): scale, rotate and move the selection, or the whole layer. "
                                   "Enter applies, Escape cancels."));
     for (QAction *a : {m_brushAct, m_eraserAct, m_smudgeAct, m_cloneAct, m_healAct, m_eyedropperAct, m_rectSelectAct,
-                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_moveAct, m_transformAct, m_fillAct,
+                       m_ellipseSelectAct, m_lassoAct, m_wandAct, m_textAct, m_shapeAct, m_moveAct, m_transformAct,
+                       m_fillAct,
                        m_gradientAct}) {
         a->setCheckable(true);
         group->addAction(a);
@@ -600,6 +613,7 @@ void MainWindow::createToolBars()
     createTransformOptions();
     createFillOptions();
     createGradientOptions();
+    createShapeOptions();
 
     // The cursor circle follows size changes immediately.
     connect(m_brush, &BrushTool::settingsChanged, m_view, qOverload<>(&QWidget::update));
@@ -657,6 +671,7 @@ void MainWindow::createDocks()
     colorDock->raise();
     connect(m_color, &ColorPanel::colorChanged, m_brush, &BrushTool::setColor);
     connect(m_color, &ColorPanel::colorChanged, this, &MainWindow::updateText);
+    connect(m_color, &ColorPanel::colorChanged, this, &MainWindow::updateShape);
     // The Text window shows the same colour, and its own button sets it.
     connect(m_color, &ColorPanel::colorChanged, m_textPanel, &TextPanel::setColor);
     connect(m_textPanel, &TextPanel::colorPicked, m_color, &ColorPanel::setColor);
@@ -749,6 +764,7 @@ QAction *MainWindow::actionFor(CanvasTool *tool) const
            : tool == m_wand          ? m_wandAct
            : tool == m_lasso         ? m_lassoAct
            : tool == m_textTool      ? m_textAct
+           : tool == m_shapeTool     ? m_shapeAct
            : tool == m_eyedropper    ? m_eyedropperAct
            : tool == m_transformTool ? m_transformAct
            : tool == m_fillTool      ? m_fillAct
@@ -762,7 +778,8 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
     // works on them: Move, Transform for a transform under way, or Text for
     // text being typed.
     const bool keepsFloating = m_xf.active ? tool == m_transformTool
-                                           : (tool == m_move || (tool == m_textTool && m_text.active));
+                                           : (tool == m_move || (tool == m_textTool && m_text.active)
+                                              || (tool == m_shapeTool && m_shape.active));
     if (!keepsFloating)
         commitFloating();
     if (tool != m_lasso)
@@ -773,11 +790,13 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
     // shown: with two in the row, even for a moment, the window widens to
     // fit both and stays that wide.
     const std::pair<QToolBar *, bool> bars[] = {
-        {m_options, tool != m_wand && tool != m_transformTool && tool != m_fillTool && tool != m_gradientTool},
+        {m_options, tool != m_wand && tool != m_transformTool && tool != m_fillTool && tool != m_gradientTool
+                        && tool != m_shapeTool},
         {m_wandOptions, tool == m_wand},
         {m_transformOptions, tool == m_transformTool},
         {m_fillOptions, tool == m_fillTool},
         {m_gradientOptions, tool == m_gradientTool},
+        {m_shapeOptions, tool == m_shapeTool},
     };
     for (const auto &[bar, on] : bars)
         if (!on)
@@ -893,7 +912,7 @@ void MainWindow::deleteSelection()
         return;
     // With something selected, Delete clears those pixels. With nothing
     // selected it means the highlighted layer, wherever the keyboard focus is.
-    if (m_selection.isEmpty() && !m_floating.isActive() && !m_text.active) {
+    if (m_selection.isEmpty() && !m_floating.isActive() && !m_text.active && !m_shape.active) {
         deleteLayer();
         return;
     }
@@ -989,8 +1008,8 @@ bool MainWindow::liftForMove()
 {
     if (m_floating.isActive())
         return true;
-    if (m_text.active)
-        return false; // nothing typed yet: there's nothing to move
+    if (m_text.active || m_shape.active)
+        return false; // nothing typed or drawn yet: there's nothing to move
     easeletch::TileStore *store = m_stack ? editStore() : nullptr;
     if (!store)
         return false;
@@ -1009,9 +1028,10 @@ bool MainWindow::liftForMove()
     m_selectionBeforeFloat = m_selection;
     m_floatLayer = m_stack->activeId();
     m_floatMask = m_editMask;
-    // A whole text layer on the move stays text: it's drawn again where it lands.
+    // A whole text or shape layer on the move stays what it is: it's drawn
+    // again where it lands.
     const easeletch::Layer *active = m_stack->active();
-    m_floatText = m_selection.isEmpty() && !m_editMask && active && active->isText();
+    m_floatText = m_selection.isEmpty() && !m_editMask && active && (active->isText() || active->isShape());
     m_floatTextBefore = m_floatText ? m_stack->snapshot() : easeletch::LayerStack();
     m_floating.lift(store, sel, canvasRect());
     if (!m_floating.isActive()) {
@@ -1064,6 +1084,10 @@ void MainWindow::showFloatingOutline()
 
 void MainWindow::commitFloating()
 {
+    if (m_shape.active) {
+        commitShape();
+        return;
+    }
     if (m_text.active) {
         commitText();
         return;
@@ -1086,8 +1110,13 @@ void MainWindow::commitFloating()
         const QPoint delta = m_floating.position() - m_floatStart;
         m_floating.commit();
         if (easeletch::Layer *l = m_stack->layer(m_floatLayer)) {
-            l->textAnchor += delta;
-            easeletch::drawTextLayer(*l, canvasRect());
+            if (l->hasShape) {
+                l->shape.translate(delta);
+                easeletch::drawShapeLayer(*l, canvasRect());
+            } else {
+                l->textAnchor += delta;
+                easeletch::drawTextLayer(*l, canvasRect());
+            }
         }
         m_history.pushState(m_floatLabel, std::move(m_floatTextBefore), *m_stack);
         m_floatText = false;
@@ -1183,6 +1212,9 @@ void MainWindow::cropCanvasTo(const QRect &rect, const QString &label)
             // Text stays text: it's drawn again at its place on the new canvas.
             layer->textAnchor -= rect.topLeft();
             easeletch::drawTextLayer(*layer, QRect(QPoint(0, 0), rect.size()));
+        } else if (l.isShape()) {
+            layer->shape.translate(-QPointF(rect.topLeft()));
+            easeletch::drawShapeLayer(*layer, QRect(QPoint(0, 0), rect.size()));
         } else if (!l.group) {
             easeletch::cropStore(layer->store, rect);
         }
@@ -1695,6 +1727,10 @@ void MainWindow::showExportSelectionDialog()
 
 void MainWindow::cancelFloating()
 {
+    if (m_shape.active) {
+        cancelShape();
+        return;
+    }
     if (m_text.active) {
         cancelText();
         return;
@@ -2391,6 +2427,9 @@ void MainWindow::setDocument(std::unique_ptr<easeletch::LayerStack> stack, const
         m_text = TextSession();
         hideTextPanel();
     }
+    m_shape = ShapeSession();
+    m_shapeTool->setWorking(false);
+    m_view->setHandles({});
     m_moveDragging = false;
     setSelection({});
     m_brush->setDocument(nullptr, {}, nullptr);
@@ -2442,8 +2481,8 @@ void MainWindow::undo()
 {
     if (!m_stack || m_view->isStroking())
         return;
-    if (m_floating.isActive() || m_text.active) {
-        // Undoing an uncommitted move, paste or text is just putting it back.
+    if (m_floating.isActive() || m_text.active || m_shape.active) {
+        // Undoing an uncommitted move, paste, text or shape is just putting it back.
         cancelFloating();
         return;
     }
@@ -2455,7 +2494,8 @@ void MainWindow::undo()
 
 void MainWindow::redo()
 {
-    if (!m_stack || m_view->isStroking() || m_floating.isActive() || m_text.active || !m_history.canRedo())
+    if (!m_stack || m_view->isStroking() || m_floating.isActive() || m_text.active || m_shape.active
+        || !m_history.canRedo())
         return;
     const QSize before = canvasSize();
     afterHistoryMove(before, m_history.redo(*m_stack));
@@ -2623,6 +2663,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_color->saveSettings(settings);
     m_brush->saveSettings(settings);
     m_textPanel->saveSettings(settings);
+    saveShapeSettings(settings);
     m_grid.save(settings);
     settings.setValue(QStringLiteral("transform/smooth"), m_transformSmooth);
     settings.setValue(QStringLiteral("fill/tolerance"), m_fill.tolerance);
