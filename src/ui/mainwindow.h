@@ -125,6 +125,8 @@ public:
         int line = 3; // outline width; 0 = none
         QColor lineColor = Qt::black;
         bool filled = false;
+        // The fill is the Gradient tool's current gradient, not the one colour.
+        bool gradient = false;
         bool curved = false; // a curve through the points
         bool closed = true;  // the last point joins the first
         bool smooth = true;  // soft edges; off for hard pixels
@@ -352,6 +354,8 @@ private:
     // Redraws the shape being worked on from its points and the options.
     void updateShape();
     void showShapeHandles();
+    // Copies the Gradient tool's list of gradients into the Shape options.
+    void mirrorGradientChoices();
     void shapePressed(const QPointF &pos);
     void shapeDragged(const QPointF &pos);
     void shapeReleased(const QPointF &pos);
@@ -604,6 +608,9 @@ private:
     QSpinBox *m_shapeLine = nullptr;
     QToolButton *m_shapeLineColor = nullptr;
     QCheckBox *m_shapeFilled = nullptr;
+    QCheckBox *m_shapeGradient = nullptr;
+    QComboBox *m_shapeGradientPreset = nullptr;
+    QComboBox *m_shapeGradientShape = nullptr;
     QCheckBox *m_shapeCurved = nullptr;
     QCheckBox *m_shapeClosed = nullptr;
     QCheckBox *m_shapeSmooth = nullptr;
@@ -622,6 +629,10 @@ private:
         easeletch::ShapeSettings shape;
         int selected = -1;    // the point last touched
         int dragPoint = -1;   // the point the drag under way is moving
+        int dragGradient = 0; // ... or an end of the gradient's line: 1 its start, 2 its end
+        // A shape opened again keeps the gradient it has, until another is
+        // picked for it; a new one takes the Gradient tool's.
+        bool ownGradient = false;
         bool dragWhole = false;
         QList<QPointF> dragStart; // the points when a drag of the whole shape began
         QPointF pressAt;

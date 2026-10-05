@@ -109,6 +109,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 - Polygons and lines drawn point by point, with straight sides or as a smooth curve through the points, closed or open
 - An outline in any colour and weight, a fill in the painting colour, or both; smooth, or hard-edged for pixel art
+- A gradient for the fill, from the same list as the Gradient tool (the metals included), linear, radial, reflected or conical. It runs top to bottom, or out from the middle, until you aim it: open the shape and drag the diamond on either end of its line. It moves with the shape and is redrawn when a point moves
 - A placed shape stays a shape: click it with the Shape tool to drag its points, add one on a side, remove one, or move the whole thing, and change its line, fill or curve. It's saved that way in the document. Moving the layer or cropping the canvas keeps it a shape; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the shape back)
 
 ### Pages
@@ -178,6 +179,7 @@ Whole jobs, step by step, with pictures.
 | Change placed text | With the Text tool, click the words. The Text window opens with them; Ctrl+Enter (or Update) keeps the change, Escape drops it |
 | Draw a shape | U; click point by point (hold and drag to place a point exactly). Click the first point, double-click, or press Enter to finish; Backspace takes back the last point; Escape drops it |
 | Change a placed shape | With the Shape tool, click it. Drag a point to move it, a side to add a point there, inside to move the shape; Delete removes the point last touched. Enter (or a click away from it) keeps the change, Escape drops it |
+| Fill a shape with a gradient | In the Shape options, tick Fill and Gradient and pick one from the list. To aim it, click the shape with the Shape tool and drag the diamonds at the two ends of the gradient's line |
 | Aim a balloon's tail | While the Text window is open, drag the diamond at the tail's tip |
 | Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |
 

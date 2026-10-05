@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineF>
@@ -61,6 +62,19 @@ void MainWindow::createShapeOptions()
     m_shapeLineColor->setToolTip(tr("The outline's colour"));
     m_shapeFilled = new QCheckBox(tr("Fill"), host);
     m_shapeFilled->setToolTip(tr("Fill the shape with the painting colour (the Color panel's)"));
+    m_shapeGradient = new QCheckBox(tr("Gradient"), host);
+    m_shapeGradient->setObjectName(QStringLiteral("shapeGradient"));
+    m_shapeGradient->setToolTip(tr("Fill with a gradient, not the one colour. Click the shape to open it, then drag "
+                                   "the two diamonds to aim the gradient."));
+    m_shapeGradientPreset = new QComboBox(host);
+    m_shapeGradientPreset->setObjectName(QStringLiteral("shapeGradientPreset"));
+    m_shapeGradientPreset->setMaxVisibleItems(24);
+    m_shapeGradientPreset->setToolTip(tr("The gradient's colours: the same list as the Gradient tool's, where "
+                                         "they're edited and saved"));
+    m_shapeGradientShape = new QComboBox(host);
+    m_shapeGradientShape->setObjectName(QStringLiteral("shapeGradientShape"));
+    m_shapeGradientShape->addItems({tr("Linear"), tr("Radial"), tr("Reflected"), tr("Conical")});
+    m_shapeGradientShape->setToolTip(tr("How the colours spread"));
     m_shapeCurved = new QCheckBox(tr("Curved"), host);
     m_shapeCurved->setToolTip(tr("A smooth curve through the points, not straight sides"));
     m_shapeClosed = new QCheckBox(tr("Closed"), host);
@@ -71,29 +85,51 @@ void MainWindow::createShapeOptions()
                                "Click a shape to change it."),
                             host);
     hint->setEnabled(false);
+    // Cut short before it makes the window any wider.
+    hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     row->addWidget(m_shapeLine);
     row->addWidget(m_shapeLineColor);
     row->addWidget(m_shapeFilled);
+    row->addWidget(m_shapeGradient);
+    row->addWidget(m_shapeGradientPreset);
+    row->addWidget(m_shapeGradientShape);
     row->addWidget(m_shapeCurved);
     row->addWidget(m_shapeClosed);
     row->addWidget(m_shapeSmooth);
     row->addSpacing(12);
-    row->addWidget(hint);
-    row->addStretch(1);
+    row->addWidget(hint, 1);
     m_shapeOptions->addWidget(host);
 
     const auto changed = [this] {
         ShapeOptions o = m_shapeOpts;
         o.line = m_shapeLine->value();
         o.filled = m_shapeFilled->isChecked();
+        o.gradient = m_shapeGradient->isChecked();
         o.curved = m_shapeCurved->isChecked();
         o.closed = m_shapeClosed->isChecked();
         o.smooth = m_shapeSmooth->isChecked();
         setShapeOptions(o);
     };
     connect(m_shapeLine, &QSpinBox::valueChanged, this, changed);
-    for (QCheckBox *box : {m_shapeFilled, m_shapeCurved, m_shapeClosed, m_shapeSmooth})
+    for (QCheckBox *box : {m_shapeFilled, m_shapeGradient, m_shapeCurved, m_shapeClosed, m_shapeSmooth})
         connect(box, &QCheckBox::toggled, this, changed);
+    // Picking a gradient here picks it for the Gradient tool too: there's one
+    // current gradient. A shape opened again takes it from then on.
+    connect(m_shapeGradientPreset, &QComboBox::activated, this, [this](int i) {
+        GradientOptions g = m_gradient;
+        g.preset = m_shapeGradientPreset->itemData(i).toString();
+        m_shape.ownGradient = false;
+        setGradientOptions(g);
+    });
+    connect(m_shapeGradientShape, &QComboBox::activated, this, [this](int i) {
+        GradientOptions g = m_gradient;
+        g.shape = easeletch::GradientShape(i);
+        m_shape.ownGradient = false;
+        // Its line was aimed for the other spread: back to one that suits this.
+        if (m_shape.active)
+            m_shape.shape.gradientPlaced = false;
+        setGradientOptions(g);
+    });
     connect(m_shapeLineColor, &QToolButton::clicked, this, [this] {
         const QColor c = QColorDialog::getColor(m_shapeOpts.lineColor, this, tr("Outline colour"));
         if (!c.isValid())
@@ -103,7 +139,26 @@ void MainWindow::createShapeOptions()
         setShapeOptions(o);
     });
     addToolBar(Qt::TopToolBarArea, m_shapeOptions);
+    mirrorGradientChoices();
     syncShapeOptions();
+}
+
+void MainWindow::mirrorGradientChoices()
+{
+    if (!m_shapeGradientPreset || !m_gradientPreset)
+        return;
+    const QSignalBlocker a(m_shapeGradientPreset), b(m_shapeGradientShape);
+    m_shapeGradientPreset->clear();
+    m_shapeGradientPreset->setIconSize(m_gradientPreset->iconSize());
+    for (int i = 0; i < m_gradientPreset->count(); ++i) {
+        const QVariant id = m_gradientPreset->itemData(i);
+        if (!id.isValid())
+            m_shapeGradientPreset->insertSeparator(m_shapeGradientPreset->count());
+        else
+            m_shapeGradientPreset->addItem(m_gradientPreset->itemIcon(i), m_gradientPreset->itemText(i), id);
+    }
+    m_shapeGradientPreset->setCurrentIndex(m_gradientPreset->currentIndex());
+    m_shapeGradientShape->setCurrentIndex(int(m_gradient.shape));
 }
 
 void MainWindow::syncShapeOptions()
@@ -113,6 +168,13 @@ void MainWindow::syncShapeOptions()
     const QSignalBlocker a(m_shapeLine), b(m_shapeFilled), c(m_shapeCurved), d(m_shapeClosed), e(m_shapeSmooth);
     m_shapeLine->setValue(m_shapeOpts.line);
     m_shapeFilled->setChecked(m_shapeOpts.filled);
+    {
+        const QSignalBlocker g(m_shapeGradient);
+        m_shapeGradient->setChecked(m_shapeOpts.gradient);
+    }
+    m_shapeGradient->setEnabled(m_shapeOpts.filled);
+    m_shapeGradientPreset->setEnabled(m_shapeOpts.filled && m_shapeOpts.gradient);
+    m_shapeGradientShape->setEnabled(m_shapeOpts.filled && m_shapeOpts.gradient);
     m_shapeCurved->setChecked(m_shapeOpts.curved);
     m_shapeClosed->setChecked(m_shapeOpts.closed);
     m_shapeSmooth->setChecked(m_shapeOpts.smooth);
@@ -203,11 +265,12 @@ bool MainWindow::editShape(int layerId)
     m_shapeOpts.line = shape.line;
     m_shapeOpts.lineColor = shape.lineColor;
     m_shapeOpts.filled = shape.filled;
+    m_shapeOpts.gradient = shape.hasGradient();
     m_shapeOpts.curved = shape.curved;
     m_shapeOpts.closed = shape.closed;
     m_shapeOpts.smooth = shape.smooth;
     syncShapeOptions();
-    if (shape.filled)
+    if (shape.filled && !shape.hasGradient())
         m_color->setColor(shape.fill);
 
     m_shape = ShapeSession();
@@ -220,6 +283,7 @@ bool MainWindow::editShape(int layerId)
     m_shape.editing = true;
     m_shape.layerId = layerId;
     m_shape.shape = shape;
+    m_shape.ownGradient = shape.hasGradient();
     layersChanged();
     updateShape();
     statusBar()->showMessage(tr("Drag a point to move it, a side to add a point, inside to move the shape. "
@@ -241,6 +305,11 @@ void MainWindow::updateShape()
     s.lineColor = m_shapeOpts.lineColor;
     s.filled = m_shapeOpts.filled;
     s.fill = m_color->color();
+    s.gradientFill = m_shapeOpts.gradient;
+    if (!m_shape.ownGradient) {
+        s.gradientStops = currentGradientStops();
+        s.gradientShape = m_gradient.shape;
+    }
     s.curved = m_shapeOpts.curved;
     s.closed = m_shapeOpts.closed;
     s.smooth = m_shapeOpts.smooth;
@@ -276,12 +345,24 @@ void MainWindow::showShapeHandles()
                << c + QPointF(-half, half);
         handles << square;
     }
+    // A diamond on each end of the gradient's line, once the shape is being
+    // changed (while it's still being drawn, clicks are for its points).
+    if (!m_shape.adding && m_shape.shape.hasGradient() && m_shape.shape.points.size() >= 3) {
+        const easeletch::Gradient g = m_shape.shape.gradient();
+        const double half = 7.0 / qMax(m_view->zoom(), 0.01);
+        for (const QPointF &c : {g.from, g.to}) {
+            QPolygonF diamond;
+            diamond << c + QPointF(0, -half) << c + QPointF(half, 0) << c + QPointF(0, half) << c + QPointF(-half, 0);
+            handles << diamond;
+        }
+    }
     m_view->setHandles(handles);
 }
 
 void MainWindow::shapePressed(const QPointF &pos)
 {
     m_shape.pressAt = pos;
+    m_shape.dragGradient = 0;
     m_shape.dragPoint = -1;
     m_shape.dragWhole = false;
     m_shape.afterRelease = ShapeSession::Nothing;
@@ -314,7 +395,20 @@ void MainWindow::shapePressed(const QPointF &pos)
         m_shape.dragPoint = m_shape.selected; // holding on, it can still be put right
         return;
     }
-    // Changing one already placed.
+    // Changing one already placed. The gradient's ends come first: they can
+    // sit right on a point.
+    if (s.hasGradient() && s.points.size() >= 3) {
+        const easeletch::Gradient g = s.gradient();
+        const double toFrom = QLineF(pos, g.from).length(), toTo = QLineF(pos, g.to).length();
+        if (std::min(toFrom, toTo) <= grab) {
+            // From here on the line is where it's put, not worked out from the shape.
+            s.gradientFrom = g.from;
+            s.gradientTo = g.to;
+            s.gradientPlaced = true;
+            m_shape.dragGradient = toTo <= toFrom ? 2 : 1;
+            return;
+        }
+    }
     const int point = easeletch::shapePointAt(s, pos, grab);
     if (point >= 0) {
         m_shape.selected = m_shape.dragPoint = point;
@@ -343,6 +437,11 @@ void MainWindow::shapeDragged(const QPointF &pos)
     if (!m_shape.active)
         return;
     ShapeSettings &s = m_shape.shape;
+    if (m_shape.dragGradient != 0) {
+        (m_shape.dragGradient == 1 ? s.gradientFrom : s.gradientTo) = pos;
+        updateShape();
+        return;
+    }
     if (m_shape.dragPoint >= 0 && m_shape.dragPoint < s.points.size()) {
         const QPointF to = onPixel(pos);
         if (s.points.at(m_shape.dragPoint) == to)
@@ -351,8 +450,8 @@ void MainWindow::shapeDragged(const QPointF &pos)
         updateShape();
     } else if (m_shape.dragWhole && m_shape.dragStart.size() == s.points.size()) {
         const QPointF delta = onPixel(pos - m_shape.pressAt);
-        for (int i = 0; i < s.points.size(); ++i)
-            s.points[i] = m_shape.dragStart.at(i) + delta;
+        const QPointF step = m_shape.dragStart.first() + delta - s.points.first();
+        s.translate(step); // the gradient's line goes with it
         updateShape();
     }
 }
@@ -360,6 +459,7 @@ void MainWindow::shapeDragged(const QPointF &pos)
 void MainWindow::shapeReleased(const QPointF &pos)
 {
     shapeDragged(pos);
+    m_shape.dragGradient = 0;
     m_shape.dragPoint = -1;
     m_shape.dragWhole = false;
     const ShapeSession::After after = m_shape.afterRelease;
@@ -456,6 +556,7 @@ void MainWindow::loadShapeSettings(QSettings &s)
     if (const QColor c = QColor::fromString(s.value(QStringLiteral("lineColor")).toString()); c.isValid())
         m_shapeOpts.lineColor = c;
     m_shapeOpts.filled = s.value(QStringLiteral("filled"), m_shapeOpts.filled).toBool();
+    m_shapeOpts.gradient = s.value(QStringLiteral("gradient"), m_shapeOpts.gradient).toBool();
     m_shapeOpts.curved = s.value(QStringLiteral("curved"), m_shapeOpts.curved).toBool();
     m_shapeOpts.smooth = s.value(QStringLiteral("smooth"), m_shapeOpts.smooth).toBool();
     s.endGroup();
@@ -468,6 +569,7 @@ void MainWindow::saveShapeSettings(QSettings &s) const
     s.setValue(QStringLiteral("line"), m_shapeOpts.line);
     s.setValue(QStringLiteral("lineColor"), m_shapeOpts.lineColor.name());
     s.setValue(QStringLiteral("filled"), m_shapeOpts.filled);
+    s.setValue(QStringLiteral("gradient"), m_shapeOpts.gradient);
     s.setValue(QStringLiteral("curved"), m_shapeOpts.curved);
     s.setValue(QStringLiteral("smooth"), m_shapeOpts.smooth);
     s.endGroup();

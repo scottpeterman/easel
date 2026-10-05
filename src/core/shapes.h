@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fillops.h"
+
 #include <QColor>
 #include <QImage>
 #include <QJsonObject>
@@ -21,6 +23,19 @@ struct ShapeSettings {
     QColor lineColor = Qt::black;
     bool filled = false; // closed shapes only
     QColor fill = Qt::white;
+    // A gradient for the fill, in place of the one colour. Until its line
+    // has been placed by hand it's worked out from the shape and follows it:
+    // top to bottom for a linear one, from the middle out for the others.
+    bool gradientFill = false;
+    GradientStops gradientStops;
+    GradientShape gradientShape = GradientShape::Linear;
+    bool gradientPlaced = false;
+    QPointF gradientFrom;
+    QPointF gradientTo;
+    bool hasGradient() const { return filled && gradientFill && gradientStops.size() >= 2; }
+    // The gradient as it's drawn: its stops and shape, along the line placed
+    // or the one worked out.
+    Gradient gradient() const;
     // Off draws hard edges with no in-between pixels, for sprites and pixel art.
     bool smooth = true;
 

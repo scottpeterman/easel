@@ -220,6 +220,119 @@ private slots:
         bad.insert(QLatin1String("points"), QJsonArray{QJsonArray{1, 2}, QStringLiteral("x"), QJsonArray{3}});
         QCOMPARE(ShapeSettings::fromJson(bad).points.size(), 1);
     }
+
+    void aGradientFillsTheShapeAndStaysInside()
+    {
+        ShapeSettings s = square(); // 100..300 across, 100..250 down
+        s.filled = true;
+        s.fill = Qt::green; // not used: the gradient takes its place
+        s.gradientFill = true;
+        s.gradientStops = twoStops(Qt::white, Qt::black);
+        Drawn d = draw(s);
+        // Top to bottom, unless told otherwise: light at the top, dark at the
+        // bottom, the same all the way across.
+        const int top = d.at(200, 110).red(), middle = d.at(200, 175).red(), bottom = d.at(200, 240).red();
+        QVERIFY(top > 220);
+        QVERIFY(bottom < 60);
+        QVERIFY(middle < top && middle > bottom);
+        QCOMPARE(d.at(120, 175).red(), d.at(280, 175).red());
+        QCOMPARE(d.at(200, 175).green(), d.at(200, 175).red()); // grey, not the flat fill's green
+        QCOMPARE(d.at(200, 175).alpha(), 255);
+        // The outline is over it, and nothing is outside the shape.
+        QCOMPARE(d.at(200, 100), QColor(Qt::black));
+        QCOMPARE(d.at(100, 110), QColor(Qt::black));
+        QCOMPARE(d.at(200, 90).alpha(), 0);
+        QCOMPARE(d.at(320, 175).alpha(), 0);
+        const Gradient worked = s.gradient();
+        QCOMPARE(worked.from, QPointF(200, 100));
+        QCOMPARE(worked.to, QPointF(200, 250));
+
+        // Its line placed by hand: left to right, over part of the shape only.
+        s.gradientPlaced = true;
+        s.gradientFrom = QPointF(150, 175);
+        s.gradientTo = QPointF(250, 175);
+        d = draw(s);
+        QVERIFY(d.at(120, 175).red() > 250); // before the start: the first colour
+        QVERIFY(d.at(280, 175).red() < 5);   // past the end: the last
+        QVERIFY(d.at(200, 120).red() > 60 && d.at(200, 120).red() < 230);
+        QCOMPARE(d.at(200, 120).red(), d.at(200, 230).red());
+        // Moved, the line moves with the points.
+        s.translate(QPointF(40, 0));
+        QCOMPARE(s.gradientFrom, QPointF(190, 175));
+        QCOMPARE(draw(s).at(160, 175).red(), d.at(120, 175).red());
+        s.translate(QPointF(-40, 0));
+
+        // A transparent end leaves the shape see-through there; the other
+        // spreads start from the middle.
+        s.gradientPlaced = false;
+        s.gradientStops = twoStops(Qt::red, Qt::transparent);
+        d = draw(s);
+        QVERIFY(d.at(200, 110).alpha() > 220);
+        QVERIFY(d.at(200, 240).alpha() < 40);
+        s.gradientStops = twoStops(Qt::white, Qt::black);
+        s.gradientShape = GradientShape::Radial;
+        d = draw(s);
+        QVERIFY(d.at(200, 175).red() > 240);
+        QVERIFY(d.at(110, 110).red() < d.at(160, 150).red());
+        QCOMPARE(s.gradient().from, QPointF(200, 175));
+        s.gradientShape = GradientShape::Reflected;
+        d = draw(s);
+        QVERIFY(qAbs(d.at(200, 120).red() - d.at(200, 229).red()) <= 3); // the same above and below the middle
+
+        // Hard edges: the colours still run, but every pixel is whole.
+        s.gradientShape = GradientShape::Linear;
+        s.smooth = false;
+        const QImage hard = layoutShape(s).image;
+        for (int y = 0; y < hard.height(); ++y)
+            for (int x = 0; x < hard.width(); ++x) {
+                const float a = float(reinterpret_cast<const Pixel *>(hard.constScanLine(y))[x].a);
+                QVERIFY(a == 0.0f || a == 1.0f);
+            }
+        s.smooth = true;
+
+        // An open line has nothing to fill, gradient or not; and a gradient
+        // without Fill is no fill.
+        ShapeSettings open = s;
+        open.closed = false;
+        QCOMPARE(draw(open).at(200, 175).alpha(), 0);
+        ShapeSettings unfilled = s;
+        unfilled.filled = false;
+        QVERIFY(!unfilled.hasGradient());
+        QCOMPARE(draw(unfilled).at(200, 175).alpha(), 0);
+
+        // It survives the file, placed line and all; one never placed stays unplaced.
+        s.gradientShape = GradientShape::Conical;
+        s.gradientPlaced = true;
+        s.gradientFrom = QPointF(150.5, 175);
+        s.gradientTo = QPointF(250, 180.25);
+        s.gradientStops = {{0.0, QColor(Qt::red)}, {0.4, QColor(Qt::yellow)}, {1.0, QColor(0, 0, 255, 128)}};
+        ShapeSettings r = ShapeSettings::fromJson(s.toJson());
+        QVERIFY(r.hasGradient() && r.gradientPlaced);
+        QCOMPARE(r.gradientShape, GradientShape::Conical);
+        QCOMPARE(r.gradientFrom, s.gradientFrom);
+        QCOMPARE(r.gradientTo, s.gradientTo);
+        QCOMPARE(r.gradientStops, normalizedStops(s.gradientStops));
+        s.gradientPlaced = false;
+        r = ShapeSettings::fromJson(s.toJson());
+        QVERIFY(r.hasGradient() && !r.gradientPlaced);
+        s.gradientFill = false;
+        QVERIFY(!s.toJson().contains(QLatin1String("gradient")));
+        QVERIFY(!ShapeSettings::fromJson(s.toJson()).hasGradient());
+
+        // As a layer it's still a shape, drawn the same every time.
+        Layer l;
+        l.id = 3;
+        l.hasShape = true;
+        l.shape = s;
+        l.shape.gradientFill = true;
+        drawShapeLayer(l, QRect(0, 0, 400, 300));
+        QVERIFY(l.isShape());
+        const TileStore first = l.store.snapshot();
+        drawShapeLayer(l, QRect(0, 0, 400, 300));
+        for (const TileCoord c : first.tileCoords())
+            QVERIFY(std::memcmp(first.tile(c).constBits(), l.store.tile(c).constBits(),
+                                size_t(TileStore::BytesPerTile)) == 0);
+    }
 };
 
 QTEST_MAIN(TestShapes)

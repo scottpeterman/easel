@@ -1578,6 +1578,112 @@ private slots:
         MainWindow::ShapeOptions back;
         w.setShapeOptions(back);
     }
+
+    void shapeCanBeFilledWithAGradientAndTheGradientAimed()
+    {
+        MainWindow w;
+        setupWindow(w);
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.canvasView()->setFocus();
+        w.canvasView()->setTool(w.shapeTool());
+        // The Gradient tool's current gradient: white to black, linear.
+        MainWindow::GradientOptions g = w.gradientOptions();
+        g.custom = twoStops(Qt::white, Qt::black);
+        g.preset = QStringLiteral("custom");
+        g.shape = GradientShape::Linear;
+        g.reverse = false;
+        w.setGradientOptions(g);
+        MainWindow::ShapeOptions o;
+        o.line = 4;
+        o.filled = true;
+        o.gradient = true;
+        w.setShapeOptions(o);
+
+        w.beginShape({100, 60});
+        w.addShapePoint({300, 60});
+        w.addShapePoint({300, 240});
+        w.addShapePoint({100, 240});
+        const int shape = w.layers().activeId();
+        const auto pix = [&](int x, int y) { return at(w.layers().layer(shape)->store, x, y); };
+        // Shown as it's drawn, with no diamonds yet: clicks are still for points.
+        QVERIFY(pix(200, 80).red() > 200);
+        QVERIFY(pix(200, 220).red() < 60);
+        QCOMPARE(w.canvasView()->handles().size(), 4);
+        w.commitShape();
+        const Layer *l = w.layers().layer(shape);
+        QVERIFY(l->isShape() && l->shape.hasGradient() && !l->shape.gradientPlaced);
+        QCOMPARE(l->shape.gradientStops, twoStops(Qt::white, Qt::black));
+        QVERIFY(pix(200, 80).red() > 200 && pix(200, 220).red() < 60);
+
+        // The Gradient tool moves on to something else; the shape keeps its own.
+        g.custom = twoStops(Qt::red, Qt::blue);
+        w.setGradientOptions(g);
+        QVERIFY(w.editShape(shape));
+        QVERIFY(w.shapeOptions().gradient && w.shapeOptions().filled);
+        QVERIFY(pix(200, 80).green() > 200); // still white at the top, not red
+        // Opened, the gradient's line has a diamond on each end.
+        QCOMPARE(w.canvasView()->handles().size(), 6);
+        const QPointF end = w.canvasView()->handles().at(5).boundingRect().center();
+        QVERIFY(qAbs(end.x() - 200) <= 1 && qAbs(end.y() - 240) <= 1);
+
+        // Dragging the end diamond aims it: now it runs across, not down.
+        const QList<QPointF> points = w.shapePoints();
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, end));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {250, 150}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {290, 62}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {290, 62}));
+        QTest::qWait(20);
+        QVERIFY(w.isShaping());
+        QCOMPARE(w.shapePoints(), points); // no point moved or added
+        QVERIFY(pix(120, 150).red() > pix(280, 150).red() + 60);
+        // Moving the shape takes the gradient's line with it.
+        const int leftBefore = pix(120, 150).red();
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {200, 150}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {210, 160}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {220, 170}));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {220, 170}));
+        QTest::qWait(20);
+        const QPointF shift = w.shapePoints().at(0) - points.at(0);
+        QVERIFY(qAbs(shift.x() - 20) <= 1 && qAbs(shift.y() - 20) <= 1);
+        QCOMPARE(pix(120 + int(shift.x()), 150 + int(shift.y())).red(), leftBefore);
+
+        w.commitShape();
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Edit Shape"));
+        l = w.layers().layer(shape);
+        QVERIFY(l->isShape() && l->shape.gradientPlaced);
+        QCOMPARE(l->shape.gradientStops, twoStops(Qt::white, Qt::black));
+        w.undo();
+        QVERIFY(!w.layers().layer(shape)->shape.gradientPlaced);
+        QVERIFY(pix(200, 80).red() > 200 && pix(200, 220).red() < 60);
+        w.redo();
+
+        // Picking a gradient in the Shape options gives the shape that one;
+        // turning Gradient off goes back to the painting colour.
+        QVERIFY(w.editShape(shape));
+        auto *presets = w.findChild<QComboBox *>(QStringLiteral("shapeGradientPreset"));
+        QVERIFY(presets && presets->isEnabled());
+        const int custom = presets->findData(QStringLiteral("custom"));
+        QVERIFY(custom >= 0);
+        presets->setCurrentIndex(custom);
+        emit presets->activated(custom);
+        QCOMPARE(w.layers().layer(shape)->shape.gradientStops, twoStops(Qt::white, Qt::black)); // not until it's put down
+        w.commitShape();
+        QCOMPARE(w.layers().layer(shape)->shape.gradientStops, twoStops(Qt::red, Qt::blue));
+        QVERIFY(w.editShape(shape));
+        o = w.shapeOptions();
+        o.gradient = false;
+        w.colorPanel()->setColor(Qt::green);
+        w.setShapeOptions(o);
+        QCOMPARE(w.canvasView()->handles().size(), 4);
+        w.commitShape();
+        l = w.layers().layer(shape);
+        QVERIFY(l->isShape() && !l->shape.hasGradient());
+        const QPoint mid = (l->shape.points.at(0) + l->shape.points.at(2)).toPoint() / 2;
+        QCOMPARE(at(l->store, mid.x(), mid.y()), QColor(Qt::green));
+        MainWindow::ShapeOptions back;
+        w.setShapeOptions(back);
+    }
 };
 
 QTEST_MAIN(TestLayerUi)

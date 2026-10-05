@@ -76,6 +76,41 @@ void ShapeSettings::translate(const QPointF &delta)
 {
     for (QPointF &p : points)
         p += delta;
+    gradientFrom += delta;
+    gradientTo += delta;
+}
+
+Gradient ShapeSettings::gradient() const
+{
+    Gradient g;
+    g.stops = normalizedStops(gradientStops);
+    g.shape = gradientShape;
+    if (gradientPlaced) {
+        g.from = gradientFrom;
+        g.to = gradientTo;
+        return g;
+    }
+    const QRectF r = path().boundingRect();
+    const QPointF c = r.center();
+    switch (gradientShape) {
+    case GradientShape::Linear:
+        g.from = QPointF(c.x(), r.top());
+        g.to = QPointF(c.x(), r.bottom());
+        break;
+    case GradientShape::Reflected:
+        g.from = c;
+        g.to = QPointF(c.x(), r.bottom());
+        break;
+    case GradientShape::Radial:
+        g.from = c;
+        g.to = r.bottomRight(); // the far corner: the last colour only at the very edge
+        break;
+    case GradientShape::Conical:
+        g.from = c;
+        g.to = QPointF(r.right(), c.y());
+        break;
+    }
+    return g;
 }
 
 QJsonObject ShapeSettings::toJson() const
@@ -83,7 +118,7 @@ QJsonObject ShapeSettings::toJson() const
     QJsonArray list;
     for (const QPointF &p : points)
         list.append(QJsonArray{p.x(), p.y()});
-    return {
+    QJsonObject o{
         {QLatin1String("points"), list},
         {QLatin1String("closed"), closed},
         {QLatin1String("curved"), curved},
@@ -93,6 +128,18 @@ QJsonObject ShapeSettings::toJson() const
         {QLatin1String("fill"), fill.name(QColor::HexArgb)},
         {QLatin1String("smooth"), smooth},
     };
+    if (hasGradient()) {
+        QJsonObject g{
+            {QLatin1String("stops"), stopsToString(gradientStops)},
+            {QLatin1String("shape"), gradientShapeKey(gradientShape)},
+        };
+        if (gradientPlaced) {
+            g.insert(QLatin1String("from"), QJsonArray{gradientFrom.x(), gradientFrom.y()});
+            g.insert(QLatin1String("to"), QJsonArray{gradientTo.x(), gradientTo.y()});
+        }
+        o.insert(QLatin1String("gradient"), g);
+    }
+    return o;
 }
 
 ShapeSettings ShapeSettings::fromJson(const QJsonObject &o)
@@ -117,6 +164,23 @@ ShapeSettings ShapeSettings::fromJson(const QJsonObject &o)
     if (const QColor c = QColor::fromString(o.value(QLatin1String("fill")).toString()); c.isValid())
         s.fill = c;
     s.smooth = o.value(QLatin1String("smooth")).toBool(true);
+    if (const QJsonValue gradient = o.value(QLatin1String("gradient")); gradient.isObject()) {
+        const QJsonObject g = gradient.toObject();
+        s.gradientStops = stopsFromString(g.value(QLatin1String("stops")).toString());
+        s.gradientShape = gradientShapeFromKey(g.value(QLatin1String("shape")).toString());
+        s.gradientFill = s.gradientStops.size() >= 2;
+        const QJsonArray from = g.value(QLatin1String("from")).toArray();
+        const QJsonArray to = g.value(QLatin1String("to")).toArray();
+        const auto ok = [&](const QJsonArray &a) {
+            return a.size() == 2 && std::isfinite(a.at(0).toDouble()) && std::isfinite(a.at(1).toDouble())
+                   && std::abs(a.at(0).toDouble()) <= far && std::abs(a.at(1).toDouble()) <= far;
+        };
+        if (s.gradientFill && ok(from) && ok(to)) {
+            s.gradientPlaced = true;
+            s.gradientFrom = QPointF(from.at(0).toDouble(), from.at(1).toDouble());
+            s.gradientTo = QPointF(to.at(0).toDouble(), to.at(1).toDouble());
+        }
+    }
     return s;
 }
 
@@ -137,26 +201,61 @@ ShapeLayout layoutShape(const ShapeSettings &s)
     if (bounds.width() <= 0 || bounds.height() <= 0 || bounds.width() > kMaxSide || bounds.height() > kMaxSide)
         return out;
 
-    QImage image(bounds.size(), QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-    QPainter p(&image);
-    p.setRenderHint(QPainter::Antialiasing, s.smooth);
-    p.translate(-bounds.topLeft());
-    if (fill)
-        p.fillPath(path, QColor(s.fill.red(), s.fill.green(), s.fill.blue()));
-    if (width > 0.0)
-        p.strokePath(path, penFor(s, width));
-    p.end();
-    if (!s.smooth) {
+    const auto harden = [&](QImage &img) {
+        if (s.smooth)
+            return;
         // No in-between pixels at all: a pixel is there or it isn't.
-        for (int y = 0; y < image.height(); ++y) {
-            auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
-            for (int x = 0; x < image.width(); ++x)
+        for (int y = 0; y < img.height(); ++y) {
+            auto *row = reinterpret_cast<QRgb *>(img.scanLine(y));
+            for (int x = 0; x < img.width(); ++x)
                 row[x] = qAlpha(row[x]) < 128 ? 0u : (qUnpremultiply(row[x]) | 0xff000000u);
         }
+    };
+    const bool gradient = fill && s.hasGradient();
+    QImage image(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    {
+        // The outline, with a flat fill under it. A gradient fill is worked
+        // out below, in the tiles' own precision, and goes under this.
+        QPainter p(&image);
+        p.setRenderHint(QPainter::Antialiasing, s.smooth);
+        p.translate(-bounds.topLeft());
+        if (fill && !gradient)
+            p.fillPath(path, QColor(s.fill.red(), s.fill.green(), s.fill.blue()));
+        if (width > 0.0)
+            p.strokePath(path, penFor(s, width));
     }
+    harden(image);
     out.image = fromClipboardImage(image);
     out.origin = bounds.topLeft();
+    if (!gradient)
+        return out;
+
+    // How much of each pixel the shape covers, then the gradient's colour
+    // there by that much, with the outline over it.
+    QImage cover(bounds.size(), QImage::Format_ARGB32_Premultiplied);
+    cover.fill(Qt::transparent);
+    {
+        QPainter p(&cover);
+        p.setRenderHint(QPainter::Antialiasing, s.smooth);
+        p.translate(-bounds.topLeft());
+        p.fillPath(path, Qt::white);
+    }
+    harden(cover);
+    const Gradient g = s.gradient();
+    for (int y = 0; y < cover.height(); ++y) {
+        const auto *in = reinterpret_cast<const QRgb *>(cover.constScanLine(y));
+        auto *px = reinterpret_cast<Pixel *>(out.image.scanLine(y));
+        for (int x = 0; x < cover.width(); ++x) {
+            const float c = float(qAlpha(in[x])) / 255.0f;
+            if (c <= 0.0f)
+                continue;
+            const Pixel under = gradientPixel(g.stops, gradientPosition(g, x + bounds.left(), y + bounds.top()));
+            const float keep = 1.0f - float(px[x].a);
+            px[x] = makePixel(float(px[x].r) + float(under.r) * c * keep, float(px[x].g) + float(under.g) * c * keep,
+                              float(px[x].b) + float(under.b) * c * keep, float(px[x].a) + float(under.a) * c * keep);
+        }
+    }
     return out;
 }
 

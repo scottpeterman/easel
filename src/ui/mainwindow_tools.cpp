@@ -535,6 +535,7 @@ void MainWindow::createGradientOptions()
             if (id.startsWith(QLatin1String("colour-")))
                 m_gradientPreset->setItemIcon(i, GradientBar::swatch(presetStops(id), kGradientSwatch));
         }
+        mirrorGradientChoices();
     });
     addToolBar(Qt::TopToolBarArea, m_gradientOptions);
     rebuildGradientPresets();
@@ -609,6 +610,8 @@ void MainWindow::syncGradientOptions()
     QPixmap swatch(14, 14);
     swatch.fill(m_gradient.end);
     m_gradientEnd->setIcon(swatch);
+    mirrorGradientChoices();
+    updateShape(); // a shape being drawn with a gradient fill takes the change
 }
 
 void MainWindow::setGradientOptions(const GradientOptions &options)
