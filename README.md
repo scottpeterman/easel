@@ -76,7 +76,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 - Fill by colour with a tolerance, Contiguous, and All layers (so colour can go on its own layer under line art)
 - Gradients in four shapes: Linear, Radial, Reflected and Conical
-- Presets: the current colour to transparent or to an end colour, shaded (highlight, colour, shadow), metals (Chrome, Steel, Gold, Copper, Gunmetal, Spun metal), skies and spectrums
+- Presets: the current colour to transparent or to an end colour, shaded (highlight, colour, shadow), metals (Chrome, Steel, Gold, Copper, Gunmetal, Spun metal), armours for polished metal in a dark place (Amber, Teal, Magenta: nearly black, with one narrow band of light that shifts hue as it brightens), skies and spectrums
 - A gradient editor for your own, with any number of colours, each with its own opacity, saved by name
 - **Shade Areas**: finds every enclosed panel of a line drawing and lays a gradient on each at one angle, on a Multiply layer above, in soft shading or tinted metal
 

@@ -210,6 +210,19 @@ const QList<GradientPreset> &gradientPresets()
         make("spun-metal", QStringLiteral("Spun metal"),
              {{0.0, "#e8ebee"}, {0.125, "#8f979f"}, {0.25, "#f4f6f7"}, {0.375, "#6f777f"}, {0.5, "#e8ebee"},
               {0.625, "#8f979f"}, {0.75, "#f4f6f7"}, {0.875, "#6f777f"}, {1.0, "#e8ebee"}}),
+        // Armour: polished metal in a dark place. Nearly black at both ends,
+        // with one narrow band of light that shifts in hue as it brightens
+        // (orange through gold to pale yellow) the way a coloured reflection
+        // does. An amber for the body, a teal and a magenta for trim.
+        make("amber-armour", QStringLiteral("Amber armour"),
+             {{0.0, "#1a0d05"}, {0.22, "#7a3208"}, {0.4, "#e07a12"}, {0.5, "#ffd470"}, {0.54, "#fff3c4"},
+              {0.6, "#c4620e"}, {0.8, "#4a1c06"}, {1.0, "#120803"}}),
+        make("teal-armour", QStringLiteral("Teal armour"),
+             {{0.0, "#03110f"}, {0.25, "#0b4f47"}, {0.42, "#18b89c"}, {0.5, "#8ff5dc"}, {0.54, "#e6fff8"},
+              {0.62, "#0f8f7a"}, {0.82, "#073730"}, {1.0, "#020c0b"}}),
+        make("magenta-armour", QStringLiteral("Magenta armour"),
+             {{0.0, "#12030f"}, {0.25, "#5a0f55"}, {0.42, "#c026b8"}, {0.5, "#f58cf0"}, {0.54, "#ffe6fd"},
+              {0.62, "#9a1a93"}, {0.82, "#3a0a37"}, {1.0, "#0c020a"}}),
         make("sky", QStringLiteral("Sky"), {{0.0, "#1e5fc4"}, {0.6, "#8ec5ff"}, {1.0, "#ffffff"}}),
         make("sunset", QStringLiteral("Sunset"),
              {{0.0, "#2b1055"}, {0.4, "#d53369"}, {0.75, "#f9a03f"}, {1.0, "#ffe29a"}}),

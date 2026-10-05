@@ -224,6 +224,20 @@ private slots:
             QCOMPARE(p.stops.last().position, 1.0);
         }
         QVERIFY(ids.contains(QStringLiteral("chrome")) && ids.contains(QStringLiteral("gold")));
+        // The armours: dark at both ends, with a highlight in between that is
+        // both much lighter and a different hue from the body colour.
+        for (const char *id : {"amber-armour", "teal-armour", "magenta-armour"}) {
+            QVERIFY2(ids.contains(QLatin1String(id)), id);
+            for (const GradientPreset &p : gradientPresets()) {
+                if (p.id != QLatin1String(id))
+                    continue;
+                QVERIFY(p.stops.first().color.lightness() < 30 && p.stops.last().color.lightness() < 30);
+                int lightest = 0;
+                for (const GradientStop &s : p.stops)
+                    lightest = qMax(lightest, s.color.lightness());
+                QVERIFY(lightest > 220);
+            }
+        }
         // Spun metal ends as it starts, so a conical sweep has no seam.
         for (const GradientPreset &p : gradientPresets())
             if (p.id == QLatin1String("spun-metal"))

@@ -242,17 +242,31 @@ QHash<TileCoord, QImage> AreaShader::shade(TileStore &target, const ShadeSetting
         std::vector<Pixel> lut;
     };
     std::vector<Ramp> ramps(m_areas.size());
+    // How far each area itself reaches along the angle: from its own pixels,
+    // not its bounding box. A long panel lying across the box's diagonal
+    // covers only the middle of the box's run, and would get only the middle
+    // of the gradient, never its ends.
+    std::vector<double> lows(m_areas.size(), 1e300), highs(m_areas.size(), -1e300);
+    {
+        const int w = m_rect.width(), h = m_rect.height();
+        const int *own = m_owner.data();
+        for (int y = 0; y < h; ++y) {
+            const double rowAt = (m_rect.top() + y) * uy;
+            for (int x = 0; x < w; ++x, ++own) {
+                if (*own < 0)
+                    continue;
+                const double at = (m_rect.left() + x) * ux + rowAt;
+                lows[size_t(*own)] = std::min(lows[size_t(*own)], at);
+                highs[size_t(*own)] = std::max(highs[size_t(*own)], at);
+            }
+        }
+    }
+    // A pixel reaches from its near corner to its far one.
+    const double nearCorner = std::min(0.0, ux) + std::min(0.0, uy), farCorner = std::max(0.0, ux) + std::max(0.0, uy);
     QRect all;
     for (size_t i = 0; i < m_areas.size(); ++i) {
-        const QRect b = m_areas[i].box;
-        all |= b;
-        const double xs[2] = {double(b.left()), double(b.right() + 1)}, ys[2] = {double(b.top()), double(b.bottom() + 1)};
-        double lo = 1e300, hi = -1e300;
-        for (const double x : xs)
-            for (const double y : ys) {
-                lo = std::min(lo, x * ux + y * uy);
-                hi = std::max(hi, x * ux + y * uy);
-            }
+        all |= m_areas[i].box;
+        const double lo = lows[i] + nearCorner, hi = highs[i] + farCorner;
         // Spread evenly through -0.5..0.5, with neighbours (found one after
         // another) well apart.
         const double shift = double((quint32(i) * 2654435761u) >> 8 & 0xFFFF) / 65535.0 - 0.5;

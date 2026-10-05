@@ -219,6 +219,38 @@ private slots:
         QVERIFY2(find < 6000, "finding the areas is too slow");
         QVERIFY2(shade < 1500, "too slow to preview");
     }
+
+    void aSlantedPanelGetsTheWholeGradient()
+    {
+        // A long band lying corner to corner: 40 px across, drawn in 4 px lines.
+        TileStore paper(Qt::white);
+        for (int y = 0; y < 300; ++y)
+            for (int x = 0; x < 400; ++x) {
+                const int across = x - y, along = x + y;
+                const bool outer = across >= -4 && across <= 44 && along >= 116 && along <= 484;
+                const bool inner = across >= 0 && across <= 40 && along >= 120 && along <= 480;
+                if (outer && !inner)
+                    paper.fillRect(QRect(x, y, 1, 1), QColor(Qt::black));
+            }
+        AreaShader shader;
+        AreaOptions options;
+        options.grow = 0;
+        shader.findAreas(paper, {}, kCanvas, options);
+        QCOMPARE(shader.areaCount(), 1);
+        // Shaded across its narrow way, white to black. Its box runs far past
+        // it both ways in that direction; the gradient is fitted to the band
+        // itself, so one side is light and the other dark.
+        ShadeSettings s = plain();
+        s.angle = -45.0;
+        TileStore target(QColor(0, 0, 0, 0));
+        shader.shade(target, s);
+        const int oneSide = grey(target, 152, 148);  // 4 px in from one edge
+        const int otherSide = grey(target, 168, 132); // 4 px in from the other
+        QVERIFY2(qAbs(oneSide - otherSide) > 150, qPrintable(QStringLiteral("%1 %2").arg(oneSide).arg(otherSide)));
+        // The same all the way along it.
+        QVERIFY(qAbs(grey(target, 82, 78) - oneSide) <= 3);
+        QVERIFY(qAbs(grey(target, 232, 228) - oneSide) <= 3);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestShade)
