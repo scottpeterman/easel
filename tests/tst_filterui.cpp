@@ -135,6 +135,35 @@ private slots:
         QCOMPARE(dlg.filter().speck, 30);
     }
 
+    void sketchFiltersAreOneUndoStepEach()
+    {
+        MainWindow w;
+        setupWindow(w);
+        const qsizetype steps = w.history().count();
+        QVERIFY(w.applyFilter(Filter::make(FilterType::InkSketch)));
+        QCOMPARE(w.history().count(), steps + 1);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Ink Sketch"));
+        w.undo();
+        QCOMPARE(redAt(w, 100, 100), 0.0f);
+        QVERIFY(w.applyFilter(Filter::make(FilterType::PencilSketch)));
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Pencil Sketch"));
+        QCOMPARE(redAt(w, 100, 100), 1.0f); // flat black: nothing to draw, so white paper
+        w.undo();
+        QCOMPARE(redAt(w, 100, 100), 0.0f);
+
+        // Each dialog shows its own settings, at the defaults.
+        FilterDialog pencil(Filter::make(FilterType::PencilSketch));
+        QCOMPARE(pencil.windowTitle(), QStringLiteral("Pencil Sketch"));
+        QCOMPARE(pencil.findChildren<QDoubleSpinBox *>().size(), 2);
+        QCOMPARE(pencil.filter().radius, 12.0);
+        QCOMPARE(pencil.filter().darkness, 1.5);
+        FilterDialog ink(Filter::make(FilterType::InkSketch));
+        QCOMPARE(ink.windowTitle(), QStringLiteral("Ink Sketch"));
+        QCOMPARE(ink.findChildren<QDoubleSpinBox *>().size(), 4);
+        QCOMPARE(ink.filter().ink, 0.3);
+        QCOMPARE(ink.filter().radius, 1.2);
+    }
+
     void refusedWhereThereAreNoPixels()
     {
         MainWindow w;

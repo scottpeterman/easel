@@ -342,6 +342,90 @@ private slots:
         qInfo("Gaussian blur, radius 40, 2000 x 1500: %lld ms", ms);
         QVERIFY2(ms < 3000, "too slow to preview");
     }
+    void pencilSketchLeavesFlatAreasWhiteAndShadesEdges()
+    {
+        // Mid grey with a dark square: only the square's outline should draw.
+        TileStore store(QColor(128, 128, 128));
+        const QRect canvas(0, 0, 300, 300);
+        store.fillRect(QRect(100, 100, 100, 100), QColor(30, 60, 160));
+        Filter f = Filter::make(FilterType::PencilSketch);
+        f.radius = 8.0;
+        QVERIFY(!applyFilter(store, {}, canvas, f).isEmpty());
+        QCOMPARE(colorAt(store, 20, 20).rgba(), QColor(Qt::white).rgba());   // flat paper
+        QCOMPARE(colorAt(store, 150, 150).rgba(), QColor(Qt::white).rgba()); // flat inside too
+        const QColor line = colorAt(store, 101, 150);                        // just inside the edge
+        QVERIFY2(line.red() < 170, qPrintable(QString::number(line.red())));
+        QVERIFY(line.red() == line.green() && line.green() == line.blue()); // grey, no colour left
+        // The lighter side of an edge stays clean: the shading is on the dark side.
+        QCOMPARE(colorAt(store, 98, 150).rgba(), QColor(Qt::white).rgba());
+        // Heavier pencil, darker line.
+        TileStore heavy(QColor(128, 128, 128));
+        heavy.fillRect(QRect(100, 100, 100, 100), QColor(30, 60, 160));
+        f.darkness = 3.0;
+        applyFilter(heavy, {}, canvas, f);
+        QVERIFY(colorAt(heavy, 101, 150).red() < line.red());
+    }
+
+    void inkSketchIsBlackAndWhite()
+    {
+        // Light paper, a dark block and a faint line on the paper.
+        TileStore store(QColor(230, 230, 230));
+        const QRect canvas(0, 0, 400, 200);
+        store.fillRect(QRect(250, 0, 150, 200), QColor(20, 20, 20));
+        store.fillRect(QRect(100, 0, 3, 200), QColor(150, 150, 150));
+        Filter f = Filter::make(FilterType::InkSketch);
+        QVERIFY(!applyFilter(store, {}, canvas, f).isEmpty());
+        QCOMPARE(colorAt(store, 30, 100).rgba(), QColor(Qt::white).rgba());  // paper
+        QCOMPARE(colorAt(store, 330, 100).rgba(), QColor(Qt::black).rgba()); // shadow filled solid
+        QVERIFY(colorAt(store, 101, 100).red() < 40);                        // the faint line, inked
+        QCOMPARE(colorAt(store, 115, 100).rgba(), QColor(Qt::white).rgba()); // and clean beside it
+
+        // With the ink level under the paper's and the block's lightness
+        // alike, only edges draw: the block is an outline, not a fill.
+        TileStore outline(QColor(230, 230, 230));
+        outline.fillRect(QRect(250, 0, 150, 200), QColor(120, 120, 120));
+        f.ink = 0.2;
+        applyFilter(outline, {}, canvas, f);
+        QCOMPARE(colorAt(outline, 330, 100).rgba(), QColor(Qt::white).rgba());
+        QVERIFY(colorAt(outline, 250, 100).red() < 40);
+    }
+
+    void sketchesKeepTransparencyAndTheSelection()
+    {
+        for (const FilterType type : {FilterType::PencilSketch, FilterType::InkSketch}) {
+            // A drawing on an empty layer: what's transparent stays so, and
+            // counts as white paper around the shape.
+            TileStore store;
+            const QRect canvas(0, 0, 300, 200);
+            store.fillRect(QRect(50, 50, 80, 80), QColor(40, 40, 40));
+            store.fillRect(QRect(180, 50, 80, 80), QColor(40, 40, 40));
+            applyFilter(store, Selection::rect(QRect(0, 0, 150, 200)), canvas, Filter::make(type));
+            QCOMPARE(alphaAt(store, 10, 10), 0.0f);
+            QCOMPARE(alphaAt(store, 90, 90), 1.0f);
+            QVERIFY(colorAt(store, 51, 90).red() < 90); // its edge against the paper
+            // Outside the selection: untouched.
+            QCOMPARE(colorAt(store, 220, 90).rgba(), QColor(40, 40, 40).rgba());
+            QCOMPARE(colorAt(store, 181, 90).rgba(), QColor(40, 40, 40).rgba());
+        }
+    }
+
+    void sketchesAreQuickEnoughToPreview()
+    {
+        // A generated picture's worth of detail at 2048 x 2048.
+        for (const FilterType type : {FilterType::PencilSketch, FilterType::InkSketch}) {
+            TileStore store(Qt::white);
+            const QRect canvas(0, 0, 2048, 2048);
+            for (int i = 0; i < 600; ++i)
+                store.fillRect(QRect((i * 7919) % 1900, (i * 104729) % 1900, 40 + i % 120, 30 + i % 90),
+                               QColor((i * 37) % 256, (i * 91) % 256, (i * 53) % 256));
+            QElapsedTimer timer;
+            timer.start();
+            QVERIFY(!applyFilter(store, {}, canvas, Filter::make(type)).isEmpty());
+            const qint64 ms = timer.elapsed();
+            qInfo("%s, 2048 x 2048: %lld ms", type == FilterType::PencilSketch ? "Pencil Sketch" : "Ink Sketch", ms);
+            QVERIFY2(ms < 3000, "too slow to preview");
+        }
+    }
 };
 
 QTEST_GUILESS_MAIN(TestFilters)

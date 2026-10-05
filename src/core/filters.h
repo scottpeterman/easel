@@ -16,8 +16,10 @@ enum class FilterType {
     Noise,
     Pixelate,
     Despeckle,
+    PencilSketch,
+    InkSketch,
 };
-inline constexpr int FilterTypeCount = 5;
+inline constexpr int FilterTypeCount = 7;
 
 // A filter and its settings. One struct holds every kind's; only those the
 // kind uses matter.
@@ -25,6 +27,8 @@ struct Filter {
     FilterType type = FilterType::GaussianBlur;
     // Gaussian Blur: how far it spreads, in pixels (0.1..250).
     // Sharpen: the width of the edges it picks out (0.1..50).
+    // Pencil Sketch: how soft and broad the shading is (1..100).
+    // Ink Sketch: the width of the lines (0.3..10).
     double radius = 4.0;
     // Sharpen: how strongly, 0..5 (1 = 100%). Noise: how much, 0..1.
     double amount = 1.0;
@@ -39,6 +43,15 @@ struct Filter {
     // Despeckle: how alike neighbouring pixels must be to count as one patch
     // of colour, 0..1 (as the magic wand's tolerance).
     double tolerance = 0.15;
+    // Pencil Sketch: how heavy the pencil is, 0.5..4 (1 = lightest useful).
+    double darkness = 1.5;
+    // Ink Sketch: how hard the edges are pushed, 1..60. Low keeps only the
+    // main outlines; high picks up fine texture too.
+    double detail = 20.0;
+    // Ink Sketch: how much of the picture goes to solid black, 0..1.
+    double ink = 0.3;
+    // Ink Sketch: 1..100. Low is a soft wash; high is a hard pen line.
+    double hardness = 20.0;
 
     static Filter make(FilterType type);
     Filter normalized() const;
@@ -59,6 +72,13 @@ struct Filter {
 // Anything bigger is left exactly as it was, so thin lines, dashes and corners
 // keep their shape, and so do soft edges, which lie between two patches rather
 // than inside one. A speck cut by the edge of the selection is left alone.
+//
+// Pencil Sketch and Ink Sketch redraw the picture in greys on white, keeping
+// the layer's transparency. Both read lightness as the eye sees it (sRGB), with
+// transparent areas counted as white paper. Pencil divides each pixel by a
+// blurred copy of the picture, which leaves flat areas white and edges shaded.
+// Ink is an extended difference of Gaussians: lines along edges, and areas
+// darker than the ink level filled solid.
 QHash<TileCoord, QImage> applyFilter(TileStore &store, const Selection &clip, const QRect &canvas, const Filter &filter);
 
 } // namespace easeletch

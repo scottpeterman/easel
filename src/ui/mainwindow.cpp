@@ -354,6 +354,8 @@ void MainWindow::createActions()
     for (int t = 0; t < easeletch::FilterTypeCount; ++t) {
         const auto type = easeletch::FilterType(t);
         m_lastFilters[t] = easeletch::Filter::make(type);
+        if (type == easeletch::FilterType::PencilSketch)
+            filter->addSeparator(); // the two that redraw the picture, apart from the rest
         filter->addAction(tr("%1...").arg(FilterDialog::typeName(type)), this, [this, type] { showFilterDialog(type); });
     }
 

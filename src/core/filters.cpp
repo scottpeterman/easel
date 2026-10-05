@@ -56,21 +56,23 @@ Buffer readBuffer(const TileStore &store, const QRect &rect)
 }
 
 // A box blur along every row: radius r each side, the ends repeated outward.
+// C is the number of floats per pixel.
+template <int C>
 void boxRows(const float *src, float *dst, int w, int h, int r)
 {
     const double norm = 1.0 / double(2 * r + 1);
     for (int y = 0; y < h; ++y) {
-        const float *s = src + size_t(y) * size_t(w) * 4;
-        float *d = dst + size_t(y) * size_t(w) * 4;
-        const auto px = [&](int x) { return s + size_t(std::clamp(x, 0, w - 1)) * 4; };
-        double sum[4] = {0, 0, 0, 0};
+        const float *s = src + size_t(y) * size_t(w) * C;
+        float *d = dst + size_t(y) * size_t(w) * C;
+        const auto px = [&](int x) { return s + size_t(std::clamp(x, 0, w - 1)) * C; };
+        double sum[C] = {};
         for (int x = -r; x <= r; ++x)
-            for (int ch = 0; ch < 4; ++ch)
+            for (int ch = 0; ch < C; ++ch)
                 sum[ch] += double(px(x)[ch]);
         for (int x = 0; x < w; ++x) {
             const float *add = px(x + r + 1), *drop = px(x - r);
-            for (int ch = 0; ch < 4; ++ch) {
-                d[size_t(x) * 4 + size_t(ch)] = float(sum[ch] * norm);
+            for (int ch = 0; ch < C; ++ch) {
+                d[size_t(x) * C + size_t(ch)] = float(sum[ch] * norm);
                 sum[ch] += double(add[ch]) - double(drop[ch]);
             }
         }
@@ -78,10 +80,11 @@ void boxRows(const float *src, float *dst, int w, int h, int r)
 }
 
 // The same down every column, a row at a time so memory is read in order.
+template <int C>
 void boxColumns(const float *src, float *dst, int w, int h, int r)
 {
     const double norm = 1.0 / double(2 * r + 1);
-    const size_t n = size_t(w) * 4;
+    const size_t n = size_t(w) * C;
     const auto row = [&](int y) { return src + size_t(std::clamp(y, 0, h - 1)) * n; };
     std::vector<double> sum(n, 0.0);
     for (int y = -r; y <= r; ++y) {
@@ -100,6 +103,7 @@ void boxColumns(const float *src, float *dst, int w, int h, int r)
 }
 
 // A true Gaussian along one direction, for small radii where boxes are too coarse.
+template <int C>
 void kernelPass(const float *src, float *dst, int count, int lines, int step, int lineStep,
                 const std::vector<float> &kernel)
 {
@@ -108,27 +112,27 @@ void kernelPass(const float *src, float *dst, int count, int lines, int step, in
         const float *s = src + size_t(line) * size_t(lineStep);
         float *d = dst + size_t(line) * size_t(lineStep);
         for (int i = 0; i < count; ++i) {
-            float acc[4] = {0, 0, 0, 0};
+            float acc[C] = {};
             for (int k = -r; k <= r; ++k) {
                 const float *p = s + size_t(std::clamp(i + k, 0, count - 1)) * size_t(step);
                 const float wgt = kernel[size_t(k + r)];
-                for (int ch = 0; ch < 4; ++ch)
+                for (int ch = 0; ch < C; ++ch)
                     acc[ch] += p[ch] * wgt;
             }
-            std::copy(acc, acc + 4, d + size_t(i) * size_t(step));
+            std::copy(acc, acc + C, d + size_t(i) * size_t(step));
         }
     }
 }
 
-// Gaussian blur of the whole buffer, sigma in pixels.
-void gaussianBlur(Buffer &b, double sigma)
+// Gaussian blur of w x h pixels of C floats each, sigma in pixels.
+template <int C>
+void gaussianBlurPlane(std::vector<float> &px, int w, int h, double sigma)
 {
-    if (sigma <= 0.0 || b.px.empty())
+    if (sigma <= 0.0 || px.empty())
         return;
-    const int w = b.w(), h = b.h();
-    std::vector<float> tmp(b.px.size());
-    const int rowStep = 4, rowLine = w * 4; // along a row: next pixel, next row
-    const int colStep = w * 4, colLine = 4; // along a column: next row, next column
+    std::vector<float> tmp(px.size());
+    const int rowStep = C, rowLine = w * C; // along a row: next pixel, next row
+    const int colStep = w * C, colLine = C; // along a column: next row, next column
 
     if (sigma < 2.0) {
         const int r = std::max(1, int(std::ceil(sigma * 3.0)));
@@ -138,8 +142,8 @@ void gaussianBlur(Buffer &b, double sigma)
             total += kernel[size_t(k + r)] = float(std::exp(-(k * k) / (2.0 * sigma * sigma)));
         for (float &k : kernel)
             k /= total;
-        kernelPass(b.px.data(), tmp.data(), w, h, rowStep, rowLine, kernel);
-        kernelPass(tmp.data(), b.px.data(), h, w, colStep, colLine, kernel);
+        kernelPass<C>(px.data(), tmp.data(), w, h, rowStep, rowLine, kernel);
+        kernelPass<C>(tmp.data(), px.data(), h, w, colStep, colLine, kernel);
         return;
     }
     // Three box blurs come within a few percent of a Gaussian, at a cost that
@@ -153,8 +157,69 @@ void gaussianBlur(Buffer &b, double sigma)
                                            / (-4.0 * lower - 4.0)));
     for (int pass = 0; pass < 3; ++pass) {
         const int r = ((pass < lowerCount ? lower : upper) - 1) / 2;
-        boxRows(b.px.data(), tmp.data(), w, h, r);
-        boxColumns(tmp.data(), b.px.data(), w, h, r);
+        boxRows<C>(px.data(), tmp.data(), w, h, r);
+        boxColumns<C>(tmp.data(), px.data(), w, h, r);
+    }
+}
+
+// Gaussian blur of the whole buffer, sigma in pixels.
+void gaussianBlur(Buffer &b, double sigma)
+{
+    gaussianBlurPlane<4>(b.px, b.w(), b.h(), sigma);
+}
+
+// The second, wider blur of the ink sketch's pair, as a multiple of the first.
+constexpr double kInkWide = 1.6;
+
+// Pencil Sketch and Ink Sketch. Both work on one plane: lightness as the eye
+// sees it (sRGB), with transparent areas counted as white paper.
+void sketch(const Buffer &in, Buffer &out, const Filter &f)
+{
+    const int w = in.w(), h = in.h();
+    const size_t count = size_t(w) * size_t(h);
+    if (count == 0)
+        return;
+    const srgblut::Luts &l = srgblut::luts();
+
+    std::vector<float> luma(count);
+    for (size_t i = 0; i < count; ++i) {
+        const float *p = &in.px[i * 4];
+        const float a = std::clamp(p[3], 0.0f, 1.0f);
+        float v = 0.0f;
+        if (a > 0.0f)
+            v = 0.299f * srgblut::encode(l, p[0] / a) + 0.587f * srgblut::encode(l, p[1] / a)
+                + 0.114f * srgblut::encode(l, p[2] / a);
+        luma[i] = v * a + (1.0f - a);
+    }
+
+    std::vector<float> grey(count);
+    if (f.type == FilterType::PencilSketch) {
+        // A colour dodge of the picture against its own blurred negative,
+        // which comes to the picture divided by its blur.
+        std::vector<float> soft = luma;
+        gaussianBlurPlane<1>(soft, w, h, f.radius);
+        // The small constant keeps flat black as flat as any other flat
+        // area (0 / 0 otherwise), and steadies the grain in deep shadow.
+        const float gamma = float(f.darkness), floor = 1.0f / 255.0f;
+        for (size_t i = 0; i < count; ++i)
+            grey[i] = std::pow(std::min(1.0f, (luma[i] + floor) / (soft[i] + floor)), gamma);
+    } else {
+        std::vector<float> fine = luma, wide = std::move(luma);
+        gaussianBlurPlane<1>(fine, w, h, f.radius);
+        gaussianBlurPlane<1>(wide, w, h, f.radius * kInkWide);
+        const float p = float(f.detail), level = float(f.ink), hard = float(f.hardness);
+        for (size_t i = 0; i < count; ++i) {
+            const float s = (1.0f + p) * fine[i] - p * wide[i];
+            grey[i] = s >= level ? 1.0f : std::max(0.0f, 1.0f + std::tanh(hard * (s - level)));
+        }
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        float *o = &out.px[i * 4];
+        const float a = std::clamp(in.px[i * 4 + 3], 0.0f, 1.0f);
+        const float v = srgblut::decode(l, grey[i]) * a;
+        o[0] = o[1] = o[2] = v;
+        o[3] = a;
     }
 }
 
@@ -182,6 +247,10 @@ int marginFor(const Filter &f)
     case FilterType::GaussianBlur:
     case FilterType::Sharpen:
         return int(std::ceil(f.radius * 3.0)) + 1;
+    case FilterType::PencilSketch:
+        return int(std::ceil(f.radius * 3.0)) + 1;
+    case FilterType::InkSketch:
+        return int(std::ceil(f.radius * kInkWide * 3.0)) + 1;
     case FilterType::Pixelate:
         return f.cell;
     case FilterType::Despeckle:
@@ -343,6 +412,16 @@ Filter Filter::make(FilterType type)
         f.speck = 30;
         f.tolerance = 0.15;
         break;
+    case FilterType::PencilSketch:
+        f.radius = 12.0;
+        f.darkness = 1.5;
+        break;
+    case FilterType::InkSketch:
+        f.radius = 1.2;
+        f.detail = 20.0;
+        f.ink = 0.3;
+        f.hardness = 20.0;
+        break;
     }
     return f;
 }
@@ -351,11 +430,23 @@ Filter Filter::normalized() const
 {
     Filter f = *this;
     const bool sharpen = f.type == FilterType::Sharpen;
-    f.radius = std::isfinite(f.radius) ? std::clamp(f.radius, 0.1, sharpen ? 50.0 : 250.0) : 1.0;
+    double minRadius = 0.1, maxRadius = sharpen ? 50.0 : 250.0;
+    if (f.type == FilterType::PencilSketch) {
+        minRadius = 1.0;
+        maxRadius = 100.0;
+    } else if (f.type == FilterType::InkSketch) {
+        minRadius = 0.3;
+        maxRadius = 10.0;
+    }
+    f.radius = std::isfinite(f.radius) ? std::clamp(f.radius, minRadius, maxRadius) : 1.0;
     f.amount = std::isfinite(f.amount) ? std::clamp(f.amount, 0.0, sharpen ? 5.0 : 1.0) : 0.0;
     f.cell = std::clamp(f.cell, 2, 256);
     f.speck = std::clamp(f.speck, 1, 5000);
     f.tolerance = std::isfinite(f.tolerance) ? std::clamp(f.tolerance, 0.0, 1.0) : 0.15;
+    f.darkness = std::isfinite(f.darkness) ? std::clamp(f.darkness, 0.5, 4.0) : 1.5;
+    f.detail = std::isfinite(f.detail) ? std::clamp(f.detail, 1.0, 60.0) : 20.0;
+    f.ink = std::isfinite(f.ink) ? std::clamp(f.ink, 0.0, 1.0) : 0.3;
+    f.hardness = std::isfinite(f.hardness) ? std::clamp(f.hardness, 1.0, 100.0) : 20.0;
     return f;
 }
 
@@ -451,6 +542,10 @@ QHash<TileCoord, QImage> applyFilter(TileStore &store, const Selection &clip, co
     }
     case FilterType::Despeckle:
         despeckle(in, out, canvas, f.speck, f.tolerance);
+        break;
+    case FilterType::PencilSketch:
+    case FilterType::InkSketch:
+        sketch(in, out, f);
         break;
     }
 

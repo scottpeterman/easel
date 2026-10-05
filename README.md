@@ -20,7 +20,9 @@ Shade Areas (Layer menu) shades a whole line drawing at once. It finds every enc
 
 Adjustment layers: Levels, Curves, Hue / Saturation, Brightness / Contrast, Exposure, Black & White and Threshold. An adjustment layer has no pixels of its own: it changes the look of everything below it (inside a group, of that group only), and nothing underneath is altered, so it can be re-edited, faded with its opacity, limited with a mask, hidden or deleted at any time. Its settings are in the Adjustment panel and change the canvas as you drag; Curves is a line you bend by its points. Merge Down makes one permanent on the layer below. Threshold turns everything lighter than its level white and the rest black, for cleaning up scanned line art: raise the level until the paper goes white; Soften edges keeps lines smooth instead of stepped.
 
-Filters: Gaussian Blur, Sharpen, Add Noise, Pixelate and Despeckle, on the active layer or its mask, inside the selection (fading with a feathered one). The canvas shows the result while you set it; nothing is recorded until OK. Blur and Sharpen work in linear light, so colours don't darken where they meet and nothing bleeds out of transparent areas. Despeckle removes stray specks (the dots a fill leaves behind, dust on a scan): any patch up to the size you set that lies wholly inside one larger area takes that area's colour. Bigger things are left exactly as they were, so thin lines, dashes, corners and soft edges keep their shape.
+Filters: Gaussian Blur, Sharpen, Add Noise, Pixelate, Despeckle, Pencil Sketch and Ink Sketch, on the active layer or its mask, inside the selection (fading with a feathered one). The canvas shows the result while you set it; nothing is recorded until OK. Blur and Sharpen work in linear light, so colours don't darken where they meet and nothing bleeds out of transparent areas. Despeckle removes stray specks (the dots a fill leaves behind, dust on a scan): any patch up to the size you set that lies wholly inside one larger area takes that area's colour. Bigger things are left exactly as they were, so thin lines, dashes, corners and soft edges keep their shape.
+
+Pencil Sketch and Ink Sketch turn a photo or a generated picture into a drawing, in greys on white. Pencil leaves flat areas as clean paper and shades along the edges: Softness runs from thin outlines only to broad soft shading, Darkness sets how heavy the pencil is. Ink gives solid black line work: Ink sets how much of the picture fills in black (low for outlines on white, higher to fill the shadows), with the line width, how much fine detail is picked up, and how hard the line is. Work on a duplicate of the layer to keep the original; set the sketch layer to Multiply over a colour layer to tint it. On a soft, painterly picture Ink can come out speckled: lower Detail, or run Despeckle afterwards.
 
 Retouching: Heal removes a blemish in one move. Dab or drag over it and, when you let go, it's replaced with a nearby patch of the same layer whose surroundings match, toned to meet the edges, so paper grain or any other texture carries across and no patch shows. It suits marks on open areas (stains, scratches, dust too big for Despeckle); across a line or an edge it has to guess, and Clone is the better tool. Clone paints with a copy of another part of the layer: hold Alt and click what to copy, then paint. A diamond marks where the copy comes from, and later strokes carry on the same copy until you Alt+click somewhere new. Use it to rebuild a broken line from an intact stretch of it. Both use the brush's size and hardness, stay inside the selection, and are one undo step per stroke.
 
@@ -72,7 +74,8 @@ The canvas draws on the GPU through QRhi (Direct3D 11 on Windows, Metal on macOS
 | Add an adjustment layer | Layer > New Adjustment Layer, or the buttons in the Adjustment panel (it shares a tab with Color) |
 | Change an adjustment | Select its layer: its settings are in the Adjustment panel. Curves: click the line to add a point, drag to bend, drag a point off the square to remove it |
 | Limit an adjustment to an area | Select the area, then Add Mask on the adjustment layer; or paint on its mask |
-| Filters | Filter menu: Gaussian Blur, Sharpen, Add Noise, Pixelate, Despeckle. Ctrl+Alt+F repeats the last one |
+| Filters | Filter menu: Gaussian Blur, Sharpen, Add Noise, Pixelate, Despeckle, Pencil Sketch, Ink Sketch. Ctrl+Alt+F repeats the last one |
+| Turn a picture into a drawing | Filter > Pencil Sketch or Ink Sketch. For ink, set Ink first, then Line width |
 | Clean up a scan | Add a Threshold adjustment layer and set its level, Merge Down, then Filter > Despeckle |
 | Flip, rotate 90° or 180° | Layer menu, or the buttons in the transform options |
 | Lasso | L; drag around something and let go, or click point by point and press Enter (or click the first point). Escape gives up. Shift adds, Ctrl subtracts |
@@ -158,8 +161,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.7.0
-git push origin v0.7.0
+git tag v0.8.0
+git push origin v0.8.0
 ```
 
 | Platform | Package |

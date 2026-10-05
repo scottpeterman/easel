@@ -27,6 +27,8 @@ QString FilterDialog::typeName(FilterType type)
     case FilterType::Noise: return tr("Add Noise");
     case FilterType::Pixelate: return tr("Pixelate");
     case FilterType::Despeckle: return tr("Despeckle");
+    case FilterType::PencilSketch: return tr("Pencil Sketch");
+    case FilterType::InkSketch: return tr("Ink Sketch");
     }
     return QString();
 }
@@ -81,6 +83,21 @@ FilterDialog::FilterDialog(const Filter &filter, QWidget *parent)
         m_tolerance = addRow(grid, tr("Tolerance"), 0.0, 100.0, 0, tr("%"),
                              tr("How alike neighbouring pixels must be to count as one area of colour. "
                                 "Raise it on grainy paper; lower it if faint detail starts to go"));
+        break;
+    case FilterType::PencilSketch:
+        m_radius = addRow(grid, tr("Softness"), 1.0, 100.0, 1, tr(" px"),
+                          tr("Small for thin outlines only; large for broad, soft shading as well"));
+        m_darkness = addRow(grid, tr("Darkness"), 50.0, 400.0, 0, tr("%"), tr("How heavy the pencil is"));
+        break;
+    case FilterType::InkSketch:
+        m_ink = addRow(grid, tr("Ink"), 0.0, 100.0, 0, tr("%"),
+                       tr("How much of the picture goes to solid black. Low gives outlines on white; "
+                          "raise it to fill the shadows"));
+        m_radius = addRow(grid, tr("Line width"), 0.3, 10.0, 1, tr(" px"), QString());
+        m_detail = addRow(grid, tr("Detail"), 1.0, 60.0, 0, QString(),
+                          tr("How hard edges are pushed: low keeps the main outlines, high picks up fine texture"));
+        m_hardness = addRow(grid, tr("Hardness"), 1.0, 100.0, 0, QString(),
+                            tr("Low is a soft wash; high is a hard pen line"));
         break;
     }
 
@@ -171,6 +188,14 @@ void FilterDialog::setFilter(const Filter &filter)
         m_speck.spin->setValue(m_filter.speck);
     if (m_tolerance.spin)
         m_tolerance.spin->setValue(m_filter.tolerance * 100.0);
+    if (m_darkness.spin)
+        m_darkness.spin->setValue(m_filter.darkness * 100.0);
+    if (m_detail.spin)
+        m_detail.spin->setValue(m_filter.detail);
+    if (m_ink.spin)
+        m_ink.spin->setValue(m_filter.ink * 100.0);
+    if (m_hardness.spin)
+        m_hardness.spin->setValue(m_filter.hardness);
     if (m_monochrome)
         m_monochrome->setChecked(m_filter.monochrome);
     m_syncing = false;
@@ -188,6 +213,14 @@ void FilterDialog::changed()
         m_filter.speck = int(std::lround(m_speck.spin->value()));
     if (m_tolerance.spin)
         m_filter.tolerance = m_tolerance.spin->value() / 100.0;
+    if (m_darkness.spin)
+        m_filter.darkness = m_darkness.spin->value() / 100.0;
+    if (m_detail.spin)
+        m_filter.detail = m_detail.spin->value();
+    if (m_ink.spin)
+        m_filter.ink = m_ink.spin->value() / 100.0;
+    if (m_hardness.spin)
+        m_filter.hardness = m_hardness.spin->value();
     m_filter = m_filter.normalized();
     m_timer->start();
 }
