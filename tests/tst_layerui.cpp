@@ -12,6 +12,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -1577,6 +1578,227 @@ private slots:
         QVERIFY(!w.editShape(line));
         MainWindow::ShapeOptions back;
         w.setShapeOptions(back);
+    }
+
+    void shapeLinesKeepToAnglesSnapToOtherShapesAndTaper()
+    {
+        MainWindow w;
+        setupWindow(w);
+        MainWindow::ShapeOptions o;
+        o.line = 10;
+        o.closed = false;
+        w.setShapeOptions(o);
+        w.canvasView()->setTool(w.shapeTool());
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.canvasView()->setFocus();
+        const auto click = [&](QPointF p, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+            QTest::mouseClick(w.canvasView(), Qt::LeftButton, mods, viewPos(w, p));
+            QTest::qWait(QApplication::doubleClickInterval() + 60);
+        };
+        const auto close = [](const QPointF &a, const QPointF &b) {
+            return qAbs(a.x() - b.x()) <= 1.0 && qAbs(a.y() - b.y()) <= 1.0;
+        };
+
+        // Shift keeps each side to a 15° step from the point before: here level, then straight down.
+        click({60, 60});
+        QTRY_VERIFY(w.isShaping());
+        click({200, 75}, Qt::ShiftModifier);
+        QCOMPARE(w.shapePoints().size(), 2);
+        QCOMPARE(w.shapePoints().at(1).y(), w.shapePoints().at(0).y());
+        QVERIFY(qAbs(w.shapePoints().at(1).x() - 200) <= 1.0);
+        click({212, 180}, Qt::ShiftModifier);
+        QCOMPARE(w.shapePoints().at(2).x(), w.shapePoints().at(1).x());
+        QVERIFY(qAbs(w.shapePoints().at(2).y() - 180) <= 1.0);
+        // 45° is one of the steps.
+        click({262, 228}, Qt::ShiftModifier);
+        const QPointF diagonal = w.shapePoints().at(3) - w.shapePoints().at(2);
+        QCOMPARE(diagonal.x(), diagonal.y());
+        QTest::keyClick(w.canvasView(), Qt::Key_Backspace);
+        QCOMPARE(w.shapePoints().size(), 3);
+        const QList<QPointF> placed = w.shapePoints();
+        w.commitFloating();
+        const int first = w.layers().activeId();
+        QVERIFY(w.layers().layer(first)->isShape());
+
+        // Tapered: the options bar's two boxes, live only for an open line.
+        auto *taperStart = w.findChild<QSpinBox *>(QStringLiteral("shapeTaperStart"));
+        auto *taperEnd = w.findChild<QSpinBox *>(QStringLiteral("shapeTaperEnd"));
+        QVERIFY(taperStart && taperEnd && taperStart->isEnabled());
+        QVERIFY(w.editShape(first));
+        taperEnd->setValue(60);
+        QCOMPARE(w.shapeOptions().taperEnd, 60);
+        QCOMPARE(w.shapeInProgress().taperEnd, 60);
+        w.commitFloating();
+        const Layer *l = w.layers().layer(first);
+        QVERIFY(l->isShape());
+        QCOMPARE(l->shape.taperEnd, 60);
+        const int x = int(placed.at(2).x()), y = int(placed.at(2).y());
+        QCOMPARE(at(l->store, 130, int(placed.at(0).y()) + 3), QColor(Qt::black)); // the full width along the top
+        QCOMPARE(at(l->store, x + 3, y - 8).alpha(), 0);  // thinned to nothing by the end
+        QVERIFY(at(l->store, x, y - 8).alpha() > 0);
+        // Opened again, the options show the taper it has; a closed shape has none to set.
+        o = w.shapeOptions();
+        o.taperEnd = 0;
+        w.setShapeOptions(o);
+        QVERIFY(w.editShape(first));
+        QCOMPARE(w.shapeOptions().taperEnd, 60);
+        QCOMPARE(taperEnd->value(), 60);
+        w.cancelShape();
+        o.closed = true;
+        w.setShapeOptions(o);
+        QVERIFY(!taperStart->isEnabled() && !taperEnd->isEnabled());
+        o.closed = false;
+        o.taperEnd = 0;
+        w.setShapeOptions(o);
+
+        // A new line's point put down near one of the first line's lands on it.
+        click({320, 250});
+        QTRY_VERIFY(w.isShaping());
+        QVERIFY(w.layers().activeId() != first);
+        click(placed.at(2) + QPointF(4, -3));
+        QCOMPARE(w.shapePoints().size(), 2);
+        QCOMPARE(w.shapePoints().at(1), placed.at(2));
+        // ... and so does one dragged there.
+        QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, {300, 120}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, {250, 80}));
+        QTest::mouseMove(w.canvasView(), viewPos(w, placed.at(1) + QPointF(3, 3)));
+        QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, placed.at(1) + QPointF(3, 3)));
+        QTest::qWait(QApplication::doubleClickInterval() + 60);
+        QCOMPARE(w.shapePoints().size(), 3);
+        QCOMPARE(w.shapePoints().at(2), placed.at(1));
+        // Further off it stays where it's put; and with Snap off, so does a near one.
+        click({330, 60});
+        QVERIFY(close(w.shapePoints().at(3), {330, 60}));
+        auto *snap = w.findChild<QCheckBox *>(QStringLiteral("shapeSnap"));
+        QVERIFY(snap && snap->isChecked());
+        snap->setChecked(false);
+        QVERIFY(!w.shapeOptions().snap);
+        click(placed.at(0) + QPointF(4, 4));
+        QVERIFY(w.shapePoints().at(4) != placed.at(0));
+        QVERIFY(close(w.shapePoints().at(4), placed.at(0) + QPointF(4, 4)));
+        snap->setChecked(true);
+        w.commitFloating();
+        const int second = w.layers().activeId();
+        QCOMPARE(w.layers().count(), 3);
+
+        // A click on a shape opens it; Ctrl+click starts a new one there, on its corner.
+        click(placed.at(0) + QPointF(2, 1));
+        QTRY_VERIFY(w.isShaping());
+        QCOMPARE(w.layers().count(), 3); // opened, not added
+        w.cancelShape();
+        click(placed.at(0) + QPointF(2, 1), Qt::ControlModifier);
+        QTRY_VERIFY(w.isShaping());
+        QCOMPARE(w.layers().count(), 4);
+        QCOMPARE(w.shapePoints(), QList<QPointF>({placed.at(0)}));
+        w.cancelShape();
+        QCOMPARE(w.layers().count(), 3);
+        Q_UNUSED(second);
+        w.setShapeOptions(MainWindow::ShapeOptions());
+    }
+
+    void curvedShapeTakesSharpCornersAndHandles()
+    {
+        MainWindow w;
+        setupWindow(w);
+        MainWindow::ShapeOptions o;
+        o.line = 4;
+        o.closed = false;
+        o.curved = true;
+        w.setShapeOptions(o);
+        w.canvasView()->setTool(w.shapeTool());
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        w.canvasView()->setFocus();
+        w.beginShape({60, 200});
+        w.addShapePoint({200, 60});
+        w.addShapePoint({340, 200});
+        // While it's being drawn there are only its points to see.
+        QCOMPARE(w.canvasView()->handles().size(), 3);
+        w.commitFloating();
+        const int curve = w.layers().activeId();
+        QVERIFY(w.editShape(curve));
+        QCOMPARE(w.canvasView()->handles().size(), 3);
+        const auto press = [&](QPointF p, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+            QTest::mouseClick(w.canvasView(), Qt::LeftButton, mods, viewPos(w, p));
+            QTest::qWait(QApplication::doubleClickInterval() + 60);
+        };
+        const auto drag = [&](QPointF from, QPointF to) {
+            QTest::mousePress(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, from));
+            QTest::mouseMove(w.canvasView(), viewPos(w, (from + to) / 2));
+            QTest::mouseMove(w.canvasView(), viewPos(w, to));
+            QTest::mouseRelease(w.canvasView(), Qt::LeftButton, Qt::NoModifier, viewPos(w, to));
+            QTest::qWait(QApplication::doubleClickInterval() + 60);
+        };
+
+        // Touching the middle point shows the curve's two handles beside it.
+        press({200, 60});
+        QVERIFY(w.isShaping());
+        QCOMPARE(w.canvasView()->handles().size(), 5);
+        // (A click can land a canvas pixel off, and takes the point with it.)
+        const QPointF mid = w.shapePoints().at(1);
+        QVERIFY(qAbs(mid.x() - 200) <= 1.0 && qAbs(mid.y() - 60) <= 1.0);
+        QPointF out = w.shapeInProgress().handleOut(1);
+        QVERIFY(qAbs(out.x() - 280.0 / 6.0) < 0.5 && qAbs(out.y()) < 0.5);
+        // An end of an open line has the one.
+        press({60, 200});
+        QCOMPARE(w.canvasView()->handles().size(), 4);
+
+        // Ctrl+click: a sharp corner, with no handles; again, and it's a curve.
+        press(mid, Qt::ControlModifier);
+        QCOMPARE(w.shapeInProgress().node(1).kind, ShapeNode::Corner);
+        QCOMPARE(w.canvasView()->handles().size(), 3);
+        QCOMPARE(w.shapePoints().size(), 3); // nothing moved or added
+        press(mid, Qt::ControlModifier);
+        QCOMPARE(w.shapeInProgress().node(1).kind, ShapeNode::Smooth);
+        QCOMPARE(w.canvasView()->handles().size(), 5);
+        QCOMPARE(w.shapePoints().at(1), mid);
+        out = w.shapeInProgress().handleOut(1);
+
+        // Dragging a handle aims the curve; the other side stays opposite.
+        drag(mid + out, mid + QPointF(60, -40));
+        ShapeSettings s = w.shapeInProgress();
+        QCOMPARE(s.node(1).kind, ShapeNode::Handle);
+        QVERIFY(qAbs(s.node(1).out.x() - 60) <= 1.5 && qAbs(s.node(1).out.y() + 40) <= 1.5);
+        QCOMPARE(w.shapePoints().at(1), mid); // the point itself stays put
+        // The way in, dragged, turns the way out with it.
+        drag(mid - s.node(1).out, mid - QPointF(50, 0));
+        s = w.shapeInProgress();
+        QVERIFY(qAbs(s.node(1).out.x() - 50) <= 1.5 && qAbs(s.node(1).out.y()) <= 1.5);
+        // A point added on a side, or taken away, leaves the handle with its own point.
+        drag({130, 130}, {110, 150});
+        QCOMPARE(w.shapePoints().size(), 4);
+        QCOMPARE(w.shapeInProgress().node(2).kind, ShapeNode::Handle);
+        QCOMPARE(w.shapeInProgress().node(1).kind, ShapeNode::Smooth);
+        QTest::keyClick(w.canvasView(), Qt::Key_Delete);
+        QCOMPARE(w.shapePoints().size(), 3);
+        QCOMPARE(w.shapeInProgress().node(1).kind, ShapeNode::Handle);
+
+        // Placed, saved and opened again, it's the curve it was.
+        w.commitFloating();
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Edit Shape"));
+        const ShapeSettings kept = w.layers().layer(curve)->shape;
+        QCOMPARE(kept.node(1).kind, ShapeNode::Handle);
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("curve.easeletch"));
+        QVERIFY(w.saveDocumentTo(path, true));
+        {
+            MainWindow w2;
+            w2.resize(1200, 800);
+            w2.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&w2));
+            QSignalSpy opened(&w2, &MainWindow::documentOpened);
+            w2.openDocument(path);
+            QVERIFY(opened.wait(10000));
+            const int id = w2.shapeLayerAt({60, 200});
+            QVERIFY(id != 0);
+            QCOMPARE(w2.layers().layer(id)->shape.node(1), kept.node(1));
+            QCOMPARE(w2.layers().layer(id)->shape.path(), kept.path());
+        }
+        // Undo is the curve before it was aimed.
+        w.undo();
+        QCOMPARE(w.layers().layer(curve)->shape.node(1).kind, ShapeNode::Smooth);
+        w.setShapeOptions(MainWindow::ShapeOptions());
     }
 
     void shapeCanBeFilledWithAGradientAndTheGradientAimed()

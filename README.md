@@ -110,6 +110,9 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 - Polygons and lines drawn point by point, with straight sides or as a smooth curve through the points, closed or open
 - An outline in any colour and weight, a fill in the painting colour, or both; smooth, or hard-edged for pixel art
+- **Taper**: an open line thins to a point at its start, its end or both, the way a pen stroke does as it lands and lifts
+- On a curve, any point can be a sharp corner, or have its curve aimed by hand with the two handles beside it
+- Shift keeps a side to 15° steps. A point put down near a point of another shape lands exactly on it (**Snap**), so lines meet with no gap for a fill to leak through
 - A gradient for the fill, from the same list as the Gradient tool (the metals included), linear, radial, reflected or conical. It runs top to bottom, or out from the middle, until you aim it: open the shape and drag the diamond on either end of its line. It moves with the shape and is redrawn when a point moves
 - A placed shape stays a shape: click it with the Shape tool to drag its points, add one on a side, remove one, or move the whole thing, and change its line, fill or curve. It's saved that way in the document. Moving the layer or cropping the canvas keeps it a shape; painting on it, filtering it or transforming it makes it ordinary pixels (undo brings the shape back)
 
@@ -180,6 +183,9 @@ Whole jobs, step by step, with pictures.
 | Change placed text | With the Text tool, click the words. The Text window opens with them; Ctrl+Enter (or Update) keeps the change, Escape drops it |
 | Draw a shape | U; click point by point (hold and drag to place a point exactly). Click the first point, double-click, or press Enter to finish; Backspace takes back the last point; Escape drops it |
 | Change a placed shape | With the Shape tool, click it. Drag a point to move it, a side to add a point there, inside to move the shape; Delete removes the point last touched. Enter (or a click away from it) keeps the change, Escape drops it |
+| An inked line | Shape tool with **Closed** off and **Curved** on, then **Taper**: the first box thins the start, the second the end |
+| A sharp corner in a curve, or a curve aimed by hand | Open the shape and click a point. Ctrl+click it for a corner (again for a curve). Drag either of the small diamonds beside it to aim the curve through it |
+| Start a line on another shape's corner | Ctrl+click there: a plain click would open that shape. With **Snap** ticked the new point lands on the corner |
 | Fill a shape with a gradient | In the Shape options, tick Fill and Gradient and pick one from the list. To aim it, click the shape with the Shape tool and drag the diamonds at the two ends of the gradient's line |
 | Aim a balloon's tail | While the Text window is open, drag the diamond at the tail's tip |
 | Move placed text (or any layer) | With the Text tool, drag on the canvas; or the Move tool (V) |

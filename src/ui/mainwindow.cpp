@@ -518,7 +518,8 @@ void MainWindow::createToolBars()
     m_shapeAct = tools->addAction(tr("Shape"), this, [this] { activateTool(m_shapeTool, false); });
     m_shapeAct->setShortcut(QKeySequence(Qt::Key_U));
     m_shapeAct->setToolTip(tr("Shape (U): click point by point to draw a polygon or a line; click the first point, "
-                              "double-click or press Enter to finish. Click a shape already placed to move its "
+                              "double-click or press Enter to finish. Shift keeps a side to 15° steps. Open lines "
+                              "can taper to a point. Click a shape already placed to move its "
                               "points. It lands on a new layer."));
     m_moveAct = tools->addAction(tr("Move"), this, [this] { activateTool(m_move, false); });
     m_moveAct->setShortcut(QKeySequence(Qt::Key_V));

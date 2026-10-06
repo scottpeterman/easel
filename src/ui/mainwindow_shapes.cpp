@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QGuiApplication>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -24,6 +25,7 @@
 #include <climits>
 #include <cmath>
 
+using easeletch::ShapeNode;
 using easeletch::ShapeSettings;
 
 namespace {
@@ -81,8 +83,25 @@ void MainWindow::createShapeOptions()
     m_shapeClosed->setToolTip(tr("The last point joins back to the first. Off: an open line through the points."));
     m_shapeSmooth = new QCheckBox(tr("Smooth"), host);
     m_shapeSmooth->setToolTip(tr("Soft edges. Untick for hard pixels (sprites, pixel art)."));
+    m_shapeTaperStart = new QSpinBox(host);
+    m_shapeTaperStart->setObjectName(QStringLiteral("shapeTaperStart"));
+    m_shapeTaperEnd = new QSpinBox(host);
+    m_shapeTaperEnd->setObjectName(QStringLiteral("shapeTaperEnd"));
+    for (QSpinBox *box : {m_shapeTaperStart, m_shapeTaperEnd}) {
+        box->setRange(0, 100);
+        box->setSingleStep(5);
+        box->setSuffix(tr("%"));
+        box->setSpecialValueText(tr("None"));
+    }
+    m_shapeTaperStart->setToolTip(tr("An open line thins to a point at its start, as a pen stroke does: how much of "
+                                     "the line that takes"));
+    m_shapeTaperEnd->setToolTip(tr("An open line thins to a point at its end: how much of the line that takes"));
+    m_shapeSnap = new QCheckBox(tr("Snap"), host);
+    m_shapeSnap->setObjectName(QStringLiteral("shapeSnap"));
+    m_shapeSnap->setToolTip(tr("A point put down or moved near a point of another shape lands exactly on it, so "
+                               "lines meet with no gap"));
     auto *hint = new QLabel(tr("Click points; click the first, double-click or press Enter to finish. "
-                               "Click a shape to change it."),
+                               "Shift: 15° steps. Click a shape to change it; Ctrl+click to start a new one on it."),
                             host);
     hint->setEnabled(false);
     // Cut short before it makes the window any wider.
@@ -96,6 +115,10 @@ void MainWindow::createShapeOptions()
     row->addWidget(m_shapeCurved);
     row->addWidget(m_shapeClosed);
     row->addWidget(m_shapeSmooth);
+    row->addWidget(new QLabel(tr("Taper"), host));
+    row->addWidget(m_shapeTaperStart);
+    row->addWidget(m_shapeTaperEnd);
+    row->addWidget(m_shapeSnap);
     row->addSpacing(12);
     row->addWidget(hint, 1);
     m_shapeOptions->addWidget(host);
@@ -108,10 +131,14 @@ void MainWindow::createShapeOptions()
         o.curved = m_shapeCurved->isChecked();
         o.closed = m_shapeClosed->isChecked();
         o.smooth = m_shapeSmooth->isChecked();
+        o.taperStart = m_shapeTaperStart->value();
+        o.taperEnd = m_shapeTaperEnd->value();
+        o.snap = m_shapeSnap->isChecked();
         setShapeOptions(o);
     };
-    connect(m_shapeLine, &QSpinBox::valueChanged, this, changed);
-    for (QCheckBox *box : {m_shapeFilled, m_shapeGradient, m_shapeCurved, m_shapeClosed, m_shapeSmooth})
+    for (QSpinBox *box : {m_shapeLine, m_shapeTaperStart, m_shapeTaperEnd})
+        connect(box, &QSpinBox::valueChanged, this, changed);
+    for (QCheckBox *box : {m_shapeFilled, m_shapeGradient, m_shapeCurved, m_shapeClosed, m_shapeSmooth, m_shapeSnap})
         connect(box, &QCheckBox::toggled, this, changed);
     // Picking a gradient here picks it for the Gradient tool too: there's one
     // current gradient. A shape opened again takes it from then on.
@@ -178,6 +205,15 @@ void MainWindow::syncShapeOptions()
     m_shapeCurved->setChecked(m_shapeOpts.curved);
     m_shapeClosed->setChecked(m_shapeOpts.closed);
     m_shapeSmooth->setChecked(m_shapeOpts.smooth);
+    {
+        const QSignalBlocker f(m_shapeTaperStart), g(m_shapeTaperEnd), h(m_shapeSnap);
+        m_shapeTaperStart->setValue(m_shapeOpts.taperStart);
+        m_shapeTaperEnd->setValue(m_shapeOpts.taperEnd);
+        m_shapeSnap->setChecked(m_shapeOpts.snap);
+    }
+    // A line that joins up with itself has no ends to thin.
+    m_shapeTaperStart->setEnabled(!m_shapeOpts.closed);
+    m_shapeTaperEnd->setEnabled(!m_shapeOpts.closed);
     m_shapeLineColor->setStyleSheet(QStringLiteral("QToolButton { background: %1; border: 1px solid palette(mid); }")
                                         .arg(m_shapeOpts.lineColor.name()));
 }
@@ -186,6 +222,8 @@ void MainWindow::setShapeOptions(const ShapeOptions &options)
 {
     m_shapeOpts = options;
     m_shapeOpts.line = std::clamp(m_shapeOpts.line, 0, ShapeSettings::MaxLine);
+    m_shapeOpts.taperStart = std::clamp(m_shapeOpts.taperStart, 0, 100);
+    m_shapeOpts.taperEnd = std::clamp(m_shapeOpts.taperEnd, 0, 100);
     syncShapeOptions();
     updateShape();
 }
@@ -243,7 +281,7 @@ void MainWindow::addShapePoint(const QPointF &pos)
 {
     if (!m_shape.active || m_shape.shape.points.size() >= ShapeSettings::MaxPoints)
         return;
-    m_shape.shape.points.append(onPixel(pos));
+    m_shape.shape.insertPoint(int(m_shape.shape.points.size()), onPixel(pos));
     m_shape.selected = int(m_shape.shape.points.size()) - 1;
     updateShape();
 }
@@ -269,6 +307,8 @@ bool MainWindow::editShape(int layerId)
     m_shapeOpts.curved = shape.curved;
     m_shapeOpts.closed = shape.closed;
     m_shapeOpts.smooth = shape.smooth;
+    m_shapeOpts.taperStart = shape.taperStart;
+    m_shapeOpts.taperEnd = shape.taperEnd;
     syncShapeOptions();
     if (shape.filled && !shape.hasGradient())
         m_color->setColor(shape.fill);
@@ -286,8 +326,12 @@ bool MainWindow::editShape(int layerId)
     m_shape.ownGradient = shape.hasGradient();
     layersChanged();
     updateShape();
-    statusBar()->showMessage(tr("Drag a point to move it, a side to add a point, inside to move the shape. "
-                                "Delete removes the last point touched. Enter applies, Escape cancels."),
+    statusBar()->showMessage(shape.curved
+                                 ? tr("Drag a point to move it, a side to add a point, the diamonds beside a point to "
+                                      "aim the curve. Ctrl+click a point for a sharp corner. Enter applies, Escape "
+                                      "cancels.")
+                                 : tr("Drag a point to move it, a side to add a point, inside to move the shape. "
+                                      "Delete removes the last point touched. Enter applies, Escape cancels."),
                              10000);
     return true;
 }
@@ -313,6 +357,8 @@ void MainWindow::updateShape()
     s.curved = m_shapeOpts.curved;
     s.closed = m_shapeOpts.closed;
     s.smooth = m_shapeOpts.smooth;
+    s.taperStart = m_shapeOpts.taperStart;
+    s.taperEnd = m_shapeOpts.taperEnd;
     const easeletch::ShapeLayout layout = easeletch::layoutShape(s);
     if (!layout.image.isNull()) {
         m_floating.paste(&l->store, layout.image, layout.origin, {}, canvasRect());
@@ -345,6 +391,15 @@ void MainWindow::showShapeHandles()
                << c + QPointF(-half, half);
         handles << square;
     }
+    // A small diamond either side of the point last touched, on a curve:
+    // where the line heads as it leaves the point, and where it comes in from.
+    for (const auto &[c, side] : shapeCurveHandles()) {
+        Q_UNUSED(side);
+        const double half = 5.0 / qMax(m_view->zoom(), 0.01);
+        QPolygonF diamond;
+        diamond << c + QPointF(0, -half) << c + QPointF(half, 0) << c + QPointF(0, half) << c + QPointF(-half, 0);
+        handles << diamond;
+    }
     // A diamond on each end of the gradient's line, once the shape is being
     // changed (while it's still being drawn, clicks are for its points).
     if (!m_shape.adding && m_shape.shape.hasGradient() && m_shape.shape.points.size() >= 3) {
@@ -359,9 +414,70 @@ void MainWindow::showShapeHandles()
     m_view->setHandles(handles);
 }
 
+QList<std::pair<QPointF, int>> MainWindow::shapeCurveHandles() const
+{
+    QList<std::pair<QPointF, int>> out;
+    const ShapeSettings &s = m_shape.shape;
+    const int i = m_shape.selected;
+    if (!m_shape.active || m_shape.adding || !s.curved || i < 0 || i >= s.points.size()
+        || s.node(i).kind == ShapeNode::Corner)
+        return out;
+    const QPointF h = s.handleOut(i);
+    if (std::hypot(h.x(), h.y()) < 1e-6)
+        return out;
+    // The ends of an open line have only the one side.
+    const bool loop = s.isLoop();
+    if (loop || i + 1 < s.points.size())
+        out.append({s.points.at(i) + h, 1});
+    if (loop || i > 0)
+        out.append({s.points.at(i) - h, 2});
+    return out;
+}
+
+QPointF MainWindow::shapePointFor(const QPointF &pos, int index) const
+{
+    const QList<QPointF> &points = m_shape.shape.points;
+    if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier) && m_shape.active) {
+        // In line with the point before it (the one after, for the first).
+        const int from = index > 0 ? index - 1 : points.size() > 1 ? 1 : -1;
+        if (from >= 0 && from < points.size()) {
+            const QPointF anchor = points.at(from);
+            const QPointF d = pos - anchor;
+            const double step = 15.0 * 3.14159265358979323846 / 180.0;
+            const double angle = std::round(std::atan2(d.y(), d.x()) / step) * step;
+            const QPointF along(std::cos(angle), std::sin(angle));
+            // As far along that line as the pointer has gone.
+            const double length = std::max(0.0, d.x() * along.x() + d.y() * along.y());
+            return onPixel(anchor + along * length);
+        }
+    }
+    if (m_shapeOpts.snap && m_stack) {
+        const double reach = 8.0 / qMax(m_view->zoom(), 0.01);
+        double best = reach;
+        QPointF found;
+        bool any = false;
+        for (const easeletch::Layer &l : m_stack->layers()) {
+            if (l.id == m_shape.layerId || !l.hasShape || !l.isShape() || !m_stack->isShown(l.id))
+                continue;
+            for (const QPointF &p : l.shape.points) {
+                const double d = QLineF(pos, p).length();
+                if (d <= best) {
+                    best = d;
+                    found = p;
+                    any = true;
+                }
+            }
+        }
+        if (any)
+            return found;
+    }
+    return onPixel(pos);
+}
+
 void MainWindow::shapePressed(const QPointF &pos)
 {
     m_shape.pressAt = pos;
+    m_shape.dragHandle = 0;
     m_shape.dragGradient = 0;
     m_shape.dragPoint = -1;
     m_shape.dragWhole = false;
@@ -371,6 +487,7 @@ void MainWindow::shapePressed(const QPointF &pos)
         // Starting (or opening) one changes the layers, which has to wait
         // until the click is over: the canvas is in the middle of it here.
         m_shape.afterRelease = ShapeSession::Start;
+        m_shape.pressNew = QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier);
         return;
     }
     ShapeSettings &s = m_shape.shape;
@@ -391,7 +508,7 @@ void MainWindow::shapePressed(const QPointF &pos)
             m_shape.afterRelease = ShapeSession::Finish;
             return;
         }
-        addShapePoint(pos);
+        addShapePoint(shapePointFor(pos, int(s.points.size())));
         m_shape.dragPoint = m_shape.selected; // holding on, it can still be put right
         return;
     }
@@ -410,6 +527,26 @@ void MainWindow::shapePressed(const QPointF &pos)
         }
     }
     const int point = easeletch::shapePointAt(s, pos, grab);
+    // The curve's handles for the point last touched, unless the press is
+    // squarely on a point: at a low zoom they can sit right beside one.
+    if (point < 0 || QLineF(pos, s.points.at(point)).length() > grab * 0.5) {
+        for (const auto &[at, side] : shapeCurveHandles()) {
+            if (QLineF(pos, at).length() <= grab) {
+                m_shape.dragHandle = side;
+                return;
+            }
+        }
+    }
+    if (point >= 0 && s.curved && QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier)) {
+        // A sharp corner here, or back to a curve worked out from its neighbours.
+        ShapeNode nd = s.node(point);
+        nd.kind = nd.kind == ShapeNode::Corner ? ShapeNode::Smooth : ShapeNode::Corner;
+        nd.out = {};
+        s.setNode(point, nd);
+        m_shape.selected = point;
+        updateShape();
+        return;
+    }
     if (point >= 0) {
         m_shape.selected = m_shape.dragPoint = point;
         showShapeHandles();
@@ -418,7 +555,7 @@ void MainWindow::shapePressed(const QPointF &pos)
     }
     const int side = easeletch::shapeSideAt(s, pos, grab);
     if (side >= 0 && s.points.size() < ShapeSettings::MaxPoints) {
-        s.points.insert(side + 1, onPixel(pos));
+        s.insertPoint(side + 1, onPixel(pos));
         m_shape.selected = m_shape.dragPoint = side + 1;
         updateShape();
         return;
@@ -442,8 +579,18 @@ void MainWindow::shapeDragged(const QPointF &pos)
         updateShape();
         return;
     }
+    if (m_shape.dragHandle != 0 && m_shape.selected >= 0 && m_shape.selected < s.points.size()) {
+        // Aimed by hand from here on. The other side stays opposite it.
+        const QPointF p = s.points.at(m_shape.selected);
+        ShapeNode nd;
+        nd.kind = ShapeNode::Handle;
+        nd.out = m_shape.dragHandle == 1 ? pos - p : p - pos;
+        s.setNode(m_shape.selected, nd);
+        updateShape();
+        return;
+    }
     if (m_shape.dragPoint >= 0 && m_shape.dragPoint < s.points.size()) {
-        const QPointF to = onPixel(pos);
+        const QPointF to = shapePointFor(pos, m_shape.dragPoint);
         if (s.points.at(m_shape.dragPoint) == to)
             return;
         s.points[m_shape.dragPoint] = to;
@@ -459,6 +606,7 @@ void MainWindow::shapeDragged(const QPointF &pos)
 void MainWindow::shapeReleased(const QPointF &pos)
 {
     shapeDragged(pos);
+    m_shape.dragHandle = 0;
     m_shape.dragGradient = 0;
     m_shape.dragPoint = -1;
     m_shape.dragWhole = false;
@@ -467,18 +615,21 @@ void MainWindow::shapeReleased(const QPointF &pos)
     if (after == ShapeSession::Nothing)
         return;
     const QPointF at = m_shape.pressAt;
-    QTimer::singleShot(0, this, [this, after, at] {
+    const bool fresh = m_shape.pressNew;
+    m_shape.pressNew = false;
+    QTimer::singleShot(0, this, [this, after, at, fresh] {
         if (m_view->tool() != m_shapeTool)
             return;
         if (after == ShapeSession::Finish) {
             commitShape();
         } else if (!m_shape.active) {
-            // On a shape already placed, the click opens it; anywhere else it
-            // starts a new one.
-            if (const int id = shapeLayerAt(at))
+            // On a shape already placed, the click opens it; anywhere else
+            // (or with Ctrl, to start a line on another's corner) it starts
+            // a new one.
+            if (const int id = fresh ? 0 : shapeLayerAt(at))
                 editShape(id);
             else
-                beginShape(at);
+                beginShape(shapePointFor(at, 0));
             // A quick second click right here would otherwise count as a double-click.
             m_shape.lastClick.start();
             m_shape.lastClickAt = at;
@@ -497,7 +648,7 @@ void MainWindow::shapeKey(int key)
             cancelShape();
             return;
         }
-        s.points.removeLast();
+        s.removePoint(int(s.points.size()) - 1);
         m_shape.selected = int(s.points.size()) - 1;
         m_shape.lastClick.invalidate();
         updateShape();
@@ -505,7 +656,7 @@ void MainWindow::shapeKey(int key)
     }
     if (m_shape.selected < 0 || m_shape.selected >= s.points.size() || s.points.size() <= 2)
         return;
-    s.points.removeAt(m_shape.selected);
+    s.removePoint(m_shape.selected);
     m_shape.selected = std::min(m_shape.selected, int(s.points.size()) - 1);
     updateShape();
 }
@@ -559,6 +710,9 @@ void MainWindow::loadShapeSettings(QSettings &s)
     m_shapeOpts.gradient = s.value(QStringLiteral("gradient"), m_shapeOpts.gradient).toBool();
     m_shapeOpts.curved = s.value(QStringLiteral("curved"), m_shapeOpts.curved).toBool();
     m_shapeOpts.smooth = s.value(QStringLiteral("smooth"), m_shapeOpts.smooth).toBool();
+    m_shapeOpts.taperStart = std::clamp(s.value(QStringLiteral("taperStart"), 0).toInt(), 0, 100);
+    m_shapeOpts.taperEnd = std::clamp(s.value(QStringLiteral("taperEnd"), 0).toInt(), 0, 100);
+    m_shapeOpts.snap = s.value(QStringLiteral("snap"), m_shapeOpts.snap).toBool();
     s.endGroup();
     syncShapeOptions();
 }
@@ -572,5 +726,8 @@ void MainWindow::saveShapeSettings(QSettings &s) const
     s.setValue(QStringLiteral("gradient"), m_shapeOpts.gradient);
     s.setValue(QStringLiteral("curved"), m_shapeOpts.curved);
     s.setValue(QStringLiteral("smooth"), m_shapeOpts.smooth);
+    s.setValue(QStringLiteral("taperStart"), m_shapeOpts.taperStart);
+    s.setValue(QStringLiteral("taperEnd"), m_shapeOpts.taperEnd);
+    s.setValue(QStringLiteral("snap"), m_shapeOpts.snap);
     s.endGroup();
 }

@@ -19,6 +19,7 @@
 #include <QSize>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 
@@ -130,6 +131,12 @@ public:
         bool curved = false; // a curve through the points
         bool closed = true;  // the last point joins the first
         bool smooth = true;  // soft edges; off for hard pixels
+        // An open line thinning to a point at its start / its end: how much
+        // of its length each takes, in percent.
+        int taperStart = 0;
+        int taperEnd = 0;
+        // A point put down or moved near a point of another shape lands on it.
+        bool snap = true;
     };
     const ShapeOptions &shapeOptions() const { return m_shapeOpts; }
     // Changes them, and the shape being drawn or changed with them.
@@ -137,6 +144,8 @@ public:
     // A shape is being drawn or changed and hasn't been put down yet.
     bool isShaping() const { return m_shape.active; }
     QList<QPointF> shapePoints() const;
+    // The shape being drawn or changed, as it stands.
+    easeletch::ShapeSettings shapeInProgress() const { return m_shape.shape; }
     // Starts a shape at its first point / adds the next (what clicks with
     // the Shape tool do).
     void beginShape(const QPointF &first);
@@ -366,6 +375,15 @@ private:
     // Redraws the shape being worked on from its points and the options.
     void updateShape();
     void showShapeHandles();
+    // Where a point being put down or moved goes: on a whole pixel; with
+    // Shift held, in line with the point before it at a 15° step; otherwise
+    // on a point of another shape, if one's close by. index: which point of
+    // the shape it is (the number of points, for one about to be added).
+    QPointF shapePointFor(const QPointF &pos, int index) const;
+    // Where the curve's handles for the point last touched are, to draw and
+    // to grab, each with its side (1 the way out of the point, 2 the way
+    // in): none unless a curved shape is being changed.
+    QList<std::pair<QPointF, int>> shapeCurveHandles() const;
     // Copies the Gradient tool's list of gradients into the Shape options.
     void mirrorGradientChoices();
     void shapePressed(const QPointF &pos);
@@ -626,6 +644,9 @@ private:
     QCheckBox *m_shapeCurved = nullptr;
     QCheckBox *m_shapeClosed = nullptr;
     QCheckBox *m_shapeSmooth = nullptr;
+    QSpinBox *m_shapeTaperStart = nullptr;
+    QSpinBox *m_shapeTaperEnd = nullptr;
+    QCheckBox *m_shapeSnap = nullptr;
     ShapeTool *m_shapeTool = nullptr;
     QAction *m_shapeAct = nullptr;
     ShapeOptions m_shapeOpts;
@@ -642,12 +663,14 @@ private:
         int selected = -1;    // the point last touched
         int dragPoint = -1;   // the point the drag under way is moving
         int dragGradient = 0; // ... or an end of the gradient's line: 1 its start, 2 its end
+        int dragHandle = 0;   // ... or a handle of the selected point: 1 the way out, 2 the way in
         // A shape opened again keeps the gradient it has, until another is
         // picked for it; a new one takes the Gradient tool's.
         bool ownGradient = false;
         bool dragWhole = false;
         QList<QPointF> dragStart; // the points when a drag of the whole shape began
         QPointF pressAt;
+        bool pressNew = false; // Ctrl was held: a new shape, even on top of one already placed
         // What the press under way does once it's over.
         enum After { Nothing, Start, Finish } afterRelease = Nothing;
         QElapsedTimer lastClick; // for telling a double-click

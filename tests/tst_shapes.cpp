@@ -9,6 +9,7 @@
 #include <QTest>
 
 #include <climits>
+#include <cmath>
 #include <cstring>
 
 using namespace easeletch;
@@ -332,6 +333,154 @@ private slots:
         for (const TileCoord c : first.tileCoords())
             QVERIFY(std::memcmp(first.tile(c).constBits(), l.store.tile(c).constBits(),
                                 size_t(TileStore::BytesPerTile)) == 0);
+    }
+
+    void anOpenLineTapersToAPointAtItsEnds()
+    {
+        ShapeSettings s;
+        s.points = {{50, 100}, {350, 100}};
+        s.closed = false;
+        s.line = 20;
+        s.taperStart = 50;
+        // Half the line fills out from nothing; the rest is the full width.
+        QCOMPARE(s.lineWidthAt(0.0), 0.0);
+        QVERIFY(qAbs(s.lineWidthAt(0.25) - 20.0 * std::sqrt(0.5)) < 1e-9);
+        QCOMPARE(s.lineWidthAt(0.5), 20.0);
+        QCOMPARE(s.lineWidthAt(1.0), 20.0);
+        Drawn d = draw(s);
+        QCOMPARE(d.at(340, 100), QColor(Qt::black));
+        QCOMPARE(d.at(340, 107), QColor(Qt::black));
+        QCOMPARE(d.at(200, 107), QColor(Qt::black));
+        QVERIFY(d.at(60, 100).alpha() > 100); // thin here, but there
+        QCOMPARE(d.at(60, 107).alpha(), 0);
+        QCOMPARE(d.at(125, 109).alpha(), 0); // 14 px wide a quarter of the way along
+        QCOMPARE(d.at(125, 104), QColor(Qt::black));
+        // The far end is round and whole, as an untapered line's is.
+        QCOMPARE(d.at(355, 100), QColor(Qt::black));
+        QCOMPARE(d.at(365, 100).alpha(), 0);
+
+        // Both ends, by more than there's line for: they meet where their shares put them.
+        s.taperStart = 100;
+        s.taperEnd = 100;
+        QCOMPARE(s.lineWidthAt(0.5), 20.0);
+        QVERIFY(s.lineWidthAt(0.4) < 20.0 && s.lineWidthAt(0.6) < 20.0);
+        d = draw(s);
+        QCOMPARE(d.at(200, 107), QColor(Qt::black));
+        QCOMPARE(d.at(60, 107).alpha(), 0);
+        QCOMPARE(d.at(340, 107).alpha(), 0);
+
+        // Hard pixels: no in-between ones, taper or not.
+        s.smooth = false;
+        d = draw(s);
+        for (int y = 85; y <= 115; ++y)
+            for (int x = 40; x <= 360; ++x) {
+                const int a = d.at(x, y).alpha();
+                QVERIFY2(a == 0 || a == 255, qPrintable(QStringLiteral("%1,%2: %3").arg(x).arg(y).arg(a)));
+            }
+
+        // A shape that joins up with itself has no ends: it's drawn as it always was.
+        ShapeSettings sq = square();
+        const QImage plain = draw(sq).layout.image;
+        sq.taperStart = 60;
+        sq.taperEnd = 60;
+        QVERIFY(!sq.isTapered());
+        QCOMPARE(sq.lineWidthAt(0.0), 6.0);
+        QCOMPARE(draw(sq).layout.image, plain);
+
+        // It survives the file; a shape without one doesn't mention it.
+        s.taperStart = 35;
+        s.taperEnd = 80;
+        const ShapeSettings r = ShapeSettings::fromJson(s.toJson());
+        QCOMPARE(r.taperStart, 35);
+        QCOMPARE(r.taperEnd, 80);
+        QVERIFY(!square().toJson().contains(QLatin1String("taper")));
+        QCOMPARE(ShapeSettings::fromJson(square().toJson()).taperStart, 0);
+        QJsonObject wild = s.toJson();
+        wild.insert(QLatin1String("taper"), QJsonArray{-20, 900});
+        QCOMPARE(ShapeSettings::fromJson(wild).taperStart, 0);
+        QCOMPARE(ShapeSettings::fromJson(wild).taperEnd, 100);
+    }
+
+    void aCurveCanTurnASharpCornerOrBeAimedByHand()
+    {
+        ShapeSettings s;
+        s.points = {{50, 200}, {200, 50}, {350, 200}};
+        s.closed = false;
+        s.curved = true;
+        s.line = 6;
+        // Smooth: the line leaves the middle point the way its neighbours lie.
+        QCOMPARE(s.handleOut(1), QPointF(50, 0));
+        QPainterPath path = s.path();
+        QCOMPARE(path.elementCount(), 7); // a start and two cubics
+        QCOMPARE(QPointF(path.elementAt(2)), QPointF(150, 50));
+        QCOMPARE(QPointF(path.elementAt(3)), QPointF(200, 50));
+        QCOMPARE(QPointF(path.elementAt(4)), QPointF(250, 50));
+        QCOMPARE(draw(s).at(200, 50), QColor(Qt::black));
+
+        // A corner: the curve comes straight in and goes straight out.
+        s.setNode(1, {ShapeNode::Corner, {}});
+        QCOMPARE(s.handleOut(1), QPointF());
+        path = s.path();
+        QCOMPARE(QPointF(path.elementAt(2)), QPointF(200, 50));
+        QCOMPARE(QPointF(path.elementAt(4)), QPointF(200, 50));
+        // It no longer swings wide of the point on its way through.
+        QCOMPARE(draw(s).at(225, 50).alpha(), 0);
+        QCOMPARE(draw(s).at(200, 51), QColor(Qt::black));
+
+        // Aimed by hand: out the way the handle points, in from the opposite side.
+        s.setNode(1, {ShapeNode::Handle, {0, 90}});
+        QCOMPARE(s.handleOut(1), QPointF(0, 90));
+        path = s.path();
+        QCOMPARE(QPointF(path.elementAt(2)), QPointF(200, -40));
+        QCOMPARE(QPointF(path.elementAt(4)), QPointF(200, 140));
+        // The other points are still worked out, and every point is still on the line.
+        QCOMPARE(s.handleOut(0), QPointF(25, -25));
+        QCOMPARE(QPointF(path.elementAt(3)), QPointF(200, 50));
+        QCOMPARE(QPointF(path.elementAt(6)), QPointF(350, 200));
+
+        // Points added and removed take their nodes with them.
+        s.insertPoint(1, {120, 120});
+        QCOMPARE(s.points.size(), 4);
+        QCOMPARE(s.node(1).kind, ShapeNode::Smooth);
+        QCOMPARE(s.node(2).kind, ShapeNode::Handle);
+        s.removePoint(0);
+        QCOMPARE(s.node(1).kind, ShapeNode::Handle);
+        QCOMPARE(s.node(1).out, QPointF(0, 90));
+        s.insertPoint(int(s.points.size()), {380, 260});
+        QCOMPARE(s.node(3).kind, ShapeNode::Smooth);
+        QCOMPARE(s.node(99).kind, ShapeNode::Smooth);
+
+        // The file keeps them, in step with the points; a plain curve doesn't mention them.
+        s.setNode(0, {ShapeNode::Corner, {}});
+        const ShapeSettings r = ShapeSettings::fromJson(s.toJson());
+        QCOMPARE(r.points, s.points);
+        QCOMPARE(r.node(0).kind, ShapeNode::Corner);
+        QCOMPARE(r.node(1).kind, ShapeNode::Handle);
+        QCOMPARE(r.node(1).out, QPointF(0, 90));
+        QCOMPARE(r.node(2).kind, ShapeNode::Smooth);
+        QCOMPARE(r.path(), s.path());
+        ShapeSettings plain = s;
+        plain.nodes.clear();
+        QVERIFY(!plain.toJson().contains(QLatin1String("nodes")));
+
+        // Two points make a straight line, until one is aimed: then an arc.
+        ShapeSettings arc;
+        arc.points = {{50, 100}, {250, 100}};
+        arc.closed = false;
+        arc.curved = true;
+        arc.line = 6;
+        QCOMPARE(draw(arc).at(137, 100), QColor(Qt::black));
+        arc.setNode(0, {ShapeNode::Handle, {0, -80}});
+        const Drawn d = draw(arc);
+        QCOMPARE(d.at(137, 100).alpha(), 0);
+        QCOMPARE(d.at(137, 70), QColor(Qt::black));
+
+        // A straight-sided shape takes no notice of any of it.
+        ShapeSettings straight = s;
+        straight.curved = false;
+        ShapeSettings bare = straight;
+        bare.nodes.clear();
+        QCOMPARE(straight.path(), bare.path());
     }
 };
 
