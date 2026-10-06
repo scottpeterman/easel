@@ -1610,8 +1610,9 @@ private slots:
         click({212, 180}, Qt::ShiftModifier);
         QCOMPARE(w.shapePoints().at(2).x(), w.shapePoints().at(1).x());
         QVERIFY(qAbs(w.shapePoints().at(2).y() - 180) <= 1.0);
-        // 45° is one of the steps.
-        click({262, 228}, Qt::ShiftModifier);
+        // 45° is one of the steps. (Aimed well inside it: a click can land a
+        // canvas pixel off, and half-way to the next step that would tip it over.)
+        click({255, 235}, Qt::ShiftModifier);
         const QPointF diagonal = w.shapePoints().at(3) - w.shapePoints().at(2);
         QCOMPARE(diagonal.x(), diagonal.y());
         QTest::keyClick(w.canvasView(), Qt::Key_Backspace);
@@ -1683,11 +1684,13 @@ private slots:
         QCOMPARE(w.layers().count(), 3);
 
         // A click on a shape opens it; Ctrl+click starts a new one there, on its corner.
-        click(placed.at(0) + QPointF(2, 1));
+        // (Clicked on the side away from the second line's last point, which
+        // sits just beside this corner: the corner is plainly the nearer.)
+        click(placed.at(0) + QPointF(-2, -1));
         QTRY_VERIFY(w.isShaping());
         QCOMPARE(w.layers().count(), 3); // opened, not added
         w.cancelShape();
-        click(placed.at(0) + QPointF(2, 1), Qt::ControlModifier);
+        click(placed.at(0) + QPointF(-2, -1), Qt::ControlModifier);
         QTRY_VERIFY(w.isShaping());
         QCOMPARE(w.layers().count(), 4);
         QCOMPARE(w.shapePoints(), QList<QPointF>({placed.at(0)}));
