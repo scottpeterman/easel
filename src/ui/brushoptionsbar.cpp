@@ -3,6 +3,8 @@
 #include "brushtool.h"
 
 #include <QCheckBox>
+#include <QComboBox>
+#include <QPushButton>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -73,6 +75,15 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     row->addWidget(m_pressureOpacity);
     row->addWidget(m_pixel);
 
+    m_mirrorLabel = new QLabel(tr("Mirror"), host);
+    m_mirror = new QComboBox(host);
+    m_mirror->setObjectName(QStringLiteral("brushMirror"));
+    m_mirror->addItems({tr("Off"), tr("Left / right"), tr("Top / bottom"), tr("Both")});
+    m_mirror->setToolTip(tr("Paints the other side as you paint this one, mirrored across the line shown on the "
+                            "canvas. For anything symmetrical: a ship from above, a face, a pattern."));
+    row->addWidget(m_mirrorLabel);
+    row->addWidget(m_mirror);
+
     // Less-used settings behind "More".
     auto *more = new QToolButton(host);
     more->setText(tr("More"));
@@ -86,6 +97,28 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     m_spacing = addControl(spacingRow, QString(), 1, 200, tr("%"), identity, identity);
     form->addRow(tr("Flow"), flowRow);
     form->addRow(tr("Spacing"), spacingRow);
+    // Where the mirror's lines cross, in canvas pixels.
+    auto *mirrorRow = new QWidget(panel);
+    auto *mirrorLayout = new QHBoxLayout(mirrorRow);
+    mirrorLayout->setContentsMargins(0, 0, 0, 0);
+    m_mirrorX = new QSpinBox(mirrorRow);
+    m_mirrorX->setObjectName(QStringLiteral("brushMirrorX"));
+    m_mirrorY = new QSpinBox(mirrorRow);
+    m_mirrorY->setObjectName(QStringLiteral("brushMirrorY"));
+    for (QSpinBox *box : {m_mirrorX, m_mirrorY}) {
+        box->setRange(-100000, 100000);
+        box->setKeyboardTracking(false);
+        box->setSuffix(tr(" px"));
+    }
+    m_mirrorX->setPrefix(tr("X "));
+    m_mirrorY->setPrefix(tr("Y "));
+    m_mirrorCentre = new QPushButton(tr("Centre"), mirrorRow);
+    m_mirrorCentre->setObjectName(QStringLiteral("brushMirrorCentre"));
+    m_mirrorCentre->setToolTip(tr("Back to the middle of the canvas"));
+    mirrorLayout->addWidget(m_mirrorX);
+    mirrorLayout->addWidget(m_mirrorY);
+    mirrorLayout->addWidget(m_mirrorCentre);
+    form->addRow(tr("Mirror at"), mirrorRow);
     auto *action = new QWidgetAction(menu);
     action->setDefaultWidget(panel);
     menu->addAction(action);
@@ -104,6 +137,16 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     connect(m_pressureSize, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pressureSize = on; }); });
     connect(m_pressureOpacity, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pressureOpacity = on; }); });
     connect(m_pixel, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pixel = on; }); });
+
+    connect(m_mirror, &QComboBox::activated, this, [this](int i) { m_tool->setSymmetry(easeletch::Symmetry(i)); });
+    const auto moveAxis = [this] {
+        if (!m_syncing)
+            m_tool->setSymmetryAxis(QPointF(m_mirrorX->value(), m_mirrorY->value()));
+    };
+    connect(m_mirrorX, &QSpinBox::valueChanged, this, moveAxis);
+    connect(m_mirrorY, &QSpinBox::valueChanged, this, moveAxis);
+    connect(m_mirrorCentre, &QPushButton::clicked, m_tool, &BrushTool::centreSymmetryAxis);
+    connect(m_tool, &BrushTool::symmetryChanged, this, &BrushOptionsBar::syncFromTool);
 
     connect(m_tool, &BrushTool::settingsChanged, this, &BrushOptionsBar::syncFromTool);
     syncFromTool();
@@ -187,5 +230,19 @@ void BrushOptionsBar::syncFromTool()
     m_pressureSize->setChecked(b.pressureSize);
     m_pressureOpacity->setChecked(b.pressureOpacity);
     m_pixel->setChecked(b.pixel);
+
+    // Mirroring is the brush's and the eraser's.
+    const bool mirrors = mode == easeletch::BrushMode::Paint || mode == easeletch::BrushMode::Erase;
+    const QSignalBlocker mm(m_mirror), mx(m_mirrorX), my(m_mirrorY);
+    m_mirror->setCurrentIndex(int(m_tool->symmetry()));
+    m_mirrorLabel->setEnabled(mirrors);
+    m_mirror->setEnabled(mirrors);
+    const QPointF axis = m_tool->symmetryAxis();
+    m_mirrorX->setValue(int(std::lround(axis.x())));
+    m_mirrorY->setValue(int(std::lround(axis.y())));
+    const bool on = mirrors && m_tool->symmetry() != easeletch::Symmetry::Off;
+    m_mirrorX->setEnabled(on && m_tool->symmetry() != easeletch::Symmetry::TopBottom);
+    m_mirrorY->setEnabled(on && m_tool->symmetry() != easeletch::Symmetry::LeftRight);
+    m_mirrorCentre->setEnabled(on && !m_tool->symmetryAxisCentred());
     m_syncing = false;
 }

@@ -553,6 +553,11 @@ void CanvasView::render(QRhiCommandBuffer *cb)
             grid(m_cellOffset.x(), m_cellSize.width(), m_cellOffset.y(), m_cellSize.height(),
                  0.2f, 0.75f, 1.0f, 0.85f);
     }
+    for (const QLineF &guide : std::as_const(m_guides)) {
+        // Magenta: a colour that isn't the grid's, the selection's or (often) the picture's.
+        ants.push_back({float(guide.x1()), float(guide.y1()), 1.0f, 0.2f, 0.85f, 0.9f});
+        ants.push_back({float(guide.x2()), float(guide.y2()), 1.0f, 0.2f, 0.85f, 0.9f});
+    }
     if (!m_selectionOutline.isEmpty()) {
         // Marching ants: 4-pixel black and white dashes along the selection
         // outline, only where it's on screen, shifted each timer tick.
@@ -1067,6 +1072,14 @@ void CanvasView::setSelectionOutline(const QList<QPolygonF> &outline)
         m_antsTimer->stop();
     else if (!m_antsTimer->isActive())
         m_antsTimer->start();
+    update();
+}
+
+void CanvasView::setGuides(const QList<QLineF> &guides)
+{
+    if (guides == m_guides)
+        return;
+    m_guides = guides;
     update();
 }
 

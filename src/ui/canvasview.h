@@ -5,6 +5,7 @@
 #include "tilepyramid.h"
 #include "tilestore.h"
 
+#include <QLineF>
 #include <QPointF>
 #include <QPolygonF>
 #include <QRhiWidget>
@@ -115,6 +116,10 @@ public:
     // coordinates, drawn solid white with a dark edge over everything else.
     void setHandles(const QList<QPolygonF> &handles);
     QList<QPolygonF> handles() const { return m_handles; }
+    // Guide lines (the brush's mirror lines): each one's two ends in canvas
+    // coordinates, drawn over the picture and under the handles.
+    void setGuides(const QList<QLineF> &guides);
+    QList<QLineF> guides() const { return m_guides; }
     // A line between every pixel, from 600% zoom up.
     void setPixelGridVisible(bool visible);
     bool pixelGridVisible() const { return m_pixelGrid; }
@@ -229,6 +234,7 @@ private:
 
     QList<QPolygonF> m_selectionOutline;
     QList<QPolygonF> m_handles;
+    QList<QLineF> m_guides;
     bool m_pixelGrid = true;
     bool m_cellGrid = false;
     QSize m_cellSize{32, 32};

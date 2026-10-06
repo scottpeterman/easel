@@ -8,12 +8,15 @@
 
 class BrushTool;
 class QCheckBox;
+class QComboBox;
+class QPushButton;
 class QLabel;
 class QSlider;
 class QSpinBox;
 
-// Tool options for the brush and eraser: size, opacity, hardness, stabilizer
-// and pressure up front; flow and spacing under "More".
+// Tool options for the brush and eraser: size, opacity, hardness, stabilizer,
+// pressure and mirroring up front; flow, spacing and where the mirror line
+// sits under "More".
 class BrushOptionsBar : public QToolBar
 {
     Q_OBJECT
@@ -42,4 +45,9 @@ private:
     QCheckBox *m_pressureOpacity = nullptr;
     QCheckBox *m_pixel = nullptr;
     QLabel *m_opacityLabel = nullptr;
+    QLabel *m_mirrorLabel = nullptr;
+    QComboBox *m_mirror = nullptr;
+    QSpinBox *m_mirrorX = nullptr;
+    QSpinBox *m_mirrorY = nullptr;
+    QPushButton *m_mirrorCentre = nullptr;
 };

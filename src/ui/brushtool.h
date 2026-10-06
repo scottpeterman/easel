@@ -13,6 +13,9 @@ class QSettings;
 // Brush, eraser, smudge, clone and heal. Each mode keeps its own settings
 // (size, opacity, ...). A finished stroke is recorded in the document's history.
 //
+// A press with Shift held draws a straight line to it from where the last
+// stroke ended, and carries on from there if it's dragged.
+//
 // Clone paints with a copy of the layer from somewhere else on it. The source
 // is set first (Alt+click, see CloneSourceTool); the first stroke after that
 // fixes how far the copy is from the brush, and later strokes keep that
@@ -43,6 +46,22 @@ public:
     QColor color() const { return m_color; }
     void setColor(const QColor &color) { m_color = color; }
 
+    // Brush and eraser strokes mirrored across a line (or two) as they're
+    // made. The lines cross at the middle of the canvas until they're put
+    // somewhere else.
+    easeletch::Symmetry symmetry() const { return m_symmetry; }
+    void setSymmetry(easeletch::Symmetry symmetry);
+    QPointF symmetryAxis() const;
+    void setSymmetryAxis(const QPointF &axis);
+    // Back to the middle of the canvas, and following it from one canvas to the next.
+    void centreSymmetryAxis();
+    bool symmetryAxisCentred() const { return m_axisCentred; }
+    // The mirroring applies to the mode in use (brush and eraser only).
+    bool symmetryActive() const;
+    QRect bounds() const { return m_bounds; }
+    // Where the last stroke ended, for Shift+click; false until there's been one.
+    bool lastStrokeEnd(QPointF *pos) const;
+
     // Clone: the point to copy from. The next stroke starts copying there.
     void setCloneSource(const QPointF &pos);
     bool hasCloneSource() const { return m_hasSource; }
@@ -70,6 +89,7 @@ signals:
     // A clone stroke was started before a source was chosen.
     void cloneSourceNeeded();
     void cloneSourceChanged();
+    void symmetryChanged();
 
 private:
     easeletch::BrushSettings &current();
@@ -92,6 +112,11 @@ private:
     QPoint m_offset; // source minus brush, once a stroke has fixed it
     const easeletch::Selection *m_selection = nullptr;
     QColor m_color = Qt::black;
+    easeletch::Symmetry m_symmetry = easeletch::Symmetry::Off;
+    bool m_axisCentred = true;
+    QPointF m_axis;
+    bool m_hasLastEnd = false;
+    QPointF m_lastEnd;
     easeletch::BrushStroke m_stroke;
 };
 

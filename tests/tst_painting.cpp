@@ -5,7 +5,10 @@
 #include "eyedroppertool.h"
 #include "mainwindow.h"
 
+#include <QComboBox>
 #include <QPointingDevice>
+#include <QPushButton>
+#include <QSpinBox>
 #include <QSignalSpy>
 #include <QTabletEvent>
 #include <QTemporaryDir>
@@ -136,6 +139,151 @@ private slots:
                 QCOMPARE(pixel(w, x, y), QColor(Qt::white));
         w.undo();
         QCOMPARE(pixel(w, 200, 150), QColor(Qt::black));
+    }
+
+    void shiftClickDrawsAStraightLineFromTheLastStroke()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        // Nothing to draw from yet: Shift+click is a click.
+        QVERIFY(!w.brushTool()->lastStrokeEnd(nullptr));
+        QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {50, 50}));
+        QCOMPARE(w.history().count(), 1);
+        QCOMPARE(pixel(w, 50, 50), QColor(Qt::red));
+        QPointF end;
+        QVERIFY(w.brushTool()->lastStrokeEnd(&end));
+        QVERIFY(qAbs(end.x() - 50) <= 1 && qAbs(end.y() - 50) <= 1);
+
+        // From there to the next Shift+click, in one step.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {300, 200}));
+        QCOMPARE(w.history().count(), 2);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Brush"));
+        QCOMPARE(pixel(w, 175, 125), QColor(Qt::red));
+        QCOMPARE(pixel(w, 100, 80), QColor(Qt::red));
+        QCOMPARE(pixel(w, 300, 200), QColor(Qt::red));
+        QCOMPARE(pixel(w, 175, 100), QColor(Qt::white)); // straight: nothing off the line
+        QCOMPARE(pixel(w, 175, 150), QColor(Qt::white));
+
+        // Dragged on after the press, the stroke carries on from the line's end.
+        QTest::mousePress(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {300, 100}));
+        for (int x = 310; x <= 380; x += 10)
+            QTest::mouseMove(view, viewPos(w, {double(x), 100}));
+        QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {380, 100}));
+        QCOMPARE(w.history().count(), 3);
+        QCOMPARE(pixel(w, 300, 150), QColor(Qt::red));
+        QCOMPARE(pixel(w, 350, 100), QColor(Qt::red));
+
+        // Without Shift, a click is a dot on its own.
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {60, 250}));
+        QCOMPARE(pixel(w, 60, 250), QColor(Qt::red));
+        QCOMPARE(pixel(w, 220, 175), QColor(Qt::white)); // half-way back to the last stroke's end
+        // Undo takes back the whole line.
+        w.undo();
+        w.undo();
+        w.undo();
+        QCOMPARE(pixel(w, 175, 125), QColor(Qt::white));
+        QCOMPARE(pixel(w, 50, 50), QColor(Qt::red));
+
+        // The eraser draws its lines the same way.
+        w.brushTool()->setMode(BrushMode::Erase);
+        BrushSettings b = w.brushTool()->settings();
+        b.size = 20;
+        b.hardness = 1.0;
+        w.brushTool()->setSettings(b);
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {50, 200}));
+        QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {350, 200}));
+        QCOMPARE(pixel(w, 200, 200).alpha(), 0);
+        QCOMPARE(w.history().undoLabel(), QStringLiteral("Eraser"));
+        w.brushTool()->setMode(BrushMode::Paint);
+
+        // Another canvas: there's nowhere to draw from again.
+        w.newDocument(QSize(200, 200), Qt::white);
+        QVERIFY(!w.brushTool()->lastStrokeEnd(nullptr));
+    }
+
+    void mirrorPaintsBothSidesAndShowsItsLine()
+    {
+        MainWindow w;
+        setupWindow(w);
+        CanvasView *view = w.canvasView();
+        BrushTool *brush = w.brushTool();
+        auto *mirror = w.findChild<QComboBox *>(QStringLiteral("brushMirror"));
+        auto *mirrorX = w.findChild<QSpinBox *>(QStringLiteral("brushMirrorX"));
+        auto *mirrorY = w.findChild<QSpinBox *>(QStringLiteral("brushMirrorY"));
+        auto *centre = w.findChild<QPushButton *>(QStringLiteral("brushMirrorCentre"));
+        QVERIFY(mirror && mirrorX && mirrorY && centre);
+        QCOMPARE(brush->symmetry(), Symmetry::Off);
+        QVERIFY(view->guides().isEmpty());
+
+        // Left / right: a line down the middle of the canvas, and every stroke twice.
+        mirror->setCurrentIndex(1);
+        emit mirror->activated(1);
+        QCOMPARE(brush->symmetry(), Symmetry::LeftRight);
+        QCOMPARE(view->guides(), QList<QLineF>({QLineF(200, 0, 200, 300)}));
+        QCOMPARE(mirrorX->value(), 200);
+        QVERIFY(mirrorX->isEnabled() && !mirrorY->isEnabled() && !centre->isEnabled());
+        QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {60, 100}));
+        QTest::mouseMove(view, viewPos(w, {90, 100}));
+        QTest::mouseMove(view, viewPos(w, {120, 100}));
+        QTest::mouseRelease(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {120, 100}));
+        QCOMPARE(pixel(w, 90, 100), QColor(Qt::red));
+        QCOMPARE(pixel(w, 309, 100), QColor(Qt::red));
+        QCOMPARE(pixel(w, 200, 100), QColor(Qt::white));
+        for (int y = 85; y <= 115; ++y)
+            for (int x = 40; x <= 140; ++x)
+                QCOMPARE(pixel(w, x, y), pixel(w, 399 - x, y));
+        // One stroke, one step: undo clears both sides.
+        QCOMPARE(w.history().count(), 1);
+        w.undo();
+        QCOMPARE(pixel(w, 90, 100), QColor(Qt::white));
+        QCOMPARE(pixel(w, 309, 100), QColor(Qt::white));
+
+        // The line goes where it's put, and back to the middle.
+        mirrorX->setValue(100);
+        QVERIFY(!brush->symmetryAxisCentred());
+        QCOMPARE(view->guides(), QList<QLineF>({QLineF(100, 0, 100, 300)}));
+        QVERIFY(centre->isEnabled());
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {60, 200}));
+        QCOMPARE(pixel(w, 60, 200), QColor(Qt::red));
+        QCOMPARE(pixel(w, 139, 200), QColor(Qt::red));
+        QCOMPARE(pixel(w, 339, 200), QColor(Qt::white));
+        centre->click();
+        QVERIFY(brush->symmetryAxisCentred());
+        QCOMPARE(mirrorX->value(), 200);
+
+        // Both: two lines, four strokes. A Shift+click line is mirrored like any other.
+        brush->setSymmetry(Symmetry::Quarters);
+        QCOMPARE(mirror->currentIndex(), 3);
+        QCOMPARE(view->guides().size(), 2);
+        QVERIFY(mirrorY->isEnabled());
+        QCOMPARE(mirrorY->value(), 150);
+        QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {30, 30}));
+        QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {150, 30}));
+        for (const QPoint p : {QPoint(90, 30), QPoint(309, 30), QPoint(90, 269), QPoint(309, 269)})
+            QCOMPARE(pixel(w, p.x(), p.y()), QColor(Qt::red));
+
+        // It's the brush's and the eraser's: no line for the others, or for another tool.
+        brush->setMode(BrushMode::Smudge);
+        QVERIFY(view->guides().isEmpty());
+        QVERIFY(!mirror->isEnabled());
+        brush->setMode(BrushMode::Erase);
+        QCOMPARE(view->guides().size(), 2);
+        QVERIFY(mirror->isEnabled());
+        brush->setMode(BrushMode::Paint);
+        w.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&w));
+        view->setFocus();
+        QTest::keyClick(view, Qt::Key_U);
+        QVERIFY(view->guides().isEmpty());
+        QTest::keyClick(view, Qt::Key_B);
+        QCOMPARE(view->guides().size(), 2);
+
+        // A centred line follows the canvas to the next one.
+        w.newDocument(QSize(300, 200), Qt::white);
+        QCOMPARE(view->guides(), QList<QLineF>({QLineF(150, 0, 150, 200), QLineF(0, 100, 300, 100)}));
+        brush->setSymmetry(Symmetry::Off);
+        QVERIFY(view->guides().isEmpty());
     }
 
     void mouseStrokePaintsAndUndoes()

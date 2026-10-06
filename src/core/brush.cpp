@@ -193,23 +193,6 @@ QHash<TileCoord, QImage> BrushStroke::end()
     return before;
 }
 
-void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
-{
-    for (const StrokeSample &d : dabs) {
-        if (m_mode == BrushMode::Smudge)
-            smudgeDab(d);
-        else
-            paintDab(d);
-    }
-}
-
-float BrushStroke::coverageAt(double dist, double radius) const
-{
-    if (m_settings.pixel)
-        return dist <= radius + 1e-9 ? 1.0f : 0.0f;
-    return dabCoverage(dist, radius, m_settings.hardness);
-}
-
 namespace {
 
 // Pixel mode centres dabs on pixel centres.
@@ -219,6 +202,39 @@ QPointF dabCentre(const QPointF &pos, bool pixel)
 }
 
 } // namespace
+
+void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
+{
+    const bool mirrored = m_symmetry != Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
+    const bool acrossX = m_symmetry == Symmetry::LeftRight || m_symmetry == Symmetry::Quarters;
+    const bool acrossY = m_symmetry == Symmetry::TopBottom || m_symmetry == Symmetry::Quarters;
+    for (const StrokeSample &d : dabs) {
+        if (m_mode == BrushMode::Smudge) {
+            smudgeDab(d);
+            continue;
+        }
+        paintDab(d);
+        if (!mirrored)
+            continue;
+        // The dab's centre is mirrored as it's painted (on its pixel, in
+        // pixel mode), so the two sides match pixel for pixel.
+        const QPointF c = dabCentre(d.pos, m_settings.pixel);
+        const QPointF flipped(2.0 * m_axis.x() - c.x(), 2.0 * m_axis.y() - c.y());
+        if (acrossX)
+            paintDab({QPointF(flipped.x(), c.y()), d.pressure});
+        if (acrossY)
+            paintDab({QPointF(c.x(), flipped.y()), d.pressure});
+        if (acrossX && acrossY)
+            paintDab({flipped, d.pressure});
+    }
+}
+
+float BrushStroke::coverageAt(double dist, double radius) const
+{
+    if (m_settings.pixel)
+        return dist <= radius + 1e-9 ? 1.0f : 0.0f;
+    return dabCoverage(dist, radius, m_settings.hardness);
+}
 
 void BrushStroke::paintDab(const StrokeSample &dab)
 {

@@ -1,5 +1,6 @@
 #include "brushtool.h"
 
+#include <QGuiApplication>
 #include <QSettings>
 
 #include <algorithm>
@@ -75,8 +76,55 @@ void BrushTool::setDocument(easeletch::TileStore *store, const QRect &bounds, ea
     if (m_stroke.isActive())
         m_stroke.end(); // the old document is going away; nothing to record
     m_store = store;
+    const bool resized = bounds != m_bounds;
     m_bounds = bounds;
     m_history = history;
+    if (resized) {
+        m_hasLastEnd = false; // it was a place on another canvas
+        emit symmetryChanged(); // a centred line moves with the canvas
+    }
+}
+
+void BrushTool::setSymmetry(easeletch::Symmetry symmetry)
+{
+    if (symmetry == m_symmetry)
+        return;
+    m_symmetry = symmetry;
+    emit symmetryChanged();
+}
+
+QPointF BrushTool::symmetryAxis() const
+{
+    return m_axisCentred ? QRectF(m_bounds).center() : m_axis;
+}
+
+void BrushTool::setSymmetryAxis(const QPointF &axis)
+{
+    if (!m_axisCentred && axis == m_axis)
+        return;
+    m_axis = axis;
+    m_axisCentred = false;
+    emit symmetryChanged();
+}
+
+void BrushTool::centreSymmetryAxis()
+{
+    if (m_axisCentred)
+        return;
+    m_axisCentred = true;
+    emit symmetryChanged();
+}
+
+bool BrushTool::symmetryActive() const
+{
+    return m_symmetry != easeletch::Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
+}
+
+bool BrushTool::lastStrokeEnd(QPointF *pos) const
+{
+    if (m_hasLastEnd && pos)
+        *pos = m_lastEnd;
+    return m_hasLastEnd;
 }
 
 void BrushTool::setMode(BrushMode mode)
@@ -86,6 +134,7 @@ void BrushTool::setMode(BrushMode mode)
     m_mode = mode;
     emit modeChanged(mode);
     emit settingsChanged();
+    emit symmetryChanged(); // it only applies to some modes
 }
 
 BrushSettings &BrushTool::current()
@@ -171,8 +220,14 @@ void BrushTool::press(const easeletch::StrokeSample &s)
         emit cloneSourceChanged();
         m_stroke.setCloneOffset(m_offset);
     }
-    m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode, s,
+    m_stroke.setSymmetry(m_symmetry, symmetryAxis());
+    // Shift: a straight line from where the last stroke ended to here.
+    const bool line = m_hasLastEnd && QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+    m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode,
+                   line ? easeletch::StrokeSample{m_lastEnd, s.pressure} : s,
                    m_selection ? *m_selection : easeletch::Selection());
+    if (line)
+        m_stroke.moveTo(s);
 }
 
 void BrushTool::move(const easeletch::StrokeSample &s)
@@ -186,6 +241,8 @@ void BrushTool::release(const easeletch::StrokeSample &s)
     if (!m_stroke.isActive())
         return;
     m_stroke.moveTo(s);
+    m_lastEnd = s.pos;
+    m_hasLastEnd = true;
     auto before = m_stroke.end();
     if (before.isEmpty() || !m_history)
         return;

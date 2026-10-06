@@ -242,6 +242,86 @@ private slots:
         QVERIFY(near(at(s, 99, 99), Qt::red));
         QVERIFY(near(at(s, 100, 100), Qt::white)); // outside the canvas: untouched default
     }
+
+    void symmetryPaintsTheOtherSideAsThisOneIsPainted()
+    {
+        // Across an upright line: left and right.
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.setSymmetry(Symmetry::LeftRight, {500, 500});
+        stroke.begin(&s, kBounds, hard(20), Qt::red, BrushMode::Paint, {{300, 400}, 1.0});
+        stroke.moveTo({{350, 400}, 1.0});
+        const auto before = stroke.end();
+        QVERIFY(near(at(s, 300, 400), Qt::red));
+        QVERIFY(near(at(s, 325, 400), Qt::red));
+        QVERIFY(near(at(s, 699, 400), Qt::red));
+        QVERIFY(near(at(s, 675, 400), Qt::red));
+        QVERIFY(near(at(s, 300, 600), Qt::white));
+        QVERIFY(near(at(s, 700, 600), Qt::white));
+        // The two sides match pixel for pixel.
+        for (int y = 385; y <= 415; ++y)
+            for (int x = 285; x <= 365; ++x)
+                QCOMPARE(at(s, x, y), at(s, 999 - x, y));
+        // Undo covers both: the other side's tiles were recorded too.
+        QVERIFY(before.contains(TileStore::tileAt(300, 400)));
+        QVERIFY(before.contains(TileStore::tileAt(699, 400)));
+
+        // Across a level line, and across both: four for one.
+        TileStore t(Qt::white);
+        stroke.setSymmetry(Symmetry::TopBottom, {500, 500});
+        stroke.begin(&t, kBounds, hard(20), Qt::red, BrushMode::Paint, {{300, 400}, 1.0});
+        stroke.end();
+        QVERIFY(near(at(t, 300, 599), Qt::red));
+        QVERIFY(near(at(t, 699, 400), Qt::white));
+        TileStore q(Qt::white);
+        stroke.setSymmetry(Symmetry::Quarters, {500, 500});
+        stroke.begin(&q, kBounds, hard(20), Qt::red, BrushMode::Paint, {{300, 400}, 1.0});
+        QCOMPARE(stroke.dabCount(), 4);
+        stroke.end();
+        for (const QPoint p : {QPoint(300, 400), QPoint(699, 400), QPoint(300, 599), QPoint(699, 599)})
+            QVERIFY(near(at(q, p.x(), p.y()), Qt::red));
+        QVERIFY(near(at(q, 500, 500), Qt::white));
+
+        // The line can be anywhere; the eraser mirrors as the brush does.
+        TileStore e(Qt::red);
+        stroke.setSymmetry(Symmetry::LeftRight, {200, 0});
+        stroke.begin(&e, kBounds, hard(20), Qt::black, BrushMode::Erase, {{150, 100}, 1.0});
+        stroke.end();
+        QCOMPARE(at(e, 150, 100).alpha(), 0);
+        QCOMPARE(at(e, 249, 100).alpha(), 0);
+        QVERIFY(near(at(e, 200, 100), Qt::red));
+
+        // In pixel mode one pixel is mirrored by exactly one pixel.
+        TileStore p(Qt::white);
+        BrushSettings one = hard(1);
+        one.pixel = true;
+        stroke.setSymmetry(Symmetry::LeftRight, {50, 50});
+        stroke.begin(&p, QRect(0, 0, 100, 100), one, Qt::red, BrushMode::Paint, {{10.0, 20.0}, 1.0});
+        stroke.end();
+        QVERIFY(near(at(p, 10, 20), Qt::red));
+        QVERIFY(near(at(p, 89, 20), Qt::red));
+        QVERIFY(near(at(p, 88, 20), Qt::white));
+        QVERIFY(near(at(p, 90, 20), Qt::white));
+        QVERIFY(near(at(p, 9, 20), Qt::white));
+        QVERIFY(near(at(p, 11, 20), Qt::white));
+
+        // Smudge works from what's under the brush: it isn't mirrored.
+        TileStore m(Qt::white);
+        stroke.setSymmetry(Symmetry::Quarters, {500, 500});
+        stroke.begin(&m, kBounds, hard(20), Qt::red, BrushMode::Smudge, {{300, 400}, 1.0});
+        stroke.moveTo({{340, 400}, 1.0});
+        const auto smudged = stroke.end();
+        QVERIFY(!smudged.contains(TileStore::tileAt(699, 400)));
+        QVERIFY(!smudged.contains(TileStore::tileAt(300, 599)));
+
+        // Off again: one stroke, one mark.
+        TileStore off(Qt::white);
+        stroke.setSymmetry(Symmetry::Off, {500, 500});
+        stroke.begin(&off, kBounds, hard(20), Qt::red, BrushMode::Paint, {{300, 400}, 1.0});
+        QCOMPARE(stroke.dabCount(), 1);
+        stroke.end();
+        QVERIFY(near(at(off, 699, 400), Qt::white));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestBrush)

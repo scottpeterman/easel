@@ -45,6 +45,11 @@ struct BrushSettings {
 // the stroke ends, replaces it with what's around it (see heal.h).
 enum class BrushMode { Paint, Erase, Smudge, Clone, Heal };
 
+// Painting mirrored as it's made: every dab is repeated across a line through
+// a point on the canvas. LeftRight mirrors across an upright line, TopBottom
+// across a level one, Quarters across both (four strokes for one).
+enum class Symmetry { Off, LeftRight, TopBottom, Quarters };
+
 struct StrokeSample {
     QPointF pos;
     double pressure = 1.0;
@@ -106,6 +111,14 @@ public:
     // before begin(). The copy is of the layer as it was when the stroke
     // began, so a stroke never copies its own paint.
     void setCloneOffset(const QPoint &offset) { m_cloneOffset = offset; }
+    // Mirrors the stroke about the lines through axis. Set before begin().
+    // Paint and Erase only: the other modes work from what's under the
+    // brush, which a mirror image of the stroke has no claim to.
+    void setSymmetry(Symmetry symmetry, const QPointF &axis)
+    {
+        m_symmetry = symmetry;
+        m_axis = axis;
+    }
     // Ends the stroke and returns the pre-stroke content of every tile it
     // touched (a null image = the tile didn't exist).
     QHash<TileCoord, QImage> end();
@@ -125,6 +138,8 @@ private:
     QRect m_bounds;
     QRect m_canvas; // the whole canvas, whatever the selection
     QPoint m_cloneOffset;
+    Symmetry m_symmetry = Symmetry::Off;
+    QPointF m_axis;
     BrushSettings m_settings;
     BrushMode m_mode = BrushMode::Paint;
     float m_color[3] = {0, 0, 0}; // linear, straight alpha

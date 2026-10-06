@@ -24,6 +24,8 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - Round brush with size, opacity, hardness, flow and spacing, and a stabilizer that steadies a shaky line
 - Pen pressure for size and for opacity
 - Eraser and Smudge
+- Straight lines: Shift+click draws one from where the last stroke ended, and dragging on carries the stroke forward from there
+- **Mirror**: paint one side and the other is painted with it, across a line down the canvas, across it, or both. The line shows on the canvas and can be put anywhere. For the brush and the eraser
 - **Pixel** mode: hard 1 px pixels with no soft edge, for sprites
 - Opacity caps within a stroke, so going over the same spot twice in one stroke doesn't darken it
 - Strokes blend in linear light, so colours mix cleanly instead of going muddy where they meet
@@ -175,6 +177,8 @@ Whole jobs, step by step, with pictures.
 | Paint | Left-drag or pen |
 | Brush / Eraser / Smudge / Eyedropper | B / E / S / I |
 | Smaller / larger brush | [ / ] |
+| A straight line | Shift+click: from where the last stroke ended to the click |
+| Paint both sides at once | **Mirror** in the tool options: Left / right, Top / bottom or Both. The line is in the middle of the canvas; **More** has where it sits, and **Centre** to put it back |
 | Pick a colour from any tool | Hold Alt and click or drag (with the Clone tool, Alt+click sets what to copy instead) |
 | Hard 1 px pixels (sprites) | Tick **Pixel** in the tool options |
 | Clone | C; hold Alt and click what to copy, then paint it somewhere else |

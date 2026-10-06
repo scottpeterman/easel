@@ -370,6 +370,8 @@ private:
     void createTransformOptions();
     void createFillOptions();
     void createGradientOptions();
+    // Shows the brush's mirror lines on the canvas while they apply.
+    void updateSymmetryGuides();
     void createShapeOptions();
     void syncShapeOptions();
     // Redraws the shape being worked on from its points and the options.

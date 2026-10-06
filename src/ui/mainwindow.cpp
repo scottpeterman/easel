@@ -168,6 +168,7 @@ MainWindow::MainWindow(QWidget *parent)
         statusBar()->showMessage(tr("Clone: hold Alt and click what to copy first, then paint."), 5000);
     });
     connect(m_brush, &BrushTool::cloneSourceChanged, this, &MainWindow::updateCloneTool);
+    connect(m_brush, &BrushTool::symmetryChanged, this, &MainWindow::updateSymmetryGuides);
 
     createDocks();
     createToolBars();
@@ -810,6 +811,22 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
     if (QAction *act = actionFor(tool))
         act->setChecked(true);
     updateCloneTool();
+    updateSymmetryGuides();
+}
+
+void MainWindow::updateSymmetryGuides()
+{
+    QList<QLineF> guides;
+    if (m_view->tool() == m_brush && m_brush->symmetryActive()) {
+        const QRectF canvas(m_brush->bounds());
+        const QPointF axis = m_brush->symmetryAxis();
+        const easeletch::Symmetry mode = m_brush->symmetry();
+        if (mode != easeletch::Symmetry::TopBottom)
+            guides << QLineF(axis.x(), canvas.top(), axis.x(), canvas.bottom());
+        if (mode != easeletch::Symmetry::LeftRight)
+            guides << QLineF(canvas.left(), axis.y(), canvas.right(), axis.y());
+    }
+    m_view->setGuides(guides);
 }
 
 void MainWindow::updateCloneTool()
