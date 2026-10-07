@@ -120,12 +120,15 @@ private slots:
                 ++headings;
             } else {
                 QVERIFY(!item->icon().isNull());
-                QVERIFY(item->sizeHint().height() >= 40); // a target a pen can hit
+                QVERIFY(item->sizeHint().height() >= 32); // a target a pen can hit
                 ++rows;
             }
         }
         QCOMPARE(rows, int(brushPresets().size()));
         QCOMPARE(headings, 4);
+        // The whole list fits a 12" tablet's screen without scrolling.
+        QVERIFY2(list->height() <= 680, qPrintable(QString::number(list->height())));
+        QVERIFY(rowFor(list, QStringLiteral("knife")) && rowFor(list, QStringLiteral("flat")));
         QCOMPARE(list->currentItem(), rowFor(list, defaultBrushPresetId()));
     }
 

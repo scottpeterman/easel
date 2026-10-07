@@ -176,6 +176,169 @@ private slots:
         QCOMPARE(b.diameterAt(0.1), 20.0);
     }
 
+    // --- Shaped tips, bristles, the knife -------------------------------------
+
+    void aFlatTipTurnsWithTheStroke()
+    {
+        BrushSettings b = stick();
+        b.size = 40;
+        b.tip = BrushTip::Flat;
+        b.aspect = 0.25;
+        // Going across, it paints its full width up and down...
+        const TileStore across = strokeWith(b, 1.0);
+        QCOMPARE(pixelToColor(across.pixel(200, 60 - 17)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(across.pixel(200, 60 + 17)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(across.pixel(200, 60 - 23)), QColor(Qt::white));
+        // ... with square ends: the corner of the bar is painted, where a
+        // round brush of the same size would have curved away from it.
+        QCOMPARE(pixelToColor(across.pixel(360, 60 - 16)), QColor(Qt::black));
+        BrushSettings round = stick();
+        round.size = 40;
+        QCOMPARE(pixelToColor(strokeWith(round, 1.0).pixel(360 + 14, 60 - 16)), QColor(Qt::white));
+        // It reaches only its thickness past where the stroke ended.
+        QCOMPARE(pixelToColor(across.pixel(360 + 8, 60)), QColor(Qt::white));
+
+        // Going down, it's as wide side to side.
+        TileStore down(Qt::white);
+        BrushStroke stroke;
+        stroke.begin(&down, kBounds, b, Qt::black, BrushMode::Paint, {{200, 30}, 1.0});
+        for (int y = 34; y <= 170; y += 4)
+            stroke.moveTo({{200, double(y)}, 1.0});
+        stroke.end();
+        QCOMPARE(pixelToColor(down.pixel(200 - 17, 100)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(down.pixel(200 + 17, 100)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(down.pixel(200 - 23, 100)), QColor(Qt::white));
+    }
+
+    void aHeldTipPaintsBroadOneWayAndThinTheOther()
+    {
+        BrushSettings b = stick();
+        b.size = 40;
+        b.tip = BrushTip::Flat;
+        b.aspect = 0.25;
+        b.followStroke = false; // wide side level, whichever way it goes
+        const TileStore across = strokeWith(b, 1.0);
+        // Along its wide side it draws a line only its thickness deep.
+        QCOMPARE(pixelToColor(across.pixel(200, 60)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(across.pixel(200, 60 - 8)), QColor(Qt::white));
+        QCOMPARE(pixelToColor(across.pixel(200, 60 + 8)), QColor(Qt::white));
+
+        b.angle = 90.0; // stood on end: now the same stroke is broad
+        const TileStore upright = strokeWith(b, 1.0);
+        QCOMPARE(pixelToColor(upright.pixel(200, 60 - 17)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(upright.pixel(200, 60 + 17)), QColor(Qt::black));
+    }
+
+    void anOvalTipIsRoundedAtItsEnds()
+    {
+        BrushSettings b = stick();
+        b.size = 40;
+        b.tip = BrushTip::Oval;
+        b.aspect = 0.5;
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Paint, {{200, 100}, 1.0}); // one dab, wide side level
+        stroke.end();
+        QCOMPARE(pixelToColor(s.pixel(200, 100)), QColor(Qt::black));
+        QCOMPARE(pixelToColor(s.pixel(200 + 17, 100)), QColor(Qt::black)); // out along the wide side
+        QCOMPARE(pixelToColor(s.pixel(200, 100 + 8)), QColor(Qt::black));  // half as far across it
+        QCOMPARE(pixelToColor(s.pixel(200, 100 + 12)), QColor(Qt::white));
+        QCOMPARE(pixelToColor(s.pixel(200 + 16, 100 + 8)), QColor(Qt::white)); // no corner
+    }
+
+    void streaksRunAlongTheStrokeAndOpenUpAtALightTouch()
+    {
+        BrushSettings b = stick();
+        b.size = 40;
+        b.tip = BrushTip::Flat;
+        b.aspect = 0.25;
+        b.streaks = 0.85;
+        const QRect body(80, 44, 240, 32);
+        const double solid = body.width() * body.height();
+        const TileStore lightStroke = strokeWith(b, 0.25);
+        const double light = inkIn(lightStroke, body) / solid;
+        const double heavy = inkIn(strokeWith(b, 1.0), body) / solid;
+        QVERIFY2(light < 0.6 && light > 0.05, qPrintable(QString::number(light)));
+        QVERIFY2(heavy > light + 0.2, qPrintable(QString::number(heavy)));
+
+        // A streak is a line along the stroke: a row across the stroke's
+        // width is much the same from end to end, and rows differ.
+        double lowRow = 1.0, highRow = 0.0;
+        for (int y = 46; y <= 74; ++y) {
+            const double row = inkIn(lightStroke, QRect(80, y, 240, 1)) / 240.0;
+            const double left = inkIn(lightStroke, QRect(80, y, 120, 1)) / 120.0;
+            const double right = inkIn(lightStroke, QRect(200, y, 120, 1)) / 120.0;
+            QVERIFY2(qAbs(left - right) < 0.08, qPrintable(QString::number(y)));
+            lowRow = qMin(lowRow, row);
+            highRow = qMax(highRow, row);
+        }
+        QVERIFY2(highRow - lowRow > 0.5, qPrintable(QString::number(highRow - lowRow)));
+
+        // No streaks set, no streaks.
+        b.streaks = 0.0;
+        QVERIFY(qAbs(inkIn(strokeWith(b, 0.25), body) / solid - 1.0) < 1e-6);
+    }
+
+    void aKnifeLaysNoPaintAndPushesWhatIsThere()
+    {
+        const BrushSettings knife = brushPreset(QStringLiteral("knife"))->settings;
+        // On clean paper: nothing.
+        const TileStore clean = strokeWith(knife, 1.0);
+        QCOMPARE(inkIn(clean, kBounds), 0.0);
+
+        // Across a painted bar: the paint is pulled along with it.
+        TileStore s(Qt::white);
+        s.fillRect(QRect(100, 30, 30, 60), QColor(Qt::black));
+        const double before = inkIn(s, QRect(140, 40, 60, 40));
+        QCOMPARE(before, 0.0);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, knife, Qt::red, BrushMode::Paint, {{60, 60}, 1.0});
+        for (int x = 64; x <= 300; x += 4)
+            stroke.moveTo({{double(x), 60}, 1.0});
+        stroke.end();
+        QVERIFY(inkIn(s, QRect(140, 40, 60, 40)) > 100.0);
+        // None of the brush's own colour went down.
+        for (int x = 60; x <= 300; x += 5) {
+            const QColor c = pixelToColor(s.pixel(x, 60));
+            QVERIFY2(c.red() - c.blue() < 3, qPrintable(QString::number(x)));
+        }
+        // And only where the knife went.
+        QCOMPARE(pixelToColor(s.pixel(115, 32)), QColor(Qt::black));
+    }
+
+    void aShapedTipMirrors()
+    {
+        BrushSettings b = brushPreset(QStringLiteral("flat"))->settings;
+        // A slanting stroke, so the tip is at an angle that has to be mirrored too.
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.setSymmetry(Symmetry::Quarters, QPointF(200, 100));
+        stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Paint, {{40, 20}, 1.0});
+        for (int i = 1; i <= 40; ++i)
+            stroke.moveTo({{40 + i * 3.5, 20 + i * 1.5}, 1.0});
+        stroke.end();
+        QVERIFY(inkIn(s, QRect(0, 0, 200, 100)) > 500.0);
+        for (int y = 0; y < 100; y += 2)
+            for (int x = 0; x < 200; x += 3) {
+                const QColor c = pixelToColor(s.pixel(x, y));
+                QCOMPARE(pixelToColor(s.pixel(399 - x, y)), c);
+                QCOMPARE(pixelToColor(s.pixel(x, 199 - y)), c);
+                QCOMPARE(pixelToColor(s.pixel(399 - x, 199 - y)), c);
+            }
+    }
+
+    void aClickWithAShapedTipStillLeavesAMark()
+    {
+        BrushSettings b = brushPreset(QStringLiteral("dry"))->settings;
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Paint, {{200, 100}, 1.0});
+        QCOMPARE(stroke.dabCount(), 0); // waiting to see which way it goes
+        const auto touched = stroke.end();
+        QVERIFY(!touched.isEmpty());
+        QVERIFY(inkIn(s, QRect(170, 80, 60, 40)) > 20.0);
+    }
+
     void everyPresetDrawsAPreview()
     {
         const QSize size(160, 40);
@@ -202,8 +365,19 @@ private slots:
         }
         painter.end();
         const QString dir = qEnvironmentVariable("EASELETCH_TEST_SHOTS");
-        if (!dir.isEmpty())
+        if (!dir.isEmpty()) {
             sheet.save(dir + QStringLiteral("/brush-previews.png"));
+            // And at something like their real size.
+            const QSize big(420, 110);
+            QImage large(big.width(), int(brushPresets().size()) * (big.height() + 2), QImage::Format_RGB32);
+            large.fill(Qt::white);
+            QPainter p(&large);
+            int at = 0;
+            for (const BrushPreset &preset : brushPresets())
+                p.drawImage(0, at++ * (big.height() + 2), brushPreview(preset.settings, big));
+            p.end();
+            large.save(dir + QStringLiteral("/brush-previews-large.png"));
+        }
     }
 };
 

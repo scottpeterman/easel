@@ -96,6 +96,34 @@ const QList<BrushPreset> &brushPresets()
 
         // Paint: smooth.
         make("round", QStringLiteral("Round brush"), paint, [](BrushSettings &) {}),
+        // Shaped tips that turn with the stroke, and bristles that show.
+        make("flat", QStringLiteral("Flat brush"), paint,
+             [](BrushSettings &b) {
+                 b.size = 40, b.hardness = 0.9, b.opacity = 1.0, b.flow = 0.85, b.spacing = 0.15;
+                 b.pressureSize = true, b.minSize = 0.6, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.3, b.streaks = 0.45;
+             }),
+        make("filbert", QStringLiteral("Filbert"), paint,
+             [](BrushSettings &b) {
+                 b.size = 36, b.hardness = 0.6, b.opacity = 1.0, b.flow = 0.8, b.spacing = 0.15;
+                 b.pressureSize = true, b.minSize = 0.5, b.pressureOpacity = false;
+                 b.tip = BrushTip::Oval, b.aspect = 0.45, b.streaks = 0.25;
+             }),
+        make("dry", QStringLiteral("Dry brush"), paint,
+             [](BrushSettings &b) {
+                 // Not enough paint to go round: bare streaks, and more of
+                 // them the lighter the touch.
+                 b.size = 44, b.hardness = 0.9, b.opacity = 0.95, b.flow = 0.85, b.spacing = 0.15;
+                 b.pressureSize = true, b.minSize = 0.7, b.pressureOpacity = true;
+                 b.tip = BrushTip::Flat, b.aspect = 0.25, b.streaks = 0.85, b.grain = 0.25, b.grainSize = 2.0;
+             }),
+        make("knife", QStringLiteral("Palette knife"), paint,
+             [](BrushSettings &b) {
+                 // Lays nothing down: it pushes the paint that's there.
+                 b.size = 50, b.hardness = 1.0, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.2;
+                 b.pressureSize = false, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.12, b.smear = 0.85;
+             }),
         make("airbrush", QStringLiteral("Airbrush"), paint,
              [](BrushSettings &b) {
                  b.size = 80, b.hardness = 0.0, b.opacity = 1.0, b.flow = 0.08, b.spacing = 0.06;
@@ -136,6 +164,19 @@ QImage brushPreview(const BrushSettings &settings, const QSize &size, const QCol
     TileStore store(paper);
     const QRect bounds(QPoint(0, 0), size);
     BrushStroke stroke;
+    if (b.smear > 0.0) {
+        // A knife shows nothing on bare paper: give it bands of paint to push.
+        BrushSettings band;
+        band.size = std::max(3.0, size.width() / 14.0);
+        band.hardness = 1.0;
+        band.pressureSize = false;
+        for (int i = 1; i <= 4; ++i) {
+            const double x = size.width() * (i / 5.0);
+            stroke.begin(&store, bounds, band, ink, BrushMode::Paint, {{x, 2.0}, 1.0});
+            stroke.moveTo({{x, size.height() - 2.0}, 1.0});
+            stroke.end();
+        }
+    }
     stroke.begin(&store, bounds, b, ink, BrushMode::Paint, sample(0.0));
     const int steps = std::max(16, size.width());
     for (int i = 1; i <= steps; ++i)

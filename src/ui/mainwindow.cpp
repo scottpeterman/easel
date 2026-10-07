@@ -829,9 +829,9 @@ QIcon brushIcon(const easeletch::BrushSettings &settings, const QSize &size, con
 
 void MainWindow::createBrushPresets()
 {
-    static constexpr QSize kPreview(132, 34);
-    static constexpr int kRowHeight = 42;    // a comfortable target for a pen or a finger
-    static constexpr int kHeadingHeight = 24;
+    static constexpr QSize kPreview(132, 28);
+    static constexpr int kRowHeight = 34;    // a target a pen can hit, and all of them fit a 12" screen
+    static constexpr int kHeadingHeight = 20;
 
     m_brushMenu = new QMenu(this);
     m_brushMenu->setObjectName(QStringLiteral("brushPresetMenu"));
@@ -868,7 +868,7 @@ void MainWindow::createBrushPresets()
     m_brushList->setFixedWidth(kPreview.width() + width + 28 + scrollBar);
     // All of it at once where the screen is tall enough; scrolling where not.
     const QScreen *display = screen() ? screen() : QGuiApplication::primaryScreen();
-    const int room = display ? display->availableGeometry().height() * 3 / 4 : height;
+    const int room = display ? display->availableGeometry().height() * 9 / 10 : height;
     m_brushList->setFixedHeight(qMin(height + 4, qMax(room, 4 * kRowHeight)));
 
     auto *holder = new QWidgetAction(m_brushMenu);

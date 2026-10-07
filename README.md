@@ -21,8 +21,10 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 ### Painting
 
-- **Ready-made brushes**: the Brush button is a list of pencils (HB, 2B, 6B, mechanical), ink (fineliner, tech pen, brush pen, marker), charcoal and chalk, and paint (round brush, airbrush), each shown as a sample of its stroke
+- **Ready-made brushes**: the Brush button is a list of pencils (HB, 2B, 6B, mechanical), ink (fineliner, tech pen, brush pen, marker), charcoal and chalk, and paint (round, flat, filbert, dry brush, palette knife, airbrush), each shown as a sample of its stroke
 - Pencil and charcoal have **grain**: a light touch only catches the high points of the paper, and pressing harder fills it in
+- Flat and filbert brushes have a shaped tip that turns with the stroke, and bristles that leave streaks; the dry brush runs out of paint at a light touch
+- The **palette knife** lays no paint: it pushes what is already there
 - Every brush can be changed from there: size, opacity, hardness, flow, spacing and grain, and a stabilizer that steadies a shaky line
 - Pen pressure for size and for opacity
 - Eraser and Smudge

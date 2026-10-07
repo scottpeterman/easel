@@ -18,6 +18,11 @@
 
 namespace easeletch {
 
+// The shape of the brush's tip. Oval and Flat are as wide as the size and
+// BrushSettings::aspect times that thick: an oval for a filbert, a
+// square-ended bar for a flat brush or a knife.
+enum class BrushTip { Round, Oval, Flat };
+
 struct BrushSettings {
     double size = 24.0;      // diameter in canvas pixels at full pressure
     double hardness = 0.8;   // 0 = soft falloff from the centre, 1 = hard edge
@@ -41,6 +46,21 @@ struct BrushSettings {
     // Each dab lands up to this fraction of the diameter off the line, for the
     // ragged edge of a crumbling stick.
     double jitter = 0.0;
+
+    BrushTip tip = BrushTip::Round;
+    double aspect = 1.0; // Oval and Flat: how thick the tip is for its width
+    // Oval and Flat: the tip turns to stay square to the way the stroke is
+    // going, so it always paints at its full width, as a brush drawn along
+    // does. Off, it's held at `angle` (degrees, of its wide side) and paints
+    // broad one way and thin the other, as a pen nib does.
+    bool followStroke = true;
+    double angle = 0.0;
+    // Bristles: lines of more and less paint running along the stroke. 0 is
+    // an even coat; towards 1, and with a lighter touch, bare gaps open up.
+    double streaks = 0.0;
+    // Brush mode only: above 0 the stroke lays no paint. It drags what is
+    // already there, this strongly, as a palette knife does.
+    double smear = 0.0;
 
     static constexpr double MinSize = 1.0;
     static constexpr double MaxSize = 1000.0;
@@ -144,8 +164,13 @@ public:
 
 private:
     void paintDabs(const QList<StrokeSample> &dabs);
-    void paintDab(const StrokeSample &dab);
-    void smudgeDab(const StrokeSample &dab);
+    void paintOne(const StrokeSample &dab, const QPointF &wide);
+    void paintDab(const StrokeSample &dab, const QPointF &wide);
+    void smudgeDab(const StrokeSample &dab, const QPointF &wide);
+    bool smears() const { return m_mode == BrushMode::Smudge || (m_mode == BrushMode::Paint && m_settings.smear > 0.0); }
+    // Coverage of the tip at an offset from the dab's centre. wide: the unit
+    // vector along the tip's wide side. radius: half its width.
+    float tipCoverage(float dx, float dy, double radius, const QPointF &wide) const;
     void finishHeal();
     float coverageAt(double dist, double radius) const;
 
@@ -166,6 +191,15 @@ private:
     QSet<TileCoord> m_touched;
     Selection m_clip;
     int m_dabCount = 0;
+    // Which way the stroke is going, for tips that turn with it and for
+    // bristle streaks. Unknown until it has moved: the first dab waits for it.
+    bool m_needsHeading = false;
+    bool m_hasHeading = false;
+    QPointF m_heading;
+    QPointF m_headingFrom;
+    bool m_hasPending = false;
+    StrokeSample m_pending;
+    quint32 m_strokeSeed = 0; // each stroke's bristles are its own
     quint32 m_jitterStep = 0; // one per dab on the line, so a mirrored stroke scatters the same way
 
     // Smudge: colour picked up under the brush, one premultiplied RGBA per

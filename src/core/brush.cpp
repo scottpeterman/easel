@@ -25,7 +25,9 @@ double BrushSettings::dabStrengthAt(double pressure) const
 
 double BrushSettings::spacingAt(double pressure) const
 {
-    const double step = std::max(0.5, std::clamp(spacing, 0.01, 2.0) * diameterAt(pressure));
+    // A thin tip is spaced by its thickness, or it would leave gaps going sideways.
+    const double thick = tip == BrushTip::Round ? 1.0 : std::clamp(aspect, 0.05, 1.0);
+    const double step = std::max(0.5, std::clamp(spacing, 0.01, 2.0) * diameterAt(pressure) * thick);
     // Pixel mode snaps dabs to pixels: step at most a pixel so lines stay unbroken.
     return pixel ? std::min(step, 1.0) : step;
 }
@@ -190,6 +192,12 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     m_mask.reserve(8192);
     m_dabCount = 0;
     m_jitterStep = 0;
+    const bool shaped = settings.tip != BrushTip::Round && !settings.pixel;
+    m_needsHeading = !settings.pixel && ((shaped && settings.followStroke) || settings.streaks > 0.0);
+    m_hasHeading = false;
+    m_hasPending = false;
+    m_headingFrom = first.pos;
+    m_strokeSeed = hash2(int(std::lround(first.pos.x() * 16.0)), int(std::lround(first.pos.y() * 16.0)));
 
     const QColor c = color.toRgb();
     m_color[0] = srgbToLinear(float(c.redF()));
@@ -224,6 +232,12 @@ QHash<TileCoord, QImage> BrushStroke::end()
     for (const StrokeSample &s : m_stabilizer.flush())
         m_spacer.moveTo(s, m_settings, dabs);
     paintDabs(dabs);
+    if (m_hasPending) {
+        // A click that never moved: there's no direction to turn to.
+        m_hasPending = false;
+        const double a = m_settings.angle * 3.141592653589793 / 180.0;
+        paintOne(m_pending, QPointF(std::cos(a), std::sin(a)));
+    }
     if (m_mode == BrushMode::Heal)
         finishHeal();
 
@@ -250,14 +264,38 @@ QPointF dabCentre(const QPointF &pos, bool pixel)
 
 void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
 {
-    const bool mirrored = m_symmetry != Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
-    const bool acrossX = m_symmetry == Symmetry::LeftRight || m_symmetry == Symmetry::Quarters;
-    const bool acrossY = m_symmetry == Symmetry::TopBottom || m_symmetry == Symmetry::Quarters;
     const double jitter = m_settings.pixel ? 0.0 : std::clamp(m_settings.jitter, 0.0, 1.0);
+    const double fixed = m_settings.angle * 3.141592653589793 / 180.0;
+    const QPointF held(std::cos(fixed), std::sin(fixed)); // the wide side, when it doesn't turn
+    const bool turns = m_needsHeading && m_settings.tip != BrushTip::Round && m_settings.followStroke;
+
     for (StrokeSample d : dabs) {
-        if (m_mode == BrushMode::Smudge) {
-            smudgeDab(d);
-            continue;
+        if (m_needsHeading) {
+            // The way the stroke is going, steadied over a few dabs so the
+            // tip turns through a corner rather than snapping round it.
+            const QPointF step = d.pos - m_headingFrom;
+            const double length = std::hypot(step.x(), step.y());
+            if (length > 1e-6) {
+                const QPointF unit = step / length;
+                QPointF h = m_hasHeading ? m_heading * 0.6 + unit * 0.4 : unit;
+                const double n = std::hypot(h.x(), h.y());
+                m_heading = n > 1e-6 ? h / n : unit;
+                m_hasHeading = true;
+                m_headingFrom = d.pos;
+            }
+            if (!m_hasHeading) {
+                // Nowhere yet: keep the dab until the stroke shows its direction.
+                m_pending = d;
+                m_hasPending = true;
+                continue;
+            }
+        }
+        // The tip's wide side: across the stroke if it turns with it.
+        const QPointF across(-m_heading.y(), m_heading.x());
+        const QPointF wide = turns ? across : (m_needsHeading && m_settings.tip == BrushTip::Round) ? across : held;
+        if (m_hasPending) {
+            m_hasPending = false;
+            paintOne(m_pending, wide);
         }
         if (jitter > 0.0) {
             // Off the line by a repeatable amount: the same stroke scatters the
@@ -268,20 +306,73 @@ void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
             const double reach = unit(hash2(int(h), 7)) * jitter * m_settings.diameterAt(d.pressure);
             d.pos += QPointF(std::cos(angle), std::sin(angle)) * reach;
         }
-        paintDab(d);
-        if (!mirrored)
-            continue;
-        // The dab's centre is mirrored as it's painted (on its pixel, in
-        // pixel mode), so the two sides match pixel for pixel.
-        const QPointF c = dabCentre(d.pos, m_settings.pixel);
-        const QPointF flipped(2.0 * m_axis.x() - c.x(), 2.0 * m_axis.y() - c.y());
-        if (acrossX)
-            paintDab({QPointF(flipped.x(), c.y()), d.pressure});
-        if (acrossY)
-            paintDab({QPointF(c.x(), flipped.y()), d.pressure});
-        if (acrossX && acrossY)
-            paintDab({flipped, d.pressure});
+        paintOne(d, wide);
     }
+}
+
+void BrushStroke::paintOne(const StrokeSample &d, const QPointF &wide)
+{
+    if (smears()) {
+        smudgeDab(d, wide);
+        return;
+    }
+    paintDab(d, wide);
+    const bool mirrored = m_symmetry != Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
+    if (!mirrored)
+        return;
+    const bool acrossX = m_symmetry == Symmetry::LeftRight || m_symmetry == Symmetry::Quarters;
+    const bool acrossY = m_symmetry == Symmetry::TopBottom || m_symmetry == Symmetry::Quarters;
+    // The dab's centre is mirrored as it's painted (on its pixel, in
+    // pixel mode), so the two sides match pixel for pixel. Its tip is
+    // mirrored with it.
+    const QPointF c = dabCentre(d.pos, m_settings.pixel);
+    const QPointF flipped(2.0 * m_axis.x() - c.x(), 2.0 * m_axis.y() - c.y());
+    if (acrossX)
+        paintDab({QPointF(flipped.x(), c.y()), d.pressure}, QPointF(-wide.x(), wide.y()));
+    if (acrossY)
+        paintDab({QPointF(c.x(), flipped.y()), d.pressure}, QPointF(wide.x(), -wide.y()));
+    if (acrossX && acrossY)
+        paintDab({flipped, d.pressure}, QPointF(-wide.x(), -wide.y()));
+}
+
+float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF &wide) const
+{
+    if (m_settings.pixel || m_settings.tip == BrushTip::Round)
+        return coverageAt(std::sqrt(dx * dx + dy * dy), radius);
+
+    // In the tip's own terms: u along its wide side, v across it.
+    const float wx = float(wide.x()), wy = float(wide.y());
+    const float u = std::abs(dx * wx + dy * wy), v = std::abs(-dx * wy + dy * wx);
+    const float a = float(radius);
+    const float b = std::max(0.5f, a * float(std::clamp(m_settings.aspect, 0.05, 1.0)));
+    const float h = float(std::clamp(m_settings.hardness, 0.0, 1.0));
+
+    float outside; // distance beyond the tip's edge, in pixels (negative inside)
+    float depth;   // 0 at the centre, 1 at the edge
+    if (m_settings.tip == BrushTip::Flat) {
+        // A bar with its corners a little rounded.
+        const float r = b * 0.35f;
+        const float qx = u - (a - r), qy = v - (b - r);
+        const float ox = std::max(qx, 0.0f), oy = std::max(qy, 0.0f);
+        outside = std::sqrt(ox * ox + oy * oy) + std::min(std::max(qx, qy), 0.0f) - r;
+        depth = std::max(u / a, v / b);
+    } else {
+        const float k = std::sqrt((u / a) * (u / a) + (v / b) * (v / b));
+        if (k <= 1e-6f)
+            return 1.0f;
+        // How far a step of k is in pixels, here.
+        const float gu = u / (a * a), gv = v / (b * b);
+        const float slope = std::sqrt(gu * gu + gv * gv) / k;
+        outside = (k - 1.0f) / std::max(slope, 1e-6f);
+        depth = k;
+    }
+    const float rim = std::clamp(0.5f - outside, 0.0f, 1.0f); // antialiased over a pixel
+    if (rim <= 0.0f)
+        return 0.0f;
+    if (h >= 1.0f || depth <= h)
+        return rim;
+    const float t = std::clamp((depth - h) / std::max(1.0f - h, 1e-6f), 0.0f, 1.0f);
+    return std::min(rim, 1.0f - t * t * (3.0f - 2.0f * t));
 }
 
 float BrushStroke::coverageAt(double dist, double radius) const
@@ -291,7 +382,7 @@ float BrushStroke::coverageAt(double dist, double radius) const
     return dabCoverage(dist, radius, m_settings.hardness);
 }
 
-void BrushStroke::paintDab(const StrokeSample &dab)
+void BrushStroke::paintDab(const StrokeSample &dab, const QPointF &wide)
 {
     constexpr int N = TileStore::TileSize;
     const double radius = std::max(0.5, m_settings.diameterAt(dab.pressure) * 0.5);
@@ -316,6 +407,14 @@ void BrushStroke::paintDab(const StrokeSample &dab)
     const float grain = m_settings.pixel ? 0.0f : float(std::clamp(m_settings.grain, 0.0, 1.0));
     const float toothNeeded = grain * (0.85f - 0.5f * float(std::clamp(dab.pressure, 0.0, 1.0)));
     constexpr float kToothEdge = 0.12f; // how gradually a slope takes colour
+    // Bristles: where across the tip a pixel is decides how much paint its
+    // bristle carries. The pattern is the stroke's, so it runs along it.
+    const float streaks = m_settings.pixel ? 0.0f : float(std::clamp(m_settings.streaks, 0.0, 1.0));
+    // How much paint a bristle needs to leave a mark: next to none pressed
+    // hard, most of a load at a light touch.
+    const float bristleNeeded = streaks * (0.95f - 0.75f * float(std::clamp(dab.pressure, 0.0, 1.0)));
+    const float wx = float(wide.x()), wy = float(wide.y());
+    const float bristle = float(std::clamp(m_settings.size / 14.0, 1.2, 4.0)); // across one, in pixels
 
     for (const TileCoord c : TileStore::tilesIntersecting(box)) {
         const QRect tr = TileStore::tileRect(c);
@@ -336,16 +435,29 @@ void BrushStroke::paintDab(const StrokeSample &dab)
             const int row = (y - tr.top()) * N;
             for (int x = part.left(); x <= part.right(); ++x) {
                 const float dx = float(x + 0.5 - cx);
-                const float dist = std::sqrt(dx * dx + dy * dy);
-                if (dist >= reach)
+                if (dx * dx + dy * dy >= reach * reach)
                     continue;
                 // A feathered selection lets that much of the stroke through.
                 const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
                 if (clip <= 0.0f)
                     continue;
-                float a = coverageAt(dist, radius) * strength;
+                float a = tipCoverage(dx, dy, radius, wide) * strength;
                 if (a <= 0.0f)
                     continue;
+                if (streaks > 0.0f) {
+                    const float along = (dx * wx + dy * wy) / bristle;
+                    const float fl = std::floor(along);
+                    float f = along - fl;
+                    f = f * f * (3.0f - 2.0f * f);
+                    const float p0 = unit(hash2(int(fl), int(m_strokeSeed & 0xFFFF)));
+                    const float p1 = unit(hash2(int(fl) + 1, int(m_strokeSeed & 0xFFFF)));
+                    const float paint = p0 + (p1 - p0) * f; // what this bristle holds
+                    const float t = std::clamp((paint - bristleNeeded) / 0.3f + 1.0f, 0.0f, 1.0f);
+                    // Thin bristles leave less, down to nothing; none leaves more.
+                    a *= (1.0f - streaks * 0.35f * (1.0f - paint)) * (t * t * (3.0f - 2.0f * t));
+                    if (a <= 0.0f)
+                        continue;
+                }
                 if (grain > 0.0f) {
                     const float t = std::clamp(
                         (paperTooth(x, y, m_settings.grainSize) - (toothNeeded - kToothEdge)) / (2.0f * kToothEdge),
@@ -424,7 +536,7 @@ void BrushStroke::finishHeal()
     healArea(*m_target, m_canvas, area, coverage);
 }
 
-void BrushStroke::smudgeDab(const StrokeSample &dab)
+void BrushStroke::smudgeDab(const StrokeSample &dab, const QPointF &wide)
 {
     // Each dab blends the colour carried from earlier dabs into the canvas,
     // then picks up some of what it passed over. Strength (the opacity setting)
@@ -432,7 +544,9 @@ void BrushStroke::smudgeDab(const StrokeSample &dab)
     constexpr int N = TileStore::TileSize;
     const double radius = std::min(std::max(0.5, m_settings.diameterAt(dab.pressure) * 0.5),
                                    double(m_carryHalf - 1));
-    const float strength = float(std::clamp(m_settings.opacity, 0.0, 1.0))
+    // A knife (the brush with smear) drags by its smear; Smudge by its opacity.
+    const double drag = m_mode == BrushMode::Smudge ? m_settings.opacity : m_settings.smear;
+    const float strength = float(std::clamp(drag, 0.0, 1.0))
                            * float(m_settings.pressureOpacity ? std::clamp(dab.pressure, 0.0, 1.0) : 1.0);
     ++m_dabCount;
 
@@ -457,7 +571,7 @@ void BrushStroke::smudgeDab(const StrokeSample &dab)
                 if (clip <= 0.0f)
                     continue;
                 const double dx = x + 0.5 - centre.x();
-                const float a = coverageAt(std::sqrt(dx * dx + dy * dy), radius);
+                const float a = tipCoverage(float(dx), float(dy), radius, wide);
                 if (a <= 0.0f)
                     continue;
 
