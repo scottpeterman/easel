@@ -6,6 +6,11 @@
 #include "mainwindow.h"
 #include "selecttools.h"
 
+#include <QApplication>
+#include <QContextMenuEvent>
+#include <QInputDialog>
+#include <QMenu>
+#include <QTimer>
 #include <QSignalSpy>
 #include <QStatusBar>
 #include <QTabBar>
@@ -217,6 +222,43 @@ private slots:
         QVERIFY(w.setCurrentPage(1));
         QCOMPARE(shown(w, 100, 100), QColor(Qt::red)); // placed where it was when the page was left
         QCOMPARE(w.history().undoLabel(), QStringLiteral("Paste"));
+    }
+
+    void theTabsAnswerADoubleClickAndARightClick()
+    {
+        MainWindow w;
+        setupWindow(w);
+        QTabBar *tabs = w.pageTabs();
+        const QPoint onTab = tabs->tabRect(0).center();
+
+        // Double-click: asks for a new name.
+        bool asked = false;
+        QTimer::singleShot(300, &w, [&] {
+            if (auto *dialog = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                asked = true;
+                dialog->setTextValue(QStringLiteral("Studies"));
+                dialog->accept();
+            }
+        });
+        QTest::mouseDClick(tabs, Qt::LeftButton, Qt::NoModifier, onTab);
+        QTRY_VERIFY(asked);
+        QCOMPARE(w.pageName(0), QStringLiteral("Studies"));
+
+        // Right-click: the page's menu.
+        QStringList offered;
+        QTimer::singleShot(300, &w, [&] {
+            if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+                for (QAction *a : menu->actions())
+                    if (!a->isSeparator())
+                        offered << a->text();
+                menu->close();
+            }
+        });
+        QContextMenuEvent rightClick(QContextMenuEvent::Mouse, onTab, tabs->mapToGlobal(onTab));
+        QApplication::sendEvent(tabs, &rightClick);
+        QTRY_VERIFY(!offered.isEmpty());
+        QVERIFY(offered.contains(QStringLiteral("Rename...")));
+        QVERIFY(offered.contains(QStringLiteral("Move Left")));
     }
 
     void duplicateRenameMoveDelete()
