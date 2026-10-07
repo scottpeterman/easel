@@ -2,7 +2,12 @@
 #include "brushtool.h"
 #include "canvasview.h"
 #include "mainwindow.h"
+#include "newdocumentdialog.h"
+#include "paper.h"
 
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QPushButton>
 #include <QSettings>
 #include <QTest>
 
@@ -199,6 +204,94 @@ private slots:
         QCOMPARE(now.at(2), QStringLiteral("Color"));
         QVERIFY(!now.contains(QStringLiteral("Paper")));
         QCOMPARE(w.layers().children(0).last(), drawn);
+    }
+
+    // --- Paper ----------------------------------------------------------------
+
+    void aPaperDocumentIsALockedSheetWithALayerToDrawOn()
+    {
+        MainWindow w;
+        w.resize(1221, 718);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        w.newDocument(QSize(400, 300), Qt::white, QStringLiteral("parchment"));
+        w.canvasView()->setZoomCentered(1.0);
+
+        QCOMPARE(names(w), (QStringList{QStringLiteral("Paper"), QStringLiteral("Layer 1")}));
+        const Layer *paper = w.layers().layer(w.layers().children(0).first());
+        QVERIFY(paper->locked);
+        QCOMPARE(w.layers().active()->name, QStringLiteral("Layer 1"));
+        QVERIFY(!w.isModified()); // a fresh sheet isn't unsaved work
+
+        // The picture is the paper: its colour, and not one flat colour.
+        const PaperStyle &style = *paperStyle(QStringLiteral("parchment"));
+        QVERIFY(near(shown(w, 120, 80), paperColorAt(style, 120, 80), 2));
+        QVERIFY(near(shown(w, 300, 220), paperColorAt(style, 300, 220), 2));
+        const QColor bare = shown(w, 200, 150);
+
+        // Drawing goes on the layer over it, and erasing takes the drawing
+        // off without taking the paper with it.
+        inkPen(w, Qt::black, 20);
+        stroke(w, {60, 150}, {340, 150});
+        QVERIFY(near(shown(w, 200, 150), Qt::black));
+        QVERIFY(near(pixelToColor(paper->store.pixel(200, 150)), bare, 2));
+        w.brushTool()->setMode(BrushMode::Erase);
+        BrushSettings eraser = w.brushTool()->settings();
+        eraser.size = 60;
+        eraser.hardness = 1.0;
+        w.brushTool()->setSettings(eraser);
+        stroke(w, {60, 150}, {340, 150});
+        QVERIFY(near(shown(w, 200, 150), bare, 2));
+
+        // The sketch commands sit over it like any other.
+        QVERIFY(w.addSketchLayer());
+        QCOMPARE(names(w), (QStringList{QStringLiteral("Paper"), QStringLiteral("Layer 1"), QStringLiteral("Sketch")}));
+    }
+
+    void aNewPageCanBeADifferentPaper()
+    {
+        MainWindow w;
+        setupWindow(w);
+        QVERIFY(w.addPage(QSize(300, 200), Qt::white, QStringLiteral("kraft")));
+        QCOMPARE(w.pageCount(), 2);
+        QCOMPARE(w.currentPage(), 1);
+        QCOMPARE(names(w), (QStringList{QStringLiteral("Paper"), QStringLiteral("Layer 1")}));
+        QVERIFY(near(shown(w, 150, 100), paperStyle(QStringLiteral("kraft"))->base, 40));
+        QVERIFY(shown(w, 150, 100).lightness() < 200);
+        // The first page is as it was; an unknown paper is a plain background.
+        QVERIFY(w.setCurrentPage(0));
+        QCOMPARE(names(w), QStringList{QStringLiteral("Background")});
+        QVERIFY(w.addPage(QSize(300, 200), Qt::white, QStringLiteral("no-such-paper")));
+        QCOMPARE(names(w), QStringList{QStringLiteral("Background")});
+    }
+
+    void theDialogOffersThePapersAndRemembersTheLast()
+    {
+        {
+            NewDocumentDialog dialog(QSize(800, 600));
+            auto *box = dialog.findChild<QComboBox *>(QStringLiteral("newBackground"));
+            QVERIFY(box);
+            QCOMPARE(box->currentText(), QStringLiteral("White")); // nothing remembered yet
+            QVERIFY(dialog.paper().isEmpty());
+            QCOMPARE(dialog.background(), QColor(Qt::white));
+            for (const PaperStyle &p : paperStyles()) {
+                const int row = box->findText(p.name + QStringLiteral(" paper"));
+                QVERIFY2(row >= 0, qPrintable(p.name));
+                QVERIFY(!box->itemIcon(row).isNull());
+            }
+            box->setCurrentIndex(box->findText(QStringLiteral("Sepia paper")));
+            QCOMPARE(dialog.paper(), QStringLiteral("sepia"));
+            box->setCurrentIndex(1);
+            QVERIFY(dialog.paper().isEmpty());
+            QCOMPARE(dialog.background().alpha(), 0);
+            box->setCurrentIndex(box->findText(QStringLiteral("Cotton paper")));
+            auto *buttons = dialog.findChild<QDialogButtonBox *>();
+            QVERIFY(buttons);
+            buttons->button(QDialogButtonBox::Ok)->click();
+            QCOMPARE(dialog.result(), int(QDialog::Accepted));
+        }
+        NewDocumentDialog again(QSize(800, 600));
+        QCOMPARE(again.paper(), QStringLiteral("cotton"));
     }
 
     void aGroupCannotBeASketch()

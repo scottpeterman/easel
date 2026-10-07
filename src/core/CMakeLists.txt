@@ -13,6 +13,8 @@ add_library(easeletch_core STATIC
     brush.cpp
     brushpresets.h
     brushpresets.cpp
+    paper.h
+    paper.cpp
     layerstack.h
     layerstack.cpp
     history.h

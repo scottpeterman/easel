@@ -84,6 +84,20 @@ float bumps(int x, int y, float scale, int salt)
 
 } // namespace
 
+float smoothNoise(int x, int y, double scaleX, double scaleY, int salt)
+{
+    const float fx = (float(x) + 0.5f) / float(std::max(scaleX, 1.0));
+    const float fy = (float(y) + 0.5f) / float(std::max(scaleY, 1.0));
+    const float flx = std::floor(fx), fly = std::floor(fy);
+    const int ix = int(flx) + salt * 7919, iy = int(fly) - salt * 104729;
+    float tx = fx - flx, ty = fy - fly;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    ty = ty * ty * (3.0f - 2.0f * ty);
+    const float a = unit(hash2(ix, iy)), b = unit(hash2(ix + 1, iy));
+    const float c = unit(hash2(ix, iy + 1)), d = unit(hash2(ix + 1, iy + 1));
+    return (a + (b - a) * tx) * (1.0f - ty) + (c + (d - c) * tx) * ty;
+}
+
 float paperTooth(int x, int y, double size)
 {
     // Broad bumps with finer ones on them.

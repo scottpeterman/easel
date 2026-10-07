@@ -94,6 +94,9 @@ float dabCoverage(double distance, double radius, double hardness);
 // point). It belongs to the canvas, not the stroke: going over the same place
 // again finds the same bumps, as it does on paper. size: across one bump.
 float paperTooth(int x, int y, double size);
+// Smooth noise, 0..1, with bumps scaleX by scaleY pixels across. salt picks
+// one of any number of unrelated patterns. Fixed to the canvas, as the tooth is.
+float smoothNoise(int x, int y, double scaleX, double scaleY, int salt);
 
 // Moving average over the last few input samples. Strength 0 passes input
 // straight through; 1 averages over 32 samples.

@@ -129,6 +129,8 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - One document holds any number of drawings, as tabs under the canvas
 - Each page has its own canvas size, layers, undo history and view
 - Copy on one page and paste on another; duplicate a page to try a variation
+- Rename a page by double-clicking its tab, reorder by dragging it; right-click a tab for the rest
+- **Papers**: a new page or image can be a sheet of cotton, cold press, cream, parchment, sepia, kraft, grey or black paper, each with its own surface. The paper is a locked layer under the drawing, so erasing never rubs it away, and it's part of what's exported
 
 ### Sprite work
 

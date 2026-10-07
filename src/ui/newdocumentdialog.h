@@ -18,6 +18,8 @@ public:
 
     QSize canvasSize() const;
     QColor background() const;
+    // The paper chosen (see paper.h), or empty for plain white or transparent.
+    QString paper() const;
 
 private:
     QSpinBox *m_width = nullptr;

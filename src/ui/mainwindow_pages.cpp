@@ -154,12 +154,11 @@ bool MainWindow::insertPage(std::unique_ptr<easeletch::LayerStack> stack, const 
     return true;
 }
 
-bool MainWindow::addPage(const QSize &size, const QColor &background)
+bool MainWindow::addPage(const QSize &size, const QColor &background, const QString &paper)
 {
     if (size.isEmpty())
         return false;
-    auto stack = std::make_unique<easeletch::LayerStack>(
-        easeletch::LayerStack::single(easeletch::TileStore(background), size, tr("Background")));
+    auto stack = blankStack(size, background, paper);
     return insertPage(std::move(stack), uniquePageName({}),
                       tr("New %1 × %2").arg(size.width()).arg(size.height()));
 }
@@ -357,7 +356,7 @@ void MainWindow::showNewPageDialog()
     NewDocumentDialog dlg(canvasSize().isEmpty() ? QSize(2000, 1500) : canvasSize(), this);
     dlg.setWindowTitle(tr("New Page"));
     if (dlg.exec() == QDialog::Accepted)
-        addPage(dlg.canvasSize(), dlg.background());
+        addPage(dlg.canvasSize(), dlg.background(), dlg.paper());
 }
 
 void MainWindow::showRenamePageDialog(int index)

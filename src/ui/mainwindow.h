@@ -65,7 +65,10 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
-    void newDocument(const QSize &size, const QColor &background);
+    // paper: one of paper.h's sheets instead of a plain background. The paper
+    // is a locked layer at the bottom with an empty layer over it to draw on,
+    // so erasing takes the drawing off the paper and not the paper away.
+    void newDocument(const QSize &size, const QColor &background, const QString &paper = {});
     // Opens an .easeletch document or an image in the background; documentOpened()
     // reports the outcome.
     void openDocument(const QString &path);
@@ -360,7 +363,9 @@ public slots:
     // steps (each page has its own history); they do count as unsaved changes.
     // Each returns false if it couldn't be done.
     // A new page goes after the current one and becomes current.
-    bool addPage(const QSize &size, const QColor &background);
+    bool addPage(const QSize &size, const QColor &background, const QString &paper = {});
+    std::unique_ptr<easeletch::LayerStack> blankStack(const QSize &size, const QColor &background,
+                                                      const QString &paper) const;
     // A copy of the current page, layers and all.
     bool duplicatePage();
     // The last page can't be deleted.

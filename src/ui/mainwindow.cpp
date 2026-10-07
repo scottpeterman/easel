@@ -14,6 +14,7 @@
 #include "filterdialog.h"
 #include "layerpanel.h"
 #include "newdocumentdialog.h"
+#include "paper.h"
 #include "selecttools.h"
 #include "textpanel.h"
 #include "textrender.h"
@@ -2618,10 +2619,29 @@ void MainWindow::syncComposite() const
     }
 }
 
-void MainWindow::newDocument(const QSize &size, const QColor &background)
+std::unique_ptr<easeletch::LayerStack> MainWindow::blankStack(const QSize &size, const QColor &background,
+                                                              const QString &paper) const
 {
+    const easeletch::PaperStyle *style = easeletch::paperStyle(paper);
+    if (!style)
+        return std::make_unique<easeletch::LayerStack>(
+            easeletch::LayerStack::single(easeletch::TileStore(background), size, tr("Background")));
+
+    easeletch::TileStore sheet;
+    easeletch::fillPaper(sheet, QRect(QPoint(0, 0), size), *style);
     auto stack = std::make_unique<easeletch::LayerStack>(
-        easeletch::LayerStack::single(easeletch::TileStore(background), size, tr("Background")));
+        easeletch::LayerStack::single(std::move(sheet), size, tr("Paper")));
+    if (easeletch::Layer *l = stack->layer(stack->activeId()))
+        l->locked = true; // drawn over, never on
+    easeletch::Layer drawing;
+    drawing.name = stack->uniqueName(tr("Layer"));
+    stack->setActive(stack->insert(std::move(drawing), 0, INT_MAX));
+    return stack;
+}
+
+void MainWindow::newDocument(const QSize &size, const QColor &background, const QString &paper)
+{
+    auto stack = blankStack(size, background, paper);
     setDocument(std::move(stack), tr("Untitled"), tr("New %1 × %2").arg(size.width()).arg(size.height()));
 }
 
@@ -2965,7 +2985,7 @@ void MainWindow::showNewDialog()
         return;
     NewDocumentDialog dlg(canvasSize().isEmpty() ? QSize(2000, 1500) : canvasSize(), this);
     if (dlg.exec() == QDialog::Accepted)
-        newDocument(dlg.canvasSize(), dlg.background());
+        newDocument(dlg.canvasSize(), dlg.background(), dlg.paper());
 }
 
 void MainWindow::showOpenDialog()
