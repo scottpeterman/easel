@@ -190,7 +190,19 @@ if [[ $make_dmg -eq 1 ]]; then
     cmake --install "$build_dir" --prefix "$stage"
     codesign --force --deep --sign - "$stage/Easeletch.app"
     ln -s /Applications "$stage/Applications"
-    hdiutil create -volname Easeletch -srcfolder "$stage" -ov -format UDZO "$output"
+    # hdiutil fails now and then with "Resource busy" on CI runners, where
+    # something else (Spotlight, the malware scan) has the new volume open.
+    # Nothing is wrong with the app: try again after a pause.
+    attempt=1
+    until hdiutil create -volname Easeletch -srcfolder "$stage" -ov -format UDZO "$output"; do
+        if [[ $attempt -ge 5 ]]; then
+            echo "hdiutil failed $attempt times; giving up." >&2
+            exit 1
+        fi
+        echo "hdiutil failed (attempt $attempt); retrying in $((attempt * 5)) s." >&2
+        sleep $((attempt * 5))
+        attempt=$((attempt + 1))
+    done
     echo "Wrote $output"
 fi
 
