@@ -30,6 +30,17 @@ struct BrushSettings {
     // Hard, unantialiased dabs centred on pixels: a 1 px brush sets exactly one
     // pixel. For sprites and pixel art; hardness is ignored.
     bool pixel = false;
+    // Paper. 0 is smooth; towards 1 only the high points of the paper take
+    // colour at a light touch, and pressing harder reaches into the hollows:
+    // what makes a mark read as pencil or charcoal rather than paint.
+    double grain = 0.0;
+    double grainSize = 2.0; // across one bump of the paper, in canvas pixels
+    // With pressure size: how much of the diameter is left at the lightest
+    // touch. 0 tapers to nothing (a brush pen); 0.7 hardly changes (a pencil).
+    double minSize = 0.0;
+    // Each dab lands up to this fraction of the diameter off the line, for the
+    // ragged edge of a crumbling stick.
+    double jitter = 0.0;
 
     static constexpr double MinSize = 1.0;
     static constexpr double MaxSize = 1000.0;
@@ -58,6 +69,11 @@ struct StrokeSample {
 // Coverage (0..1) of a round dab at a distance from its centre. The rim is
 // antialiased over one pixel; hardness < 1 adds a smooth falloff inside it.
 float dabCoverage(double distance, double radius, double hardness);
+
+// The height of the paper at a canvas pixel, 0 (a hollow) to 1 (a high
+// point). It belongs to the canvas, not the stroke: going over the same place
+// again finds the same bumps, as it does on paper. size: across one bump.
+float paperTooth(int x, int y, double size);
 
 // Moving average over the last few input samples. Strength 0 passes input
 // straight through; 1 averages over 32 samples.
@@ -150,6 +166,7 @@ private:
     QSet<TileCoord> m_touched;
     Selection m_clip;
     int m_dabCount = 0;
+    quint32 m_jitterStep = 0; // one per dab on the line, so a mirrored stroke scatters the same way
 
     // Smudge: colour picked up under the brush, one premultiplied RGBA per
     // pixel offset from the dab centre.

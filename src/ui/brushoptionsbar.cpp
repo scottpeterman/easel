@@ -117,8 +117,14 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     auto *spacingRow = new QWidget(panel);
     m_flow = addControl(flowRow, QString(), 1, 100, tr("%"), identity, identity);
     m_spacing = addControl(spacingRow, QString(), 1, 200, tr("%"), identity, identity);
+    auto *grainRow = new QWidget(panel);
+    m_grain = addControl(grainRow, QString(), 0, 100, tr("%"), identity, identity);
+    m_grain.spin->setObjectName(QStringLiteral("brushGrain"));
+    grainRow->setToolTip(tr("Paper. At 0 the mark is smooth; higher, a light touch only catches the high points "
+                            "of the paper and pressing harder fills it in, as pencil and charcoal do."));
     form->addRow(tr("Flow"), flowRow);
     form->addRow(tr("Spacing"), spacingRow);
+    form->addRow(tr("Grain"), grainRow);
     // Where the mirror's lines cross, in canvas pixels.
     auto *mirrorRow = new QWidget(panel);
     auto *mirrorLayout = new QHBoxLayout(mirrorRow);
@@ -154,6 +160,7 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     connect(m_stabilizer.spin, &QSpinBox::valueChanged, this, [this](int v) { apply([v](BrushSettings &b) { b.stabilizer = v / 100.0; }); });
     connect(m_flow.spin, &QSpinBox::valueChanged, this, [this](int v) { apply([v](BrushSettings &b) { b.flow = v / 100.0; }); });
     connect(m_spacing.spin, &QSpinBox::valueChanged, this, [this](int v) { apply([v](BrushSettings &b) { b.spacing = v / 100.0; }); });
+    connect(m_grain.spin, &QSpinBox::valueChanged, this, [this](int v) { apply([v](BrushSettings &b) { b.grain = v / 100.0; }); });
     connect(m_pressureSize, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pressureSize = on; }); });
     connect(m_pressureOpacity, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pressureOpacity = on; }); });
     connect(m_pixel, &QCheckBox::toggled, this, [this](bool on) { apply([on](BrushSettings &b) { b.pixel = on; }); });
@@ -240,7 +247,8 @@ void BrushOptionsBar::syncFromTool()
                     : mode == easeletch::BrushMode::Smudge ? tr("Smudge")
                     : mode == easeletch::BrushMode::Clone  ? tr("Clone")
                     : mode == easeletch::BrushMode::Heal   ? tr("Heal")
-                                                           : tr("Brush"));
+                    : m_tool->presetName().isEmpty()       ? tr("Brush")
+                                                           : m_tool->presetName()); // which brush it is
     // For smudge, "opacity" is how far colour is dragged.
     m_opacityLabel->setText(mode == easeletch::BrushMode::Smudge ? tr("Strength") : tr("Opacity"));
 
@@ -256,6 +264,7 @@ void BrushOptionsBar::syncFromTool()
     set(m_stabilizer, percent(b.stabilizer), percent(b.stabilizer));
     set(m_flow, percent(b.flow), percent(b.flow));
     set(m_spacing, percent(b.spacing), percent(b.spacing));
+    set(m_grain, percent(b.grain), percent(b.grain));
 
     const QSignalBlocker ps(m_pressureSize), po(m_pressureOpacity), px(m_pixel);
     m_pressureSize->setChecked(b.pressureSize);

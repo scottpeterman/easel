@@ -23,6 +23,10 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.pressureSize = s.value(QStringLiteral("pressureSize"), b.pressureSize).toBool();
     b.pressureOpacity = s.value(QStringLiteral("pressureOpacity"), b.pressureOpacity).toBool();
     b.pixel = s.value(QStringLiteral("pixel"), b.pixel).toBool();
+    b.grain = s.value(QStringLiteral("grain"), b.grain).toDouble();
+    b.grainSize = s.value(QStringLiteral("grainSize"), b.grainSize).toDouble();
+    b.minSize = s.value(QStringLiteral("minSize"), b.minSize).toDouble();
+    b.jitter = s.value(QStringLiteral("jitter"), b.jitter).toDouble();
     s.endGroup();
 }
 
@@ -38,6 +42,10 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("pressureSize"), b.pressureSize);
     s.setValue(QStringLiteral("pressureOpacity"), b.pressureOpacity);
     s.setValue(QStringLiteral("pixel"), b.pixel);
+    s.setValue(QStringLiteral("grain"), b.grain);
+    s.setValue(QStringLiteral("grainSize"), b.grainSize);
+    s.setValue(QStringLiteral("minSize"), b.minSize);
+    s.setValue(QStringLiteral("jitter"), b.jitter);
     s.endGroup();
 }
 
@@ -166,6 +174,24 @@ void BrushTool::setSettings(const BrushSettings &settings)
     emit settingsChanged();
 }
 
+QString BrushTool::presetName() const
+{
+    const easeletch::BrushPreset *p = easeletch::brushPreset(m_preset);
+    return p ? p->name : QString();
+}
+
+bool BrushTool::setPreset(const QString &id)
+{
+    const easeletch::BrushPreset *p = easeletch::brushPreset(id);
+    if (!p)
+        return false;
+    m_preset = p->id;
+    m_paint = p->settings;
+    emit presetChanged(m_preset);
+    emit settingsChanged();
+    return true;
+}
+
 void BrushTool::scaleSize(double factor)
 {
     BrushSettings b = settings();
@@ -185,6 +211,12 @@ void BrushTool::loadSettings(QSettings &s)
     load(s, QStringLiteral("smudge"), m_smudge);
     load(s, QStringLiteral("clone"), m_clone);
     load(s, QStringLiteral("heal"), m_heal);
+    // Only which brush it is: its settings are the ones just read, as they were left.
+    const QString preset = s.value(QStringLiteral("brush/preset"), m_preset).toString();
+    if (easeletch::brushPreset(preset) && preset != m_preset) {
+        m_preset = preset;
+        emit presetChanged(m_preset);
+    }
     emit settingsChanged();
 }
 
@@ -195,6 +227,7 @@ void BrushTool::saveSettings(QSettings &s) const
     save(s, QStringLiteral("smudge"), m_smudge);
     save(s, QStringLiteral("clone"), m_clone);
     save(s, QStringLiteral("heal"), m_heal);
+    s.setValue(QStringLiteral("brush/preset"), m_preset);
 }
 
 void BrushTool::press(const easeletch::StrokeSample &s)

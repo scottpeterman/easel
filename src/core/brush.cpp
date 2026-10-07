@@ -12,7 +12,8 @@ namespace easeletch {
 double BrushSettings::diameterAt(double pressure) const
 {
     const double p = std::clamp(pressure, 0.0, 1.0);
-    const double d = pressureSize ? size * p : size;
+    const double least = std::clamp(minSize, 0.0, 1.0);
+    const double d = pressureSize ? size * (least + (1.0 - least) * p) : size;
     return std::clamp(d, MinSize, MaxSize);
 }
 
@@ -43,6 +44,49 @@ float dabCoverage(double distance, double radius, double hardness)
     const double t = std::clamp((distance - inner) / std::max(radius - inner, 1e-6), 0.0, 1.0);
     const double soft = 1.0 - t * t * (3.0 - 2.0 * t);
     return float(std::min(rim, soft));
+}
+
+// --- Paper --------------------------------------------------------------------
+
+namespace {
+
+quint32 hash2(int x, int y)
+{
+    quint32 h = quint32(x) * 0x9E3779B1u ^ quint32(y) * 0x85EBCA77u;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return h;
+}
+
+float unit(quint32 h)
+{
+    return float(h >> 8) * (1.0f / 16777216.0f);
+}
+
+// Smooth noise with bumps `scale` pixels across.
+float bumps(int x, int y, float scale, int salt)
+{
+    const float fx = (float(x) + 0.5f) / scale, fy = (float(y) + 0.5f) / scale;
+    const float flx = std::floor(fx), fly = std::floor(fy);
+    const int ix = int(flx) + salt * 7919, iy = int(fly) - salt * 104729;
+    float tx = fx - flx, ty = fy - fly;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    ty = ty * ty * (3.0f - 2.0f * ty);
+    const float a = unit(hash2(ix, iy)), b = unit(hash2(ix + 1, iy));
+    const float c = unit(hash2(ix, iy + 1)), d = unit(hash2(ix + 1, iy + 1));
+    return (a + (b - a) * tx) * (1.0f - ty) + (c + (d - c) * tx) * ty;
+}
+
+} // namespace
+
+float paperTooth(int x, int y, double size)
+{
+    // Broad bumps with finer ones on them.
+    const float s = float(std::clamp(size, 1.0, 64.0));
+    return 0.65f * bumps(x, y, s, 0) + 0.35f * bumps(x, y, std::max(1.0f, s * 0.5f), 1);
 }
 
 // --- Stabilizer ---------------------------------------------------------------
@@ -145,6 +189,7 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     // and showed up as 5-10 ms hitches at 512 and 1024 touched tiles.
     m_mask.reserve(8192);
     m_dabCount = 0;
+    m_jitterStep = 0;
 
     const QColor c = color.toRgb();
     m_color[0] = srgbToLinear(float(c.redF()));
@@ -208,10 +253,20 @@ void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
     const bool mirrored = m_symmetry != Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
     const bool acrossX = m_symmetry == Symmetry::LeftRight || m_symmetry == Symmetry::Quarters;
     const bool acrossY = m_symmetry == Symmetry::TopBottom || m_symmetry == Symmetry::Quarters;
-    for (const StrokeSample &d : dabs) {
+    const double jitter = m_settings.pixel ? 0.0 : std::clamp(m_settings.jitter, 0.0, 1.0);
+    for (StrokeSample d : dabs) {
         if (m_mode == BrushMode::Smudge) {
             smudgeDab(d);
             continue;
+        }
+        if (jitter > 0.0) {
+            // Off the line by a repeatable amount: the same stroke scatters the
+            // same way, and its mirror images scatter with it.
+            const quint32 h = hash2(int(m_jitterStep), 0x51ED);
+            ++m_jitterStep;
+            const double angle = unit(h) * 6.283185307179586;
+            const double reach = unit(hash2(int(h), 7)) * jitter * m_settings.diameterAt(d.pressure);
+            d.pos += QPointF(std::cos(angle), std::sin(angle)) * reach;
         }
         paintDab(d);
         if (!mirrored)
@@ -256,6 +311,11 @@ void BrushStroke::paintDab(const StrokeSample &dab)
     const float opacity = float(std::clamp(m_settings.opacity, 0.0, 1.0));
     const Pixel def = m_before.defaultPixel();
     const float reach = float(radius + 1.0);
+    // Paper: how high a point of it has to be to take colour from this dab.
+    // A light touch only marks the high points; a heavy one fills most of it.
+    const float grain = m_settings.pixel ? 0.0f : float(std::clamp(m_settings.grain, 0.0, 1.0));
+    const float toothNeeded = grain * (0.85f - 0.5f * float(std::clamp(dab.pressure, 0.0, 1.0)));
+    constexpr float kToothEdge = 0.12f; // how gradually a slope takes colour
 
     for (const TileCoord c : TileStore::tilesIntersecting(box)) {
         const QRect tr = TileStore::tileRect(c);
@@ -283,9 +343,17 @@ void BrushStroke::paintDab(const StrokeSample &dab)
                 const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
                 if (clip <= 0.0f)
                     continue;
-                const float a = coverageAt(dist, radius) * strength;
+                float a = coverageAt(dist, radius) * strength;
                 if (a <= 0.0f)
                     continue;
+                if (grain > 0.0f) {
+                    const float t = std::clamp(
+                        (paperTooth(x, y, m_settings.grainSize) - (toothNeeded - kToothEdge)) / (2.0f * kToothEdge),
+                        0.0f, 1.0f);
+                    a *= t * t * (3.0f - 2.0f * t);
+                    if (a <= 0.0f)
+                        continue;
+                }
                 // Clone: nothing to copy from beyond the edge of the canvas.
                 if (m_mode == BrushMode::Clone && !m_canvas.contains(x + m_cloneOffset.x(), y + m_cloneOffset.y()))
                     continue;

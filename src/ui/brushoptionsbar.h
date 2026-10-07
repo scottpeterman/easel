@@ -15,8 +15,8 @@ class QSlider;
 class QSpinBox;
 
 // Tool options for the brush and eraser: size, opacity, hardness, stabilizer,
-// pressure and mirroring up front; flow, spacing and where the mirror line
-// sits under "More". On a narrow window the sliders shrink, then the groups
+// pressure and mirroring up front; flow, spacing, paper grain and where the
+// mirror line sits under "More". Its title is the brush in use ("HB pencil"). On a narrow window the sliders shrink, then the groups
 // that still don't fit go behind the toolbar's ">>" button.
 class BrushOptionsBar : public QToolBar
 {
@@ -46,7 +46,7 @@ private:
     bool m_syncing = false;
 
     QLabel *m_mode = nullptr;
-    Control m_size, m_opacity, m_hardness, m_stabilizer, m_flow, m_spacing;
+    Control m_size, m_opacity, m_hardness, m_stabilizer, m_flow, m_spacing, m_grain;
     QCheckBox *m_pressureSize = nullptr;
     QCheckBox *m_pressureOpacity = nullptr;
     QCheckBox *m_pixel = nullptr;

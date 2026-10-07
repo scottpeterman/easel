@@ -2,6 +2,7 @@
 
 #include "adjustpanel.h"
 #include "brushoptionsbar.h"
+#include "brushpresets.h"
 #include "brushtool.h"
 #include "canvasarea.h"
 #include "canvasview.h"
@@ -26,6 +27,12 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
+#include <QIcon>
+#include <QPixmap>
+#include <QMenu>
+#include <QFontMetrics>
+#include <QWidgetAction>
+#include <QScreen>
 #include <QScrollArea>
 #include <QStyle>
 #include <QFileDialog>
@@ -176,6 +183,7 @@ MainWindow::MainWindow(QWidget *parent)
     createDocks();
     createToolBars();
     createActions();
+    createStripUndo();
     createStatusBar();
 
     QSettings settings;
@@ -478,6 +486,7 @@ void MainWindow::createToolBars()
     tools->setMovable(false);
     tools->setToolButtonStyle(Qt::ToolButtonTextOnly);
     addToolBar(Qt::LeftToolBarArea, tools);
+    m_toolsBar = tools;
 
     auto *group = new QActionGroup(this);
     m_brushAct = tools->addAction(tr("Brush"), this, [this] { selectBrushMode(int(BrushMode::Paint)); });
@@ -555,6 +564,7 @@ void MainWindow::createToolBars()
         group->addAction(a);
     }
     m_brushAct->setChecked(true);
+    createBrushPresets();
     connect(m_brush, &BrushTool::modeChanged, this, [this](BrushMode mode) {
         if (m_view->tool() == m_brush)
             (mode == BrushMode::Erase    ? m_eraserAct
@@ -798,6 +808,149 @@ void MainWindow::createStatusBar()
                               tr("The canvas could not start the GPU renderer. "
                                  "Update your graphics driver and try again."));
     });
+}
+
+namespace {
+
+// A sample stroke for the list of brushes, in the list's own colours.
+QIcon brushIcon(const easeletch::BrushSettings &settings, const QSize &size, const QWidget *on)
+{
+    const qreal dpr = on->devicePixelRatioF();
+    easeletch::BrushSettings b = settings;
+    b.size *= dpr; // the picture has that many more pixels to the inch
+    b.grainSize *= dpr;
+    const QPalette pal = on->palette();
+    QImage image = easeletch::brushPreview(b, size * dpr, pal.color(QPalette::Text), pal.color(QPalette::Base));
+    image.setDevicePixelRatio(dpr);
+    return QIcon(QPixmap::fromImage(image));
+}
+
+} // namespace
+
+void MainWindow::createBrushPresets()
+{
+    static constexpr QSize kPreview(132, 34);
+    static constexpr int kRowHeight = 42;    // a comfortable target for a pen or a finger
+    static constexpr int kHeadingHeight = 24;
+
+    m_brushMenu = new QMenu(this);
+    m_brushMenu->setObjectName(QStringLiteral("brushPresetMenu"));
+    m_brushList = new QListWidget(m_brushMenu);
+    m_brushList->setObjectName(QStringLiteral("brushPresetList"));
+    m_brushList->setFrameShape(QFrame::NoFrame);
+    m_brushList->setIconSize(kPreview);
+    m_brushList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_brushList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_brushList->setMouseTracking(true);
+
+    int height = 0, width = 0;
+    QString group;
+    const QFontMetrics metrics(m_brushList->font());
+    for (const easeletch::BrushPreset &p : easeletch::brushPresets()) {
+        if (p.group != group) {
+            group = p.group;
+            auto *heading = new QListWidgetItem(tr(qPrintable(group)), m_brushList);
+            heading->setFlags(Qt::NoItemFlags); // a heading: not to be chosen
+            QFont bold = m_brushList->font();
+            bold.setBold(true);
+            heading->setFont(bold);
+            heading->setSizeHint(QSize(0, kHeadingHeight));
+            height += kHeadingHeight;
+        }
+        auto *item = new QListWidgetItem(brushIcon(p.settings, kPreview, m_brushList), tr(qPrintable(p.name)),
+                                         m_brushList);
+        item->setData(Qt::UserRole, p.id);
+        item->setSizeHint(QSize(0, kRowHeight));
+        height += kRowHeight;
+        width = qMax(width, metrics.horizontalAdvance(item->text()));
+    }
+    const int scrollBar = style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    m_brushList->setFixedWidth(kPreview.width() + width + 28 + scrollBar);
+    // All of it at once where the screen is tall enough; scrolling where not.
+    const QScreen *display = screen() ? screen() : QGuiApplication::primaryScreen();
+    const int room = display ? display->availableGeometry().height() * 3 / 4 : height;
+    m_brushList->setFixedHeight(qMin(height + 4, qMax(room, 4 * kRowHeight)));
+
+    auto *holder = new QWidgetAction(m_brushMenu);
+    holder->setDefaultWidget(m_brushList);
+    m_brushMenu->addAction(holder);
+
+    const auto choose = [this](QListWidgetItem *item) {
+        const QString id = item ? item->data(Qt::UserRole).toString() : QString();
+        if (id.isEmpty())
+            return;
+        m_brushMenu->close();
+        chooseBrushPreset(id);
+    };
+    connect(m_brushList, &QListWidget::itemClicked, this, choose);
+    connect(m_brushList, &QListWidget::itemActivated, this, choose);
+
+    // The Brush button is the dropdown: its arrow opens the list, and so does
+    // pressing the button again when the brush is already the tool in use
+    // (the arrow is a small target for a pen).
+    if (auto *button = qobject_cast<QToolButton *>(m_toolsBar->widgetForAction(m_brushAct))) {
+        button->setObjectName(QStringLiteral("brushButton"));
+        button->setMenu(m_brushMenu);
+        button->setPopupMode(QToolButton::MenuButtonPopup);
+        connect(button, &QToolButton::pressed, this, [this] {
+            m_brushWasActive = m_view->tool() == m_brush && m_brush->mode() == BrushMode::Paint;
+        });
+        connect(button, &QToolButton::clicked, this, [this, button] {
+            if (m_brushWasActive)
+                button->showMenu();
+        });
+    }
+    connect(m_brushMenu, &QMenu::aboutToShow, this, &MainWindow::syncBrushPreset);
+    connect(m_brush, &BrushTool::presetChanged, this, &MainWindow::syncBrushPreset);
+    syncBrushPreset();
+}
+
+void MainWindow::syncBrushPreset()
+{
+    const QString name = m_brush->presetName();
+    m_brushAct->setText(name.isEmpty() ? tr("Brush") : tr(qPrintable(name)));
+    m_brushAct->setToolTip(tr("Brush (B): %1. Press again, or the arrow, for pencils, pens and charcoal.")
+                               .arg(m_brushAct->text()));
+    for (int row = 0; row < m_brushList->count(); ++row)
+        if (m_brushList->item(row)->data(Qt::UserRole).toString() == m_brush->preset()) {
+            m_brushList->setCurrentRow(row);
+            m_brushList->scrollToItem(m_brushList->item(row));
+        }
+}
+
+bool MainWindow::chooseBrushPreset(const QString &id)
+{
+    if (!m_brush->setPreset(id))
+        return false;
+    selectBrushMode(int(BrushMode::Paint));
+    return true;
+}
+
+void MainWindow::createStripUndo()
+{
+    // Buttons of their own, not the menu's actions: those are renamed as the
+    // history moves ("Undo Brush"), and the strip has room for one word.
+    m_toolsBar->addSeparator();
+    const auto add = [this](const QString &text, const char *name, QAction *action, const QString &tip) {
+        auto *button = new QToolButton(m_toolsBar);
+        button->setObjectName(QLatin1String(name));
+        button->setText(text);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        button->setToolTip(tip);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setAutoRaise(true);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed); // as wide as the tools above
+        button->setAutoRepeat(true); // hold it down to step back through the history
+        button->setAutoRepeatDelay(500);
+        button->setAutoRepeatInterval(180);
+        button->setEnabled(action->isEnabled());
+        connect(button, &QToolButton::clicked, action, &QAction::trigger);
+        connect(action, &QAction::enabledChanged, button, &QToolButton::setEnabled);
+        m_toolsBar->addWidget(button);
+    };
+    add(tr("Undo"), "stripUndo", m_undoAct, tr("Undo (%1). Hold to keep going back.")
+                                                .arg(m_undoAct->shortcut().toString(QKeySequence::NativeText)));
+    add(tr("Redo"), "stripRedo", m_redoAct, tr("Redo (%1)").arg(m_redoAct->shortcut().toString(QKeySequence::NativeText)));
 }
 
 void MainWindow::selectBrushMode(int mode)

@@ -93,6 +93,9 @@ public:
     LayerPanel *layerPanel() const { return m_layerPanel; }
     AdjustPanel *adjustPanel() const { return m_adjustPanel; }
     BrushTool *brushTool() const { return m_brush; }
+    // Switches the Brush tool to a ready-made brush (see brushpresets.h) and
+    // makes it the tool in use. False if there's no such brush.
+    bool chooseBrushPreset(const QString &id);
     EyedropperTool *eyedropperTool() const { return m_eyedropper; }
     ColorPanel *colorPanel() const { return m_color; }
     const easeletch::History &history() const { return m_history; }
@@ -365,6 +368,11 @@ protected:
 private:
     void createActions();
     void createToolBars();
+    // The Brush button's list of ready-made brushes, and Undo / Redo at the
+    // foot of the tool strip (for a tablet, where there's no Ctrl+Z).
+    void createBrushPresets();
+    void createStripUndo();
+    void syncBrushPreset();
     void createDocks();
     void createStatusBar();
     void createTransformOptions();
@@ -758,6 +766,10 @@ private:
     QAction *m_undoAct = nullptr;
     QAction *m_redoAct = nullptr;
     QAction *m_brushAct = nullptr;
+    QToolBar *m_toolsBar = nullptr;
+    QMenu *m_brushMenu = nullptr;
+    QListWidget *m_brushList = nullptr;
+    bool m_brushWasActive = false; // when its button was pressed
     QAction *m_eraserAct = nullptr;
     QAction *m_eyedropperAct = nullptr;
     QAction *m_smudgeAct = nullptr;

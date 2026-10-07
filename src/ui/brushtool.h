@@ -1,6 +1,7 @@
 #pragma once
 
 #include "brush.h"
+#include "brushpresets.h"
 #include "canvasview.h"
 #include "history.h"
 
@@ -43,6 +44,14 @@ public:
     void setSettings(const easeletch::BrushSettings &settings);
     void scaleSize(double factor);
 
+    // The ready-made brush the Brush tool was last set to (see brushpresets.h).
+    // Choosing one replaces the Brush tool's settings with the preset's, whatever
+    // mode is in use; the settings can be changed from there as usual.
+    QString preset() const { return m_preset; }
+    QString presetName() const;
+    // False if there's no such preset.
+    bool setPreset(const QString &id);
+
     QColor color() const { return m_color; }
     void setColor(const QColor &color) { m_color = color; }
 
@@ -81,6 +90,7 @@ public:
 signals:
     void modeChanged(easeletch::BrushMode mode);
     void settingsChanged();
+    void presetChanged(const QString &id);
     void strokeCommitted();
     // A stroke was started with nothing to paint on.
     void blocked();
@@ -102,6 +112,7 @@ private:
 
     easeletch::BrushMode m_mode = easeletch::BrushMode::Paint;
     easeletch::BrushSettings m_paint;
+    QString m_preset = easeletch::defaultBrushPresetId();
     easeletch::BrushSettings m_erase;
     easeletch::BrushSettings m_smudge;
     easeletch::BrushSettings m_clone;
