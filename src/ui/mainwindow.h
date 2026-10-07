@@ -96,6 +96,14 @@ public:
     LayerPanel *layerPanel() const { return m_layerPanel; }
     AdjustPanel *adjustPanel() const { return m_adjustPanel; }
     BrushTool *brushTool() const { return m_brush; }
+
+    // Paper only: the window goes full screen and everything but the drawing
+    // is put away, for drawing on a tablet. A small strip on the canvas keeps
+    // what there's no keyboard for: the way back, undo and redo, the brush,
+    // the eraser, and the Color and Layers panels as floating windows.
+    // Turning it off puts the window back as it was.
+    bool isPaperOnly() const { return m_paperOnly; }
+    void setPaperOnly(bool on);
     // Switches the Brush tool to a ready-made brush (see brushpresets.h) and
     // makes it the tool in use. False if there's no such brush.
     bool chooseBrushPreset(const QString &id);
@@ -390,6 +398,10 @@ private:
     // Shares the right-hand column out between the docks, the first time
     // the window is shown with no saved layout.
     void balanceDocks();
+    void syncOptionBars();
+    void createPaperStrip();
+    void syncPaperStrip();
+    void toggleFloatingDock(QDockWidget *dock);
     // The Brush button's list of ready-made brushes, and Undo / Redo at the
     // foot of the tool strip (for a tablet, where there's no Ctrl+Z).
     void createBrushPresets();
@@ -599,6 +611,15 @@ private:
     QDockWidget *m_adjustDock = nullptr;
     QDockWidget *m_colorDock = nullptr;
     bool m_layoutRestored = false;
+    bool m_paperOnly = false;
+    QAction *m_paperOnlyAct = nullptr;
+    QWidget *m_paperStrip = nullptr;
+    QToolButton *m_stripBrush = nullptr;
+    QToolButton *m_stripEraser = nullptr;
+    QToolButton *m_stripColor = nullptr;
+    QByteArray m_chromeState;         // the docks and toolbars, to put back
+    Qt::WindowStates m_chromeWindow;  // and whether it was maximised
+    QList<QWidget *> m_chromeHidden;  // what else was put away
     bool m_docksBalanced = false;
     // The adjustment layer and history state the last settings entry belongs to.
     int m_adjustLayer = 0;

@@ -28,6 +28,8 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
+#include <QMouseEvent>
+#include <QFrame>
 #include <QIcon>
 #include <QPixmap>
 #include <QMenu>
@@ -35,6 +37,7 @@
 #include <QWidgetAction>
 #include <QScreen>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QStyle>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -478,6 +481,14 @@ void MainWindow::createActions()
 
     auto *rotReset = m_viewMenu->addAction(tr("R&eset Rotation"), m_view, &CanvasView::resetRotation);
     rotReset->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+
+    m_viewMenu->addSeparator();
+    m_paperOnlyAct = m_viewMenu->addAction(tr("&Paper Only"), this, [this](bool on) { setPaperOnly(on); });
+    m_paperOnlyAct->setCheckable(true);
+    m_paperOnlyAct->setShortcut(QKeySequence(Qt::Key_F11));
+    m_paperOnlyAct->setToolTip(tr("Full screen with nothing but the drawing, and a small strip for the brush, "
+                                  "the colour, undo and the way back"));
+    m_viewMenu->setToolTipsVisible(true);
 
     m_viewMenu->addSeparator();
     for (QDockWidget *dock : findChildren<QDockWidget *>())
@@ -1062,9 +1073,19 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
         m_lasso->cancel();
     m_view->setTool(tool);
     m_options->setEnabled(brushOptions);
+    syncOptionBars();
+    if (QAction *act = actionFor(tool))
+        act->setChecked(true);
+    updateCloneTool();
+    updateSymmetryGuides();
+}
+
+void MainWindow::syncOptionBars()
+{
+    const CanvasTool *tool = m_view->tool();
     // One options bar at a time. The old one is hidden before the new one is
     // shown: with two in the row, even for a moment, the window widens to
-    // fit both and stays that wide.
+    // fit both and stays that wide. None at all with only the paper showing.
     const std::pair<QToolBar *, bool> bars[] = {
         {m_options, tool != m_wand && tool != m_transformTool && tool != m_fillTool && tool != m_gradientTool
                         && tool != m_shapeTool},
@@ -1078,12 +1099,8 @@ void MainWindow::activateTool(CanvasTool *tool, bool brushOptions)
         if (!on)
             bar->hide();
     for (const auto &[bar, on] : bars)
-        if (on)
+        if (on && !m_paperOnly)
             bar->show();
-    if (QAction *act = actionFor(tool))
-        act->setChecked(true);
-    updateCloneTool();
-    updateSymmetryGuides();
 }
 
 void MainWindow::updateSymmetryGuides()
@@ -3072,6 +3089,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
         QApplication::restoreOverrideCursor();
     }
 
+    // The layout to come back to is the working one, not the bare paper.
+    setPaperOnly(false);
+
     QSettings settings;
     settings.setValue(QStringLiteral("geometry"), saveGeometry());
     settings.setValue(QStringLiteral("windowState"), saveState(kSettingsVersion));
@@ -3097,4 +3117,229 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue(QStringLiteral("wand/tolerance"), m_wand->tolerance());
     settings.setValue(QStringLiteral("wand/contiguous"), m_wand->contiguous());
     event->accept();
+}
+
+// --- Paper only ---------------------------------------------------------------
+
+namespace {
+
+// The strip of controls left on the canvas when everything else is put away.
+// It can be dragged out of the way by any part of it that isn't a button.
+class PaperStrip : public QFrame
+{
+public:
+    explicit PaperStrip(QWidget *parent)
+        : QFrame(parent)
+    {
+        setObjectName(QStringLiteral("paperStrip"));
+        setAutoFillBackground(true);
+        setFrameShape(QFrame::StyledPanel);
+        setCursor(Qt::SizeAllCursor);
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        m_grab = event->position().toPoint();
+        m_dragging = event->button() == Qt::LeftButton;
+        event->accept();
+    }
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (!m_dragging || !parentWidget())
+            return;
+        // Never off the edge: there'd be no getting it back.
+        const QRect room = parentWidget()->rect();
+        QPoint to = mapToParent(event->position().toPoint()) - m_grab;
+        to.setX(qBound(0, to.x(), qMax(0, room.width() - width())));
+        to.setY(qBound(0, to.y(), qMax(0, room.height() - height())));
+        move(to);
+        event->accept();
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        m_dragging = false;
+        event->accept();
+    }
+
+private:
+    QPoint m_grab;
+    bool m_dragging = false;
+};
+
+} // namespace
+
+void MainWindow::createPaperStrip()
+{
+    auto *strip = new PaperStrip(m_view);
+    auto *row = new QHBoxLayout(strip);
+    row->setContentsMargins(10, 4, 6, 4);
+    row->setSpacing(2);
+
+    const auto button = [strip, row](const QString &text, const char *name, const QString &tip) {
+        auto *b = new QToolButton(strip);
+        b->setObjectName(QLatin1String(name));
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        b->setAutoRaise(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setCursor(Qt::ArrowCursor);
+        b->setMinimumHeight(36); // a target for a pen
+        b->setMinimumWidth(44);
+        row->addWidget(b);
+        return b;
+    };
+
+    QToolButton *back = button(tr("Done"), "stripDone", tr("Back to the full window (F11)"));
+    connect(back, &QToolButton::clicked, this, [this] { setPaperOnly(false); });
+    row->addSpacing(8);
+
+    QToolButton *undo = button(tr("Undo"), "paperUndo", tr("Undo. Hold to keep going back."));
+    undo->setAutoRepeat(true);
+    undo->setAutoRepeatDelay(500);
+    undo->setAutoRepeatInterval(180);
+    undo->setEnabled(m_undoAct->isEnabled());
+    connect(undo, &QToolButton::clicked, m_undoAct, &QAction::trigger);
+    connect(m_undoAct, &QAction::enabledChanged, undo, &QToolButton::setEnabled);
+    QToolButton *redo = button(tr("Redo"), "paperRedo", tr("Redo"));
+    redo->setEnabled(m_redoAct->isEnabled());
+    connect(redo, &QToolButton::clicked, m_redoAct, &QAction::trigger);
+    connect(m_redoAct, &QAction::enabledChanged, redo, &QToolButton::setEnabled);
+    row->addSpacing(8);
+
+    // The brush in use; pressing it lists the others.
+    m_stripBrush = button(QString(), "paperBrush", tr("The brush in use. Press for pencils, pens, charcoal and paint."));
+    m_stripBrush->setCheckable(true);
+    connect(m_stripBrush, &QToolButton::clicked, this, [this] {
+        const bool painting = m_view->tool() == m_brush && m_brush->mode() == BrushMode::Paint;
+        if (!painting) {
+            selectBrushMode(int(BrushMode::Paint)); // from the eraser: straight back to the brush
+            return;
+        }
+        m_stripBrush->setChecked(true);
+        m_brushMenu->exec(m_stripBrush->mapToGlobal(QPoint(0, m_stripBrush->height())));
+    });
+    m_stripEraser = button(tr("Eraser"), "paperEraser", tr("Eraser"));
+    m_stripEraser->setCheckable(true);
+    connect(m_stripEraser, &QToolButton::clicked, this, [this] { selectBrushMode(int(BrushMode::Erase)); });
+    row->addSpacing(8);
+
+    m_stripColor = button(tr("Color"), "paperColor", tr("The colour in use. Press for the Color panel."));
+    m_stripColor->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_stripColor->setIconSize(QSize(18, 18));
+    connect(m_stripColor, &QToolButton::clicked, this, [this] { toggleFloatingDock(m_colorDock); });
+    QToolButton *layers = button(tr("Layers"), "paperLayers", tr("The Layers panel"));
+    connect(layers, &QToolButton::clicked, this,
+            [this] { toggleFloatingDock(findChild<QDockWidget *>(QStringLiteral("LayersDock"))); });
+
+    strip->adjustSize();
+    strip->hide();
+    m_paperStrip = strip;
+
+    connect(m_brush, &BrushTool::presetChanged, this, &MainWindow::syncPaperStrip);
+    connect(m_brush, &BrushTool::modeChanged, this, &MainWindow::syncPaperStrip);
+    connect(m_color, &ColorPanel::colorChanged, this, &MainWindow::syncPaperStrip);
+    syncPaperStrip();
+}
+
+void MainWindow::syncPaperStrip()
+{
+    if (!m_paperStrip)
+        return;
+    const QString name = m_brush->presetName();
+    m_stripBrush->setText(name.isEmpty() ? tr("Brush") : tr(qPrintable(name)));
+    const bool brushing = m_view->tool() == m_brush;
+    m_stripBrush->setChecked(brushing && m_brush->mode() == BrushMode::Paint);
+    m_stripEraser->setChecked(brushing && m_brush->mode() == BrushMode::Erase);
+    QPixmap swatch(18, 18);
+    swatch.fill(m_color->color());
+    m_stripColor->setIcon(QIcon(swatch));
+    m_paperStrip->adjustSize(); // the brush's name may be longer or shorter
+}
+
+void MainWindow::toggleFloatingDock(QDockWidget *dock)
+{
+    if (!dock)
+        return;
+    if (dock->isVisible() && dock->isFloating()) {
+        dock->hide();
+        return;
+    }
+    // A window of its own over the paper, under the strip to begin with.
+    dock->setFloating(true);
+    const QPoint under = m_paperStrip->mapToGlobal(QPoint(0, m_paperStrip->height() + 8));
+    dock->resize(dock->sizeHint().expandedTo(QSize(260, 320)));
+    dock->move(under);
+    dock->show();
+    dock->raise();
+}
+
+void MainWindow::setPaperOnly(bool on)
+{
+    if (on == m_paperOnly)
+        return;
+    if (!m_paperStrip)
+        createPaperStrip();
+
+    if (on) {
+        m_chromeState = saveState(kSettingsVersion);
+        m_chromeWindow = windowState();
+        m_paperOnly = true;
+
+        // Shortcuts live on the menus' actions, and stop with the menu bar
+        // hidden unless the window itself holds them too.
+        for (QAction *action : menuBar()->findChildren<QAction *>())
+            if (!action->shortcut().isEmpty() && !actions().contains(action))
+                addAction(action);
+
+        m_chromeHidden.clear();
+        const auto putAway = [this](QWidget *w) {
+            if (w && w->isVisible()) {
+                m_chromeHidden.append(w);
+                w->hide();
+            }
+        };
+        for (QToolBar *bar : findChildren<QToolBar *>())
+            bar->hide(); // restoreState brings these and the docks back
+        for (QDockWidget *dock : findChildren<QDockWidget *>())
+            dock->hide();
+        putAway(menuBar());
+        putAway(statusBar());
+        putAway(m_pageTabs);
+        putAway(findChild<QWidget *>(QStringLiteral("AddPageButton")));
+        if (auto *area = qobject_cast<CanvasArea *>(m_view->parentWidget())) {
+            putAway(area->horizontalBar());
+            putAway(area->verticalBar());
+        }
+        showFullScreen();
+
+        syncPaperStrip();
+        m_paperStrip->move(12, 12);
+        m_paperStrip->show();
+        m_paperStrip->raise();
+        // Once the window has its new size: the whole sheet in view.
+        QTimer::singleShot(0, this, [this] {
+            if (m_paperOnly && m_stack)
+                m_view->fitToWindow();
+        });
+    } else {
+        m_paperOnly = false;
+        m_paperStrip->hide();
+        // Docks that were floated over the paper go back where they were.
+        for (QDockWidget *dock : findChildren<QDockWidget *>())
+            dock->setFloating(false);
+        setWindowState(m_chromeWindow & ~Qt::WindowFullScreen);
+        for (QWidget *w : std::as_const(m_chromeHidden))
+            w->show();
+        m_chromeHidden.clear();
+        restoreState(m_chromeState, kSettingsVersion);
+        syncOptionBars(); // the tool may have changed meanwhile
+        QTimer::singleShot(0, this, [this] {
+            if (!m_paperOnly && m_stack)
+                m_view->fitToWindow();
+        });
+    }
+    if (m_paperOnlyAct)
+        m_paperOnlyAct->setChecked(m_paperOnly);
 }

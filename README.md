@@ -145,6 +145,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - Unpainted areas take no memory or disk space
 - Undo keeps only what each step changed, within a 1 GB budget; the History panel jumps to any step
 - Undo and Redo buttons at the foot of the tool strip, for a tablet with no keyboard
+- **Paper Only** (View menu, F11): full screen with nothing but the drawing. A small strip on the canvas keeps undo and redo, the brush list, the eraser, the Color and Layers panels and the way back, so it works on a tablet with no keyboard; drag the strip out of the way by its edge
 - Fits a small screen: on a 12" tablet the tool options that don't fit go behind a **>>** button at the end of the bar, and a long palette scrolls
 - Opens PNG, JPEG, WebP and other common image formats; exports PNG, JPEG and WebP
 - `.easeletch` documents keep every layer, mask, adjustment and page, and include a preview image other programs can read
