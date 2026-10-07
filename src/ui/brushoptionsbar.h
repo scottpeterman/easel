@@ -16,7 +16,8 @@ class QSpinBox;
 
 // Tool options for the brush and eraser: size, opacity, hardness, stabilizer,
 // pressure and mirroring up front; flow, spacing and where the mirror line
-// sits under "More".
+// sits under "More". On a narrow window the sliders shrink, then the groups
+// that still don't fit go behind the toolbar's ">>" button.
 class BrushOptionsBar : public QToolBar
 {
     Q_OBJECT
@@ -24,12 +25,17 @@ class BrushOptionsBar : public QToolBar
 public:
     explicit BrushOptionsBar(BrushTool *tool, QWidget *parent = nullptr);
 
+    static constexpr int SliderWidth = 90;
+    static constexpr int MinSliderWidth = 44;
+
 private:
     struct Control {
         QSlider *slider = nullptr;
         QSpinBox *spin = nullptr;
     };
 
+    // A toolbar item: a row to put one group of controls in.
+    QWidget *beginGroup();
     Control addControl(QWidget *host, const QString &label, int min, int max, const QString &suffix,
                        std::function<int(int)> spinToSlider, std::function<int(int)> sliderToSpin,
                        QLabel **labelOut = nullptr);

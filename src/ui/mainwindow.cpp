@@ -25,6 +25,8 @@
 #include <QCloseEvent>
 #include <QDir>
 #include <QDockWidget>
+#include <QScrollArea>
+#include <QStyle>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -623,6 +625,52 @@ void MainWindow::createToolBars()
     connect(m_brush, &BrushTool::settingsChanged, m_view, qOverload<>(&QWidget::update));
 }
 
+namespace {
+
+// A scroll area that asks for the room its widget wants. QScrollArea's own
+// hints stop at a few lines of text, so the docks sharing a column with it
+// would take the space and leave it scrolling for no reason.
+//
+// It insists on its widget's smallest size only up to MaxMinimumHeight: a
+// panel that grows past that scrolls, where a plain dock would make the
+// window's own smallest size grow with it, past a small screen's.
+class FittedScrollArea : public QScrollArea
+{
+public:
+    static constexpr int MaxMinimumHeight = 310;
+
+    using QScrollArea::QScrollArea;
+
+    QSize sizeHint() const override
+    {
+        if (!widget())
+            return QScrollArea::sizeHint();
+        const int frame = 2 * frameWidth();
+        return widget()->sizeHint().expandedTo(minimumSizeHint()) + QSize(frame, frame);
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        if (!widget())
+            return QScrollArea::minimumSizeHint();
+        const int frame = 2 * frameWidth();
+        const QSize min = widget()->minimumSizeHint();
+        // Width: never scrolls sideways, and leaves room for the bar.
+        return QSize(min.width() + style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, this) + frame,
+                     qMin(min.height(), MaxMinimumHeight) + frame);
+    }
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (object == widget() && event->type() == QEvent::LayoutRequest)
+            updateGeometry(); // its sizes changed, so ours did
+        return QScrollArea::eventFilter(object, event);
+    }
+};
+
+} // namespace
+
 void MainWindow::createDocks()
 {
     setDockOptions(AnimatedDocks | AllowTabbedDocks | AllowNestedDocks);
@@ -666,7 +714,15 @@ void MainWindow::createDocks()
     m_color = new ColorPanel;
     auto *colorDock = new QDockWidget(tr("Color"), this);
     colorDock->setObjectName(QStringLiteral("ColorDock"));
-    colorDock->setWidget(m_color);
+    // A palette can grow as long as its owner likes. Scrolling, rather than
+    // the window's smallest height growing with it past the screen's.
+    auto *colorScroll = new FittedScrollArea(colorDock);
+    colorScroll->setObjectName(QStringLiteral("ColorScroll"));
+    colorScroll->setFrameShape(QFrame::NoFrame);
+    colorScroll->setWidgetResizable(true);
+    colorScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    colorScroll->setWidget(m_color);
+    colorDock->setWidget(colorScroll);
     addDockWidget(Qt::RightDockWidgetArea, colorDock);
     // Colour and Adjustment share a place: whichever suits the active layer
     // comes to the front.

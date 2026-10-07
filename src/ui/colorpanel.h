@@ -21,6 +21,7 @@ class ColorPanel : public QWidget
 public:
     static constexpr int MaxRecent = 12;
     static constexpr int PaletteColumns = 8;
+    static constexpr int RecentSwatch = 18;
 
     explicit ColorPanel(QWidget *parent = nullptr);
 
@@ -42,6 +43,9 @@ public slots:
 
 signals:
     void colorChanged(const QColor &color);
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void applyHex();

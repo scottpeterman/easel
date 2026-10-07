@@ -116,8 +116,10 @@ ColorPanel::ColorPanel(QWidget *parent)
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
 
+    // The wheel takes the spare height, up to square; everything under it
+    // keeps its size.
     m_wheel = new ColorWheel(this);
-    layout->addWidget(m_wheel);
+    layout->addWidget(m_wheel, 1);
     connect(m_wheel, &ColorWheel::colorChanged, this, &ColorPanel::setColor);
 
     auto *row = new QHBoxLayout;
@@ -146,7 +148,7 @@ ColorPanel::ColorPanel(QWidget *parent)
     m_paletteGrid = new QGridLayout;
     m_paletteGrid->setSpacing(3);
     layout->addLayout(m_paletteGrid);
-    layout->addStretch(1);
+    layout->addStretch(0);
 
     for (const char *hex : kDefaultPalette)
         m_saved.append(QColor(QString::fromLatin1(hex)));
@@ -154,6 +156,15 @@ ColorPanel::ColorPanel(QWidget *parent)
     setColor(m_color);
     rebuildRecent();
     rebuildPalette();
+}
+
+void ColorPanel::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    // Never taller than wide: past square the extra height would only be
+    // blank space around the ring.
+    const QMargins m = layout()->contentsMargins();
+    m_wheel->setMaximumHeight(qMax(ColorWheel::MinimumSide, width() - m.left() - m.right()));
 }
 
 void ColorPanel::setColor(const QColor &color)
@@ -233,8 +244,9 @@ void ColorPanel::setSavedColors(const QList<QColor> &colors)
 void ColorPanel::rebuildRecent()
 {
     clearLayout(m_recentRow);
+    m_recentRow->addStrut(RecentSwatch); // the row keeps its height while empty
     for (const QColor &c : std::as_const(m_recent)) {
-        auto *s = new SwatchButton(c, QSize(18, 18), this);
+        auto *s = new SwatchButton(c, QSize(RecentSwatch, RecentSwatch), this);
         connect(s, &QAbstractButton::clicked, this, [this, c] { setColor(c); });
         m_recentRow->addWidget(s);
     }

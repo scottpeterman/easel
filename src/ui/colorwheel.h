@@ -21,9 +21,12 @@ public:
     double value() const { return m_v; }
 
     QSize sizeHint() const override { return QSize(220, 220); }
-    QSize minimumSizeHint() const override { return QSize(140, 140); }
-    bool hasHeightForWidth() const override { return true; }
-    int heightForWidth(int w) const override { return w; }
+    // No height-for-width: a dock gives its panel what height there is, and a
+    // wheel that insisted on being as tall as it is wide pushed everything
+    // under it out of the panel on a short screen. It draws in the largest
+    // square that fits instead.
+    QSize minimumSizeHint() const override { return QSize(MinimumSide, MinimumSide); }
+    static constexpr int MinimumSide = 120;
 
     // Geometry, in widget coordinates, for tests and hit-testing.
     QPointF center() const;

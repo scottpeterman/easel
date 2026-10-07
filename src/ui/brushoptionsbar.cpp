@@ -50,42 +50,68 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     setObjectName(QStringLiteral("ToolOptionsBar"));
     setMovable(false);
 
-    auto *host = new QWidget(this);
-    auto *row = new QHBoxLayout(host);
-    row->setContentsMargins(6, 2, 6, 2);
-    row->setSpacing(6);
-
+    // Each group is its own toolbar item. A window too narrow for all of them
+    // first squeezes the sliders, then moves whole groups, from the right,
+    // behind the toolbar's own ">>" button: nothing is ever cut short.
+    QWidget *host = beginGroup();
     m_mode = new QLabel(host);
     m_mode->setStyleSheet(QStringLiteral("font-weight: 600;"));
-    row->addWidget(m_mode);
-    row->addSpacing(8);
+    host->layout()->addWidget(m_mode);
+    addWidget(host);
 
-    m_size = addControl(host, tr("Size"), int(BrushSettings::MinSize), int(BrushSettings::MaxSize),
-                        tr(" px"), sizeToSlider, sliderToSize);
+    const auto sliderGroup = [this](const QString &label, int min, int max, const QString &suffix,
+                                    std::function<int(int)> toSlider, std::function<int(int)> toSpin,
+                                    QLabel **labelOut = nullptr) {
+        QWidget *group = beginGroup();
+        Control c = addControl(group, label, min, max, suffix, std::move(toSlider), std::move(toSpin), labelOut);
+        c.slider->setMinimumWidth(MinSliderWidth);
+        c.slider->setMaximumWidth(SliderWidth);
+        addWidget(group);
+        return c;
+    };
+    m_size = sliderGroup(tr("Size"), int(BrushSettings::MinSize), int(BrushSettings::MaxSize), tr(" px"),
+                         sizeToSlider, sliderToSize);
     m_size.slider->setRange(0, 1000);
-    m_opacity = addControl(host, tr("Opacity"), 1, 100, tr("%"), identity, identity, &m_opacityLabel);
-    m_hardness = addControl(host, tr("Hardness"), 0, 100, tr("%"), identity, identity);
-    m_stabilizer = addControl(host, tr("Stabilizer"), 0, 100, tr("%"), identity, identity);
+    m_opacity = sliderGroup(tr("Opacity"), 1, 100, tr("%"), identity, identity, &m_opacityLabel);
+    // "Strength" (smudge) is the wider of the two this label shows: room for
+    // it now, so switching tools doesn't shuffle the bar.
+    m_opacityLabel->setMinimumWidth(qMax(m_opacityLabel->fontMetrics().horizontalAdvance(tr("Strength")),
+                                         m_opacityLabel->fontMetrics().horizontalAdvance(tr("Opacity"))));
+    m_hardness = sliderGroup(tr("Hardness"), 0, 100, tr("%"), identity, identity);
+    m_stabilizer = sliderGroup(tr("Stabilizer"), 0, 100, tr("%"), identity, identity);
 
+    host = beginGroup();
     m_pressureSize = new QCheckBox(tr("Pressure size"), host);
+    m_pressureSize->setObjectName(QStringLiteral("brushPressureSize"));
+    m_pressureSize->setToolTip(tr("Pressing harder with a pen paints a wider line"));
     m_pressureOpacity = new QCheckBox(tr("Pressure opacity"), host);
+    m_pressureOpacity->setObjectName(QStringLiteral("brushPressureOpacity"));
+    m_pressureOpacity->setToolTip(tr("Pressing harder with a pen paints a more solid line"));
+    host->layout()->addWidget(m_pressureSize);
+    host->layout()->addWidget(m_pressureOpacity);
+    addWidget(host);
+
+    host = beginGroup();
     m_pixel = new QCheckBox(tr("Pixel"), host);
     m_pixel->setToolTip(tr("Hard, unantialiased pixels: a 1 px brush sets exactly one pixel"));
-    row->addWidget(m_pressureSize);
-    row->addWidget(m_pressureOpacity);
-    row->addWidget(m_pixel);
+    host->layout()->addWidget(m_pixel);
+    addWidget(host);
 
+    host = beginGroup();
     m_mirrorLabel = new QLabel(tr("Mirror"), host);
     m_mirror = new QComboBox(host);
     m_mirror->setObjectName(QStringLiteral("brushMirror"));
     m_mirror->addItems({tr("Off"), tr("Left / right"), tr("Top / bottom"), tr("Both")});
     m_mirror->setToolTip(tr("Paints the other side as you paint this one, mirrored across the line shown on the "
                             "canvas. For anything symmetrical: a ship from above, a face, a pattern."));
-    row->addWidget(m_mirrorLabel);
-    row->addWidget(m_mirror);
+    host->layout()->addWidget(m_mirrorLabel);
+    host->layout()->addWidget(m_mirror);
+    addWidget(host);
 
+    host = beginGroup();
     // Less-used settings behind "More".
     auto *more = new QToolButton(host);
+    more->setObjectName(QStringLiteral("brushMore"));
     more->setText(tr("More"));
     more->setPopupMode(QToolButton::InstantPopup);
     auto *menu = new QMenu(more);
@@ -123,9 +149,7 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     action->setDefaultWidget(panel);
     menu->addAction(action);
     more->setMenu(menu);
-    row->addWidget(more);
-    row->addStretch(1);
-
+    host->layout()->addWidget(more);
     addWidget(host);
 
     connect(m_size.spin, &QSpinBox::valueChanged, this, [this](int v) { apply([v](BrushSettings &b) { b.size = v; }); });
@@ -152,6 +176,17 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
     syncFromTool();
 }
 
+QWidget *BrushOptionsBar::beginGroup()
+{
+    auto *group = new QWidget(this);
+    auto *row = new QHBoxLayout(group);
+    row->setContentsMargins(4, 2, 4, 2);
+    row->setSpacing(6);
+    // Shrinks when the bar is short of room; never stretches to fill a wide one.
+    group->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+    return group;
+}
+
 BrushOptionsBar::Control BrushOptionsBar::addControl(QWidget *host, const QString &label, int min, int max,
                                                      const QString &suffix,
                                                      std::function<int(int)> spinToSlider,
@@ -173,7 +208,7 @@ BrushOptionsBar::Control BrushOptionsBar::addControl(QWidget *host, const QStrin
     Control c;
     c.slider = new QSlider(Qt::Horizontal, host);
     c.slider->setRange(min, max);
-    c.slider->setFixedWidth(90);
+    c.slider->setFixedWidth(SliderWidth);
     c.spin = new QSpinBox(host);
     c.spin->setRange(min, max);
     c.spin->setSuffix(suffix);

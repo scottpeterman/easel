@@ -22,9 +22,7 @@ double wrap01(double v)
 ColorWheel::ColorWheel(QWidget *parent)
     : QWidget(parent)
 {
-    QSizePolicy p(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    p.setHeightForWidth(true);
-    setSizePolicy(p);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setCursor(Qt::CrossCursor);
 }
 
