@@ -333,6 +333,18 @@ void MainWindow::createActions()
     QMenu *layer = menuBar()->addMenu(tr("&Layer"));
     auto *newLayer = layer->addAction(tr("&New Layer"), this, &MainWindow::addLayer);
     newLayer->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+    auto *belowLayer = layer->addAction(tr("New Layer &Below"), this, &MainWindow::addLayerBelow);
+    belowLayer->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+    belowLayer->setToolTip(tr("A new layer under this one: for colour beneath a sketch"));
+    auto *sketchLayer = layer->addAction(tr("New S&ketch Layer"), this, &MainWindow::addSketchLayer);
+    sketchLayer->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
+    sketchLayer->setToolTip(tr("An empty layer on top of everything for pencil work. Colour painted on the layers "
+                               "under it shows through between its lines."));
+    auto *toSketch = layer->addAction(tr("Sketch &from This Layer"), this, &MainWindow::makeSketchFromLayer);
+    toSketch->setToolTip(tr("Already sketched on this layer? It goes on top, with a new layer under it to colour on. "
+                            "Its white paper lets the colour through."));
+    layer->setToolTipsVisible(true);
+    layer->addSeparator();
     auto *dupLayer = layer->addAction(tr("&Duplicate Layer"), this, &MainWindow::duplicateLayer);
     dupLayer->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_J));
     auto *groupLayer = layer->addAction(tr("&Group Layer"), this, &MainWindow::addGroup);
@@ -2146,6 +2158,104 @@ bool MainWindow::addLayer()
     }
     m_stack->setActive(id);
     finishLayerChange(tr("New Layer"), std::move(before));
+    return true;
+}
+
+namespace {
+
+// "Sketch", then "Sketch 2": there's usually one, and it shouldn't be numbered.
+QString roleName(const easeletch::LayerStack &stack, const QString &base)
+{
+    const auto taken = [&stack](const QString &name) {
+        const QList<easeletch::Layer> &layers = stack.layers();
+        return std::any_of(layers.cbegin(), layers.cend(), [&](const easeletch::Layer &l) { return l.name == name; });
+    };
+    if (!taken(base))
+        return base;
+    for (int n = 2;; ++n) {
+        const QString name = QStringLiteral("%1 %2").arg(base).arg(n);
+        if (!taken(name))
+            return name;
+    }
+}
+
+} // namespace
+
+bool MainWindow::addLayerBelow()
+{
+    if (!beginLayerChange())
+        return false;
+    easeletch::LayerStack before = m_stack->snapshot();
+    easeletch::Layer l;
+    l.name = m_stack->uniqueName(tr("Layer"));
+    const easeletch::Layer *active = m_stack->active();
+    const int parent = active ? active->parent : 0;
+    const int at = active ? int(m_stack->children(parent).indexOf(active->id)) : 0;
+    const int id = m_stack->insert(std::move(l), parent, at);
+    m_stack->setActive(id);
+    m_editMask = false;
+    finishLayerChange(tr("New Layer Below"), std::move(before));
+    return true;
+}
+
+bool MainWindow::addSketchLayer()
+{
+    if (!beginLayerChange())
+        return false;
+    easeletch::LayerStack before = m_stack->snapshot();
+    easeletch::Layer l;
+    l.name = roleName(*m_stack, tr("Sketch"));
+    l.blend = easeletch::BlendMode::Multiply;
+    const int id = m_stack->insert(std::move(l), 0, INT_MAX); // over everything
+    m_stack->setActive(id);
+    m_editMask = false;
+    finishLayerChange(tr("New Sketch Layer"), std::move(before));
+
+    // Something to sketch with: whatever pencil, pen or charcoal is in hand
+    // stays; a paint brush is swapped for a pencil.
+    const easeletch::BrushPreset *brush = easeletch::brushPreset(m_brush->preset());
+    if (!brush || brush->group == QStringLiteral("Paint"))
+        chooseBrushPreset(QStringLiteral("pencil-2b"));
+    else
+        selectBrushMode(int(BrushMode::Paint));
+    return true;
+}
+
+bool MainWindow::makeSketchFromLayer()
+{
+    if (!beginLayerChange())
+        return false;
+    const easeletch::Layer *active = m_stack->active();
+    if (!active || !active->hasPixels()) {
+        statusBar()->showMessage(tr("Select the layer the sketch is drawn on."), 4000);
+        return false;
+    }
+    easeletch::LayerStack before = m_stack->snapshot();
+    const int sketch = active->id;
+    const bool wasBottom = m_stack->children(0).value(0) == sketch;
+
+    if (wasBottom) {
+        // The sketch was the paper too. Leave a sheet of the same colour
+        // where it was, or there'd be nothing behind the colour.
+        const QColor paperColor = active->store.defaultColor();
+        easeletch::Layer paper;
+        paper.name = roleName(*m_stack, tr("Paper"));
+        paper.store = easeletch::TileStore(paperColor.alpha() == 255 ? paperColor : QColor(Qt::white));
+        m_stack->insert(std::move(paper), 0, 0);
+    }
+    m_stack->move(sketch, 0, INT_MAX); // over everything
+    if (easeletch::Layer *l = m_stack->layer(sketch)) {
+        l->blend = easeletch::BlendMode::Multiply; // its paper lets what's under it through
+        if (!l->name.startsWith(tr("Sketch")))
+            l->name = roleName(*m_stack, tr("Sketch"));
+    }
+    easeletch::Layer color;
+    color.name = roleName(*m_stack, tr("Color"));
+    const int at = int(m_stack->children(0).indexOf(sketch)); // directly under the sketch
+    const int id = m_stack->insert(std::move(color), 0, at);
+    m_stack->setActive(id);
+    m_editMask = false;
+    finishLayerChange(tr("Sketch from Layer"), std::move(before));
     return true;
 }
 

@@ -312,6 +312,19 @@ public slots:
     // Layers. Each is one undo step and returns false if it couldn't be done.
     // New layers go above the active one and become active.
     bool addLayer();
+    // The same, directly under the active one: with a sketch selected, a
+    // layer to colour on beneath its lines.
+    bool addLayerBelow();
+    // Sketching first, colour after. A new, empty layer on top of everything,
+    // set to Multiply so its lines stay over whatever is painted under them,
+    // and a pencil in hand if the brush was a paint brush.
+    bool addSketchLayer();
+    // For a sketch that's already drawn, on the background or any layer: that
+    // layer becomes the sketch (on top, Multiply, so its white paper lets
+    // the colour through), with a new empty layer under it to paint on, which
+    // becomes active. If the sketch was the bottom layer, a sheet of its
+    // paper colour is left in its place. One undo step.
+    bool makeSketchFromLayer();
     // Adds an adjustment layer above the active one: it changes the look of
     // everything below it and stays editable.
     bool addAdjustmentLayer(easeletch::AdjustmentType type);

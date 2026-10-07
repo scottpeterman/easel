@@ -48,6 +48,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - A group is blended as one picture, so a mode set on the group applies to everything in it together
 - Duplicate, merge down, merge a group, flatten, reorder by dragging
 - Flip and 90° turns, exact and in one click
+- **Sketch first, colour after**: a sketch layer sits on top and lets the colour painted under it show between its lines. Start one empty, or lift a sketch already drawn on the background onto one
 - Every layer change is one undo step
 
 ### Layer masks
@@ -209,6 +210,9 @@ Whole jobs, step by step, with pictures.
 | Action | Input |
 | --- | --- |
 | New layer / duplicate / group | Ctrl+Shift+N / Ctrl+J / Ctrl+G |
+| Start a sketch | Layer > New Sketch Layer (Ctrl+Shift+K): an empty layer on top, with a pencil |
+| Colour under a sketch | Select the sketch, then Layer > New Layer Below (Ctrl+Shift+B) and paint |
+| Colour a sketch already drawn on the background | Layer > Sketch from This Layer: the sketch goes on top with a new Color layer under it, ready to paint |
 | Merge down (or merge a group) | Ctrl+E |
 | Show, lock, rename, reorder a layer | Layers panel: tick the box, tick Lock, double-click the name, drag the row (onto a group to put it inside) |
 | Layer blend mode and opacity | Top of the Layers panel |
