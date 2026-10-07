@@ -3359,7 +3359,21 @@ void MainWindow::setPaperOnly(bool on)
         syncOptionBars(); // the tool may have changed meanwhile
         // The window may take a while to be its old size (see resizeEvent).
         m_chromeSettling = size() != m_chromeSize;
-        QTimer::singleShot(4000, this, [this] { m_chromeSettling = false; });
+        // And if the system never gives it back, take it: its old place and
+        // size, then the docks once more at that size.
+        QTimer::singleShot(1500, this, [this] {
+            if (m_paperOnly || !m_chromeSettling)
+                return;
+            if (size() != m_chromeSize && !isFullScreen()) {
+                restoreGeometry(m_chromeGeometry);
+                restoreState(m_chromeState, kSettingsVersion);
+                syncOptionBars();
+            }
+        });
+        QTimer::singleShot(4000, this, [this] {
+            if (!m_paperOnly)
+                m_chromeSettling = false;
+        });
         QTimer::singleShot(0, this, [this] {
             if (!m_paperOnly && m_stack)
                 m_view->fitToWindow();
