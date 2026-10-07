@@ -391,6 +391,7 @@ signals:
 protected:
     void closeEvent(QCloseEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void createActions();
@@ -620,6 +621,13 @@ private:
     QByteArray m_chromeState;         // the docks and toolbars, to put back
     Qt::WindowStates m_chromeWindow;  // and whether it was maximised
     QList<QWidget *> m_chromeHidden;  // what else was put away
+    QByteArray m_chromeGeometry;      // the window's place and size before
+    QSize m_chromeSize;
+    // Back from Paper Only, until the window is its old size again. Some
+    // systems (macOS) take a second over leaving full screen, and docks put
+    // back while the window is still screen-sized are scaled down with it,
+    // out of proportion: they're put back again as it shrinks.
+    bool m_chromeSettling = false;
     bool m_docksBalanced = false;
     // The adjustment layer and history state the last settings entry belongs to.
     int m_adjustLayer = 0;

@@ -4,6 +4,7 @@
 #include "mainwindow.h"
 
 #include <QDockWidget>
+#include <QHash>
 #include <QMenuBar>
 #include <QScrollBar>
 #include <QSettings>
@@ -68,6 +69,16 @@ QList<QWidget *> chrome(MainWindow &w)
     return out;
 }
 
+// Where each dock that's showing is, in the window.
+QHash<QString, QRect> dockPlaces(MainWindow &w)
+{
+    QHash<QString, QRect> out;
+    for (QDockWidget *dock : w.findChildren<QDockWidget *>())
+        if (dock->isVisible() && !dock->visibleRegion().isEmpty())
+            out.insert(dock->objectName(), dock->geometry());
+    return out;
+}
+
 QList<QWidget *> visibleOf(const QList<QWidget *> &all)
 {
     QList<QWidget *> out;
@@ -100,7 +111,8 @@ private slots:
         const QList<QWidget *> before = visibleOf(chrome(w));
         QVERIFY(before.size() >= 8);
         const QSize viewBefore = w.canvasView()->size();
-        const QByteArray layout = w.saveState();
+        const QSize windowBefore = w.size();
+        const QHash<QString, QRect> docksBefore = dockPlaces(w);
         QVERIFY(!w.isPaperOnly());
 
         w.setPaperOnly(true);
@@ -121,10 +133,23 @@ private slots:
         w.setPaperOnly(false);
         QVERIFY(!w.isPaperOnly());
         QTRY_VERIFY(!w.isFullScreen());
+        // Some systems take a second or more over leaving full screen.
+        QTRY_COMPARE_WITH_TIMEOUT(w.size(), windowBefore, 8000);
         QTest::qWait(300);
         QCOMPARE(visibleOf(chrome(w)), before);
         QVERIFY(!strip->isVisible());
-        QCOMPARE(w.saveState(), layout); // docks and toolbars where they were
+        // The docks are where they were and the size they were.
+        const QHash<QString, QRect> docksAfter = dockPlaces(w);
+        QCOMPARE(docksAfter.keys().size(), docksBefore.keys().size());
+        for (auto it = docksBefore.cbegin(); it != docksBefore.cend(); ++it) {
+            const QRect now = docksAfter.value(it.key());
+            QVERIFY2(qAbs(now.x() - it->x()) <= 2 && qAbs(now.y() - it->y()) <= 2
+                         && qAbs(now.width() - it->width()) <= 2 && qAbs(now.height() - it->height()) <= 2,
+                     qPrintable(QStringLiteral("%1 was %2,%3 %4x%5 and is %6,%7 %8x%9")
+                                    .arg(it.key())
+                                    .arg(it->x()).arg(it->y()).arg(it->width()).arg(it->height())
+                                    .arg(now.x()).arg(now.y()).arg(now.width()).arg(now.height())));
+        }
         for (QDockWidget *dock : w.findChildren<QDockWidget *>())
             QVERIFY(!dock->isFloating());
     }
@@ -217,19 +242,30 @@ private slots:
 
     void closingFromPaperOnlyKeepsTheWorkingLayout()
     {
-        QByteArray layout;
+        QSize size;
+        QHash<QString, QRect> docks;
         {
             MainWindow w;
             setupWindow(w);
-            layout = w.saveState();
+            size = w.size();
+            docks = dockPlaces(w);
             w.setPaperOnly(true);
             QTRY_VERIFY(w.isFullScreen());
+            QTest::qWait(300);
             w.close();
         }
         MainWindow w;
-        setupWindow(w);
+        w.show(); // at the size and with the layout that was saved
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        QTest::qWait(300);
         QVERIFY(!w.isPaperOnly());
-        QVERIFY(w.menuBar()->isVisible());
+        QVERIFY(!w.isFullScreen());
+        // Its old size, give or take a window frame; not the full screen's.
+        QVERIFY2(qAbs(w.width() - size.width()) <= 8 && qAbs(w.height() - size.height()) <= 8,
+                 qPrintable(QStringLiteral("%1 x %2").arg(w.width()).arg(w.height())));
+        // (On macOS the menu bar is the system's, at the top of the screen.)
+        QVERIFY(w.menuBar()->isVisible() || w.menuBar()->isNativeMenuBar());
+        QCOMPARE(dockPlaces(w).keys().size(), docks.keys().size());
         QVERIFY(w.findChild<QDockWidget *>(QStringLiteral("LayersDock"))->isVisible());
         QVERIFY(w.findChild<QToolBar *>(QStringLiteral("ToolsBar"))->isVisible());
     }

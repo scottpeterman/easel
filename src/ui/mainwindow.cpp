@@ -55,6 +55,7 @@
 #include <QMimeData>
 #include <QPointer>
 #include <QSettings>
+#include <QResizeEvent>
 #include <QShowEvent>
 #include <QSlider>
 #include <QSpinBox>
@@ -3089,12 +3090,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
         QApplication::restoreOverrideCursor();
     }
 
-    // The layout to come back to is the working one, not the bare paper.
-    setPaperOnly(false);
-
     QSettings settings;
-    settings.setValue(QStringLiteral("geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("windowState"), saveState(kSettingsVersion));
+    if (m_paperOnly || m_chromeSettling) {
+        // The layout to come back to is the working one as it was, not the
+        // bare paper, nor whatever the window is part-way back to.
+        settings.setValue(QStringLiteral("geometry"), m_chromeGeometry);
+        settings.setValue(QStringLiteral("windowState"), m_chromeState);
+    } else {
+        settings.setValue(QStringLiteral("geometry"), saveGeometry());
+        settings.setValue(QStringLiteral("windowState"), saveState(kSettingsVersion));
+    }
     settings.setValue(QStringLiteral("lastDir"), m_lastDir);
     m_color->saveSettings(settings);
     m_brush->saveSettings(settings);
@@ -3275,6 +3280,18 @@ void MainWindow::toggleFloatingDock(QDockWidget *dock)
     dock->raise();
 }
 
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    if (!m_chromeSettling || m_paperOnly)
+        return;
+    // Still shrinking back from full screen: the docks as they were, at this size.
+    restoreState(m_chromeState, kSettingsVersion);
+    syncOptionBars();
+    if (size() == m_chromeSize)
+        m_chromeSettling = false;
+}
+
 void MainWindow::setPaperOnly(bool on)
 {
     if (on == m_paperOnly)
@@ -3283,8 +3300,13 @@ void MainWindow::setPaperOnly(bool on)
         createPaperStrip();
 
     if (on) {
-        m_chromeState = saveState(kSettingsVersion);
-        m_chromeWindow = windowState();
+        if (!m_chromeSettling) { // else what's saved is still the layout to go back to
+            m_chromeState = saveState(kSettingsVersion);
+            m_chromeGeometry = saveGeometry();
+            m_chromeWindow = windowState();
+            m_chromeSize = size();
+        }
+        m_chromeSettling = false;
         m_paperOnly = true;
 
         // Shortcuts live on the menus' actions, and stop with the menu bar
@@ -3335,6 +3357,9 @@ void MainWindow::setPaperOnly(bool on)
         m_chromeHidden.clear();
         restoreState(m_chromeState, kSettingsVersion);
         syncOptionBars(); // the tool may have changed meanwhile
+        // The window may take a while to be its old size (see resizeEvent).
+        m_chromeSettling = size() != m_chromeSize;
+        QTimer::singleShot(4000, this, [this] { m_chromeSettling = false; });
         QTimer::singleShot(0, this, [this] {
             if (!m_paperOnly && m_stack)
                 m_view->fitToWindow();
