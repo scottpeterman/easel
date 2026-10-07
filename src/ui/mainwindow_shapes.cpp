@@ -5,6 +5,7 @@
 #include "canvasview.h"
 #include "colorpanel.h"
 #include "selecttools.h"
+#include "toolbarrow.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -121,7 +122,7 @@ void MainWindow::createShapeOptions()
     row->addWidget(m_shapeSnap);
     row->addSpacing(12);
     row->addWidget(hint, 1);
-    m_shapeOptions->addWidget(host);
+    spreadAcrossToolBar(m_shapeOptions, host);
 
     const auto changed = [this] {
         ShapeOptions o = m_shapeOpts;

@@ -22,6 +22,8 @@
 namespace {
 
 const QSize kSmallScreen(1221, 718);
+// The widest the window may insist on being, whatever tool is active.
+const int kNarrowest = 900;
 
 void showAt(MainWindow &w, QSize size)
 {
@@ -33,13 +35,14 @@ void showAt(MainWindow &w, QSize size)
     QCoreApplication::processEvents();
 }
 
-// Text the widget would need more room than it has to show in full.
+// Text the widget would need more room than it has to show in full. Hints
+// made to be cut short (they ignore their own width) don't count.
 template <typename T>
 QStringList cutShort(QToolBar *bar)
 {
     QStringList out;
     for (T *w : bar->findChildren<T *>()) {
-        if (!w->isVisible() || w->text().isEmpty())
+        if (!w->isVisible() || w->text().isEmpty() || w->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored)
             continue;
         if (w->width() < w->sizeHint().width())
             out << w->text();
@@ -169,12 +172,23 @@ private slots:
             tool->trigger();
             QTest::qWait(20);
             QCoreApplication::processEvents();
+            saveShot(w, qPrintable(QStringLiteral("small-tool-") + tool->text()));
+            // Well inside the screen, not a pixel under it: fonts and themes
+            // differ from one machine to the next.
             const QSize min = w.minimumSizeHint();
-            QVERIFY2(min.width() <= kSmallScreen.width() && min.height() <= kSmallScreen.height(),
+            QVERIFY2(min.width() <= kNarrowest && min.height() <= kSmallScreen.height(),
                      qPrintable(QStringLiteral("%1: the window needs %2 x %3")
                                     .arg(tool->text())
                                     .arg(min.width())
                                     .arg(min.height())));
+            // Whichever options bar the tool shows, nothing on it is cut short.
+            for (QToolBar *bar : w.findChildren<QToolBar *>()) {
+                if (!bar->isVisible() || !bar->objectName().endsWith(QStringLiteral("OptionsBar")))
+                    continue;
+                const QStringList cut = cutShort<QLabel>(bar) + cutShort<QAbstractButton>(bar);
+                QVERIFY2(cut.isEmpty(), qPrintable(tool->text() + QStringLiteral(" cut short: ")
+                                                   + cut.join(QStringLiteral(", "))));
+            }
             QCOMPARE(w.size(), kSmallScreen);
         }
     }

@@ -8,10 +8,11 @@
 #include "edittools.h"
 #include "fillops.h"
 #include "filterdialog.h"
-#include "shadedialog.h"
 #include "filters.h"
 #include "gradienteditor.h"
 #include "selecttools.h"
+#include "shadedialog.h"
+#include "toolbarrow.h"
 
 #include <QAction>
 #include <QApplication>
@@ -122,7 +123,7 @@ void MainWindow::createTransformOptions()
     button(tr("Apply"), tr("Apply the transform (Enter)"), &MainWindow::commitFloating);
     button(tr("Cancel"), tr("Put everything back (Escape)"), &MainWindow::cancelFloating);
     row->addStretch(1);
-    m_transformOptions->addWidget(host);
+    spreadAcrossToolBar(m_transformOptions, host);
 
     // A linked edit keeps the shape: the other side changes by the same factor.
     connect(m_xfWidth, &QDoubleSpinBox::valueChanged, this, [this, link](double v) {
@@ -539,7 +540,7 @@ void MainWindow::createFillOptions()
     row->addSpacing(12);
     row->addWidget(hint);
     row->addStretch(1);
-    m_fillOptions->addWidget(host);
+    spreadAcrossToolBar(m_fillOptions, host);
 
     connect(slider, &QSlider::valueChanged, m_fillTolerance, &QSpinBox::setValue);
     connect(m_fillTolerance, &QSpinBox::valueChanged, this, [this, slider](int v) {
@@ -637,7 +638,7 @@ void MainWindow::createGradientOptions()
     m_gradientReverse->setToolTip(tr("Swap the two ends"));
     row->addWidget(m_gradientReverse);
     row->addStretch(1);
-    m_gradientOptions->addWidget(host);
+    spreadAcrossToolBar(m_gradientOptions, host);
 
     connect(m_gradientPreset, &QComboBox::activated, this, [this](int i) {
         m_gradient.preset = m_gradientPreset->itemData(i).toString();

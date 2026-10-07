@@ -16,6 +16,7 @@
 #include "selecttools.h"
 #include "textpanel.h"
 #include "textrender.h"
+#include "toolbarrow.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -599,7 +600,7 @@ void MainWindow::createToolBars()
         row->addSpacing(12);
         row->addWidget(hint);
         row->addStretch(1);
-        m_wandOptions->addWidget(host);
+        spreadAcrossToolBar(m_wandOptions, host);
 
         connect(slider, &QSlider::valueChanged, spin, &QSpinBox::setValue);
         connect(spin, &QSpinBox::valueChanged, this, [this, slider](int v) {

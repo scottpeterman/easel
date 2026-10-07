@@ -73,10 +73,6 @@ BrushOptionsBar::BrushOptionsBar(BrushTool *tool, QWidget *parent)
                          sizeToSlider, sliderToSize);
     m_size.slider->setRange(0, 1000);
     m_opacity = sliderGroup(tr("Opacity"), 1, 100, tr("%"), identity, identity, &m_opacityLabel);
-    // "Strength" (smudge) is the wider of the two this label shows: room for
-    // it now, so switching tools doesn't shuffle the bar.
-    m_opacityLabel->setMinimumWidth(qMax(m_opacityLabel->fontMetrics().horizontalAdvance(tr("Strength")),
-                                         m_opacityLabel->fontMetrics().horizontalAdvance(tr("Opacity"))));
     m_hardness = sliderGroup(tr("Hardness"), 0, 100, tr("%"), identity, identity);
     m_stabilizer = sliderGroup(tr("Stabilizer"), 0, 100, tr("%"), identity, identity);
 

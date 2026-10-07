@@ -7,6 +7,8 @@ add_library(easeletch_ui STATIC
     brushtool.cpp
     brushoptionsbar.h
     brushoptionsbar.cpp
+    toolbarrow.h
+    toolbarrow.cpp
     colorpanel.h
     colorpanel.cpp
     colorwheel.h
