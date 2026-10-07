@@ -21,7 +21,9 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 ### Painting
 
-- Round brush with size, opacity, hardness, flow and spacing, and a stabilizer that steadies a shaky line
+- **Ready-made brushes**: the Brush button is a list of pencils (HB, 2B, 6B, mechanical), ink (fineliner, tech pen, brush pen, marker), charcoal and chalk, and paint (round brush, airbrush), each shown as a sample of its stroke
+- Pencil and charcoal have **grain**: a light touch only catches the high points of the paper, and pressing harder fills it in
+- Every brush can be changed from there: size, opacity, hardness, flow, spacing and grain, and a stabilizer that steadies a shaky line
 - Pen pressure for size and for opacity
 - Eraser and Smudge
 - Straight lines: Shift+click draws one from where the last stroke ended, and dragging on carries the stroke forward from there
@@ -136,6 +138,8 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - 16-bit float colour in linear light throughout, so repeated edits and saves don't lose quality
 - Unpainted areas take no memory or disk space
 - Undo keeps only what each step changed, within a 1 GB budget; the History panel jumps to any step
+- Undo and Redo buttons at the foot of the tool strip, for a tablet with no keyboard
+- Fits a small screen: on a 12" tablet the tool options that don't fit go behind a **>>** button at the end of the bar, and a long palette scrolls
 - Opens PNG, JPEG, WebP and other common image formats; exports PNG, JPEG and WebP
 - `.easeletch` documents keep every layer, mask, adjustment and page, and include a preview image other programs can read
 - Opening, saving and exporting run in the background; a failed save never damages the previous file
@@ -176,6 +180,9 @@ Whole jobs, step by step, with pictures.
 | --- | --- |
 | Paint | Left-drag or pen |
 | Brush / Eraser / Smudge / Eyedropper | B / E / S / I |
+| Choose a pencil, pen or charcoal | The arrow on the Brush button, or press the button again once the brush is in use. Choosing one sets the brush to it, size included |
+| More or less paper showing through | **Grain** under **More** in the tool options |
+| Undo / redo without a keyboard | **Undo** and **Redo** at the foot of the tool strip; hold Undo to keep going back |
 | Smaller / larger brush | [ / ] |
 | A straight line | Shift+click: from where the last stroke ended to the click |
 | Paint both sides at once | **Mirror** in the tool options: Left / right, Top / bottom or Both. The line is in the middle of the canvas; **More** has where it sits, and **Centre** to put it back |
@@ -326,8 +333,8 @@ ctest --test-dir build --output-on-failure
 Every push to `main` builds and tests on Linux, Windows and macOS and uploads packages as workflow artifacts. Pushing a `v*` tag also publishes a GitHub release:
 
 ```
-git tag v0.10.0
-git push origin v0.10.0
+git tag v0.12.0
+git push origin v0.12.0
 ```
 
 | Platform | Package |
