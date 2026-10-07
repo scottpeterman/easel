@@ -4,6 +4,7 @@ A layered image editor that sits between a paint program and GIMP: easy to pick 
 
 ![Easeletch with a layered document open: tools on the left, the canvas, and the Layers, Color and History panels](docs/images/screenshot.png)
 
+
 It is built for making and reworking pictures: drawing sprites, cleaning up scanned line art and shading it, and turning photos, renders and generated images into pencil and ink drawings. The two [guides](#guides) walk through whole pieces of work from start to finish.
 
 ## Download
