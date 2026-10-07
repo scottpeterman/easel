@@ -28,8 +28,8 @@ const QList<PaperStyle> &paperStyles()
         make("coldpress", QStringLiteral("Cold press"), "#f3f0e6", 0.06, 3.6, 0.0, 0.01),
         make("cream", QStringLiteral("Cream"), "#f2e8d0", 0.03, 1.8, 0.0, 0.0),
         // Skin, not pulp: smooth, and never one even colour.
-        make("parchment", QStringLiteral("Parchment"), "#e4d0a4", 0.025, 2.0, 0.0, 0.09),
-        make("sepia", QStringLiteral("Sepia"), "#c9b08c", 0.04, 2.2, 0.01, 0.04),
+        make("parchment", QStringLiteral("Parchment"), "#e4d0a4", 0.025, 2.0, 0.0, 0.04),
+        make("sepia", QStringLiteral("Sepia"), "#c9b08c", 0.04, 2.2, 0.01, 0.025),
         make("kraft", QStringLiteral("Kraft"), "#b5946b", 0.045, 2.4, 0.04, 0.015),
         make("grey", QStringLiteral("Grey"), "#b8b8b2", 0.04, 2.2, 0.0, 0.0),
         // For chalk and light pencil.
@@ -64,8 +64,10 @@ float surfaceAt(const PaperStyle &style, int x, int y)
         v += float(style.fibres) * 4.5f * (std::copysign(a, across) + std::copysign(d, down));
     }
     if (style.mottle > 0.0)
-        v += float(style.mottle) * ((smoothNoise(x, y, 140.0, 140.0, 21) - 0.5f) * 1.4f
-                                    + (smoothNoise(x, y, 38.0, 38.0, 22) - 0.5f) * 0.6f);
+        // Broad and slow: seen across the whole sheet it should read as an
+        // uneven tone, not as separate blotches.
+        v += float(style.mottle) * ((smoothNoise(x, y, 420.0, 420.0, 21) - 0.5f) * 1.4f
+                                    + (smoothNoise(x, y, 130.0, 130.0, 22) - 0.5f) * 0.6f);
     return v;
 }
 

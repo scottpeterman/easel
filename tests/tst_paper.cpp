@@ -107,8 +107,15 @@ private slots:
         }
         painter.end();
         const QString dir = qEnvironmentVariable("EASELETCH_TEST_SHOTS");
-        if (!dir.isEmpty())
+        if (!dir.isEmpty()) {
             sheet.save(dir + QStringLiteral("/papers.png"));
+            // A whole sheet as it looks zoomed out to fit a screen: what's
+            // subtle in a patch can be loud across a page.
+            for (const char *id : {"parchment", "sepia"})
+                paperPreview(*paperStyle(QLatin1String(id)), QSize(2000, 1500))
+                    .scaled(800, 600, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                    .save(dir + QStringLiteral("/sheet-%1.png").arg(QLatin1String(id)));
+        }
     }
 };
 
