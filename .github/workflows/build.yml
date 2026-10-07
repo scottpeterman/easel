@@ -11,8 +11,33 @@ env:
   QT_VERSION: '6.10.3'
 
 jobs:
+  # A release pushes a commit to main and a tag on that same commit, which is
+  # two pushes and would be two identical builds. The branch's build stands
+  # down when its commit carries a v* tag: the tag's run builds and publishes.
+  # Push the two together (git push --atomic origin main vX.Y.Z) so the tag is
+  # there by the time this looks for it.
+  gate:
+    name: Decide whether to build
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - id: check
+        shell: bash
+        run: |
+          build=true
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "branch" ]; then
+            if git ls-remote --tags "https://github.com/${{ github.repository }}" 'v*' | grep -q "^${{ github.sha }}"; then
+              echo "This commit is tagged for release: leaving the build to the tag's run."
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
