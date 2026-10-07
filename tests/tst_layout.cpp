@@ -3,6 +3,7 @@
 #include "mainwindow.h"
 
 #include <QAbstractButton>
+#include <QApplication>
 #include <QCheckBox>
 #include <QDockWidget>
 #include <QLabel>
@@ -191,6 +192,56 @@ private slots:
             }
             QCOMPARE(w.size(), kSmallScreen);
         }
+    }
+
+    // The machine it's used on won't have this one's font. A bigger one makes
+    // every row of every panel taller; the window must still fit.
+    void theDocksKeepToThemselvesWithABiggerFont()
+    {
+        const QFont usual = QApplication::font();
+        QFont big = usual;
+        big.setPointSizeF(usual.pointSizeF() * 1.35);
+        QApplication::setFont(big);
+        {
+            MainWindow w;
+            showAt(w, kSmallScreen);
+            auto *panel = w.findChild<ColorPanel *>();
+            QVERIFY(panel);
+            for (int i = 0; i < ColorPanel::MaxRecent; ++i)
+                panel->noteUsed(QColor::fromHsv(i * 20, 255, 255));
+            QTest::qWait(500);
+            QCoreApplication::processEvents();
+            saveShot(w, "small-big-font");
+
+            const QSize min = w.minimumSizeHint();
+            QVERIFY2(min.height() <= kSmallScreen.height() && min.width() <= kSmallScreen.width(),
+                     qPrintable(QStringLiteral("the window needs %1 x %2").arg(min.width()).arg(min.height())));
+            QCOMPARE(w.size(), kSmallScreen);
+
+            QList<QWidget *> parts;
+            for (QDockWidget *dock : w.findChildren<QDockWidget *>())
+                if (dock->isVisible() && !dock->visibleRegion().isEmpty())
+                    parts << dock;
+            for (QTabBar *tabs : w.findChildren<QTabBar *>())
+                if (tabs->isVisible() && tabs->parentWidget() == &w)
+                    parts << tabs;
+            QVERIFY(parts.size() >= 4);
+            for (int i = 0; i < parts.size(); ++i)
+                for (int j = i + 1; j < parts.size(); ++j)
+                    QVERIFY2(!parts.at(i)->geometry().intersects(parts.at(j)->geometry()),
+                             qPrintable(QStringLiteral("%1 overlaps %2")
+                                            .arg(parts.at(i)->windowTitle().isEmpty()
+                                                     ? QStringLiteral("the dock tabs")
+                                                     : parts.at(i)->windowTitle(),
+                                                 parts.at(j)->windowTitle().isEmpty()
+                                                     ? QStringLiteral("the dock tabs")
+                                                     : parts.at(j)->windowTitle())));
+            // Every dock's panel is inside its dock.
+            for (QDockWidget *dock : w.findChildren<QDockWidget *>())
+                if (dock->isVisible() && dock->widget() && !dock->visibleRegion().isEmpty())
+                    QVERIFY2(dock->rect().contains(dock->widget()->geometry()), qPrintable(dock->windowTitle()));
+        }
+        QApplication::setFont(usual);
     }
 
     void brushOptionsAreNotCutShort()

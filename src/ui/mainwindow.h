@@ -364,10 +364,14 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     void createActions();
     void createToolBars();
+    // Shares the right-hand column out between the docks, the first time
+    // the window is shown with no saved layout.
+    void balanceDocks();
     // The Brush button's list of ready-made brushes, and Undo / Redo at the
     // foot of the tool strip (for a tablet, where there's no Ctrl+Z).
     void createBrushPresets();
@@ -576,6 +580,8 @@ private:
     AdjustPanel *m_adjustPanel = nullptr;
     QDockWidget *m_adjustDock = nullptr;
     QDockWidget *m_colorDock = nullptr;
+    bool m_layoutRestored = false;
+    bool m_docksBalanced = false;
     // The adjustment layer and history state the last settings entry belongs to.
     int m_adjustLayer = 0;
     quint64 m_adjustState = 0;

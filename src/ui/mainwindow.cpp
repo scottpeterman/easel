@@ -51,6 +51,7 @@
 #include <QMimeData>
 #include <QPointer>
 #include <QSettings>
+#include <QShowEvent>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStatusBar>
@@ -69,7 +70,9 @@ using easeletch::BrushMode;
 
 namespace {
 
-constexpr int kSettingsVersion = 2;
+// 3: the docks' smallest sizes changed, and a layout saved while they were
+// being crushed into a small screen isn't one to go back to.
+constexpr int kSettingsVersion = 3;
 constexpr char kClipMime[] = "application/x-easeletch-clip";
 
 QString openFilter()
@@ -195,7 +198,7 @@ MainWindow::MainWindow(QWidget *parent)
     grid.load(settings);
     setGridSettings(grid);
     restoreGeometry(settings.value(QStringLiteral("geometry")).toByteArray());
-    restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
+    m_layoutRestored = restoreState(settings.value(QStringLiteral("windowState")).toByteArray(), kSettingsVersion);
     m_wandOptions->hide(); // shown with the wand
     m_transformOptions->hide(); // ... and with a transform
     m_fillOptions->hide();
@@ -642,13 +645,16 @@ namespace {
 // hints stop at a few lines of text, so the docks sharing a column with it
 // would take the space and leave it scrolling for no reason.
 //
-// It insists on its widget's smallest size only up to MaxMinimumHeight: a
-// panel that grows past that scrolls, where a plain dock would make the
-// window's own smallest size grow with it, past a small screen's.
+// It insists on its widget's smallest size only up to MaxMinimumHeight, which
+// is little: on a screen too short for every panel in the column, this one
+// scrolls. A plain dock would instead add its panel's smallest height to the
+// window's, and a window held shorter than that by a small screen has its
+// panels drawn over one another. How tall the others are depends on the
+// machine's font, so there is no fixed height that is safe to insist on.
 class FittedScrollArea : public QScrollArea
 {
 public:
-    static constexpr int MaxMinimumHeight = 310;
+    static constexpr int MaxMinimumHeight = 150;
 
     using QScrollArea::QScrollArea;
 
@@ -714,7 +720,15 @@ void MainWindow::createDocks()
     m_adjustPanel = new AdjustPanel;
     m_adjustDock = new QDockWidget(tr("Adjustment"), this);
     m_adjustDock->setObjectName(QStringLiteral("AdjustmentDock"));
-    m_adjustDock->setWidget(m_adjustPanel);
+    // Scrolls on a short screen, as the colour panel sharing its place does:
+    // curves with their sliders are the tallest thing in the column.
+    auto *adjustScroll = new FittedScrollArea(m_adjustDock);
+    adjustScroll->setObjectName(QStringLiteral("AdjustmentScroll"));
+    adjustScroll->setFrameShape(QFrame::NoFrame);
+    adjustScroll->setWidgetResizable(true);
+    adjustScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    adjustScroll->setWidget(m_adjustPanel);
+    m_adjustDock->setWidget(adjustScroll);
     addDockWidget(Qt::RightDockWidgetArea, m_adjustDock);
     connect(m_adjustPanel, &AdjustPanel::addRequested, this, &MainWindow::addAdjustmentLayer);
     connect(m_adjustPanel, &AdjustPanel::adjustmentChanged, this, [this](const easeletch::Adjustment &a) {
@@ -758,12 +772,47 @@ void MainWindow::createDocks()
     });
 
     m_historyList = new QListWidget;
+    m_historyList->setMinimumHeight(m_historyList->fontMetrics().height() * 2 + 8); // two steps; it scrolls
     auto *historyDock = new QDockWidget(tr("History"), this);
     historyDock->setObjectName(QStringLiteral("HistoryDock"));
     historyDock->setWidget(m_historyList);
     addDockWidget(Qt::RightDockWidgetArea, historyDock);
     connect(m_historyList, &QListWidget::itemClicked, this, &MainWindow::historyItemClicked);
     connect(m_brush, &BrushTool::strokeCommitted, this, &MainWindow::historyChanged);
+}
+
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+    if (m_docksBalanced || m_layoutRestored)
+        return;
+    m_docksBalanced = true;
+    // Once the window has its size: there's no column to share out before.
+    QTimer::singleShot(0, this, &MainWindow::balanceDocks);
+}
+
+void MainWindow::balanceDocks()
+{
+    // The first time, with no layout of the user's own to go back to: the
+    // colour panel gets the height it asks for, so nothing in it scrolls if
+    // the screen allows; History a few steps; the layers the rest. Left to
+    // itself Qt shares the column out evenly and the lists take what the
+    // colour panel needed.
+    auto *layers = findChild<QDockWidget *>(QStringLiteral("LayersDock"));
+    auto *history = findChild<QDockWidget *>(QStringLiteral("HistoryDock"));
+    if (!layers || !history || !m_colorDock || layers->isFloating() || history->isFloating()
+        || m_colorDock->isFloating() || !layers->isVisible() || !history->isVisible())
+        return;
+    QDockWidget *middle = m_colorDock->visibleRegion().isEmpty() ? m_adjustDock : m_colorDock;
+    const int column = layers->height() + middle->height() + history->height();
+    const int row = fontMetrics().height() + 6;
+    const int historyWant = qMax(history->minimumSizeHint().height(), 4 * row); // a few steps and its title
+    const int layersLeast = layers->minimumSizeHint().height();
+    // All the colour panel asks for if there's room; less, down to scrolling, if not.
+    const int colorWant = qBound(m_colorDock->minimumSizeHint().height(), column - historyWant - layersLeast,
+                                 m_colorDock->sizeHint().height());
+    const int layersWant = qMax(layersLeast, column - historyWant - colorWant);
+    resizeDocks({layers, middle, history}, {layersWant, colorWant, historyWant}, Qt::Vertical);
 }
 
 void MainWindow::createStatusBar()
