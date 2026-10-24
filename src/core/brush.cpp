@@ -26,7 +26,8 @@ double BrushSettings::dabStrengthAt(double pressure) const
 double BrushSettings::spacingAt(double pressure) const
 {
     // A thin tip is spaced by its thickness, or it would leave gaps going sideways.
-    const double thick = tip == BrushTip::Round ? 1.0 : std::clamp(aspect, 0.05, 1.0);
+    // A cluster of marks is spaced by the cluster, whatever shape its marks are.
+    const double thick = tip == BrushTip::Round || marks > 1 ? 1.0 : std::clamp(aspect, 0.05, 1.0);
     const double step = std::max(0.5, std::clamp(spacing, 0.01, 2.0) * diameterAt(pressure) * thick);
     // Pixel mode snaps dabs to pixels: step at most a pixel so lines stay unbroken.
     return pixel ? std::min(step, 1.0) : step;
@@ -204,16 +205,24 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     // Pre-size the mask table: growing it mid-stroke rehashes on the UI thread
     // and showed up as 5-10 ms hitches at 512 and 1024 touched tiles.
     m_mask.reserve(8192);
+    m_paint.clear();
+    m_multiColor = mode == BrushMode::Paint && !settings.pixel && settings.smear <= 0.0
+                   && (settings.valueJitter > 0.0 || settings.hueJitter > 0.0 || settings.edge > 0.0);
+    if (m_multiColor)
+        m_paint.reserve(8192);
     m_dabCount = 0;
     m_jitterStep = 0;
     const bool shaped = settings.tip != BrushTip::Round && !settings.pixel;
-    m_needsHeading = !settings.pixel && ((shaped && settings.followStroke) || settings.streaks > 0.0);
+    m_needsHeading = !settings.pixel
+                     && ((shaped && settings.followStroke) || settings.streaks > 0.0
+                         || (settings.edge > 0.0 && mode == BrushMode::Paint));
     m_hasHeading = false;
     m_hasPending = false;
     m_headingFrom = first.pos;
     m_strokeSeed = hash2(int(std::lround(first.pos.x() * 16.0)), int(std::lround(first.pos.y() * 16.0)));
 
     const QColor c = color.toRgb();
+    m_baseColor = c;
     m_color[0] = srgbToLinear(float(c.redF()));
     m_color[1] = srgbToLinear(float(c.greenF()));
     m_color[2] = srgbToLinear(float(c.blueF()));
@@ -261,6 +270,7 @@ QHash<TileCoord, QImage> BrushStroke::end()
     m_target = nullptr;
     m_before = TileStore();
     m_mask.clear();
+    m_paint.clear();
     m_touched.clear();
     m_carry.clear();
     return before;
@@ -330,23 +340,122 @@ void BrushStroke::paintOne(const StrokeSample &d, const QPointF &wide)
         smudgeDab(d, wide);
         return;
     }
-    paintDab(d, wide);
+    QList<Mark> marks;
+    marksFor(d, wide, marks);
     const bool mirrored = m_symmetry != Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
-    if (!mirrored)
-        return;
     const bool acrossX = m_symmetry == Symmetry::LeftRight || m_symmetry == Symmetry::Quarters;
     const bool acrossY = m_symmetry == Symmetry::TopBottom || m_symmetry == Symmetry::Quarters;
-    // The dab's centre is mirrored as it's painted (on its pixel, in
-    // pixel mode), so the two sides match pixel for pixel. Its tip is
-    // mirrored with it.
-    const QPointF c = dabCentre(d.pos, m_settings.pixel);
-    const QPointF flipped(2.0 * m_axis.x() - c.x(), 2.0 * m_axis.y() - c.y());
-    if (acrossX)
-        paintDab({QPointF(flipped.x(), c.y()), d.pressure}, QPointF(-wide.x(), wide.y()));
-    if (acrossY)
-        paintDab({QPointF(c.x(), flipped.y()), d.pressure}, QPointF(wide.x(), -wide.y()));
-    if (acrossX && acrossY)
-        paintDab({flipped, d.pressure}, QPointF(-wide.x(), -wide.y()));
+    for (const Mark &m : std::as_const(marks)) {
+        paintMark(m);
+        if (!mirrored)
+            continue;
+        // The mark's centre is mirrored as it's painted (on its pixel, in
+        // pixel mode), so the two sides match pixel for pixel. Its tip is
+        // mirrored with it.
+        const QPointF c = dabCentre(m.pos, m_settings.pixel);
+        const QPointF flipped(2.0 * m_axis.x() - c.x(), 2.0 * m_axis.y() - c.y());
+        Mark mm = m;
+        if (acrossX) {
+            mm.pos = QPointF(flipped.x(), c.y());
+            mm.wide = QPointF(-m.wide.x(), m.wide.y());
+            paintMark(mm);
+        }
+        if (acrossY) {
+            mm.pos = QPointF(c.x(), flipped.y());
+            mm.wide = QPointF(m.wide.x(), -m.wide.y());
+            paintMark(mm);
+        }
+        if (acrossX && acrossY) {
+            mm.pos = flipped;
+            mm.wide = QPointF(-m.wide.x(), -m.wide.y());
+            paintMark(mm);
+        }
+    }
+}
+
+void BrushStroke::shadeColor(double dv, double dh, double desaturate, float out[3]) const
+{
+    float h = 0, sat = 0, v = 0;
+    m_baseColor.getHsvF(&h, &sat, &v);
+    v = float(dv >= 0.0 ? v + (1.0 - v) * dv : v * (1.0 + dv));
+    sat = float(sat * (1.0 - std::clamp(desaturate, 0.0, 1.0)));
+    if (h >= 0.0f) // greys have no hue to turn
+        h = float(std::fmod(h + dh / 12.0 + 1.0, 1.0));
+    else
+        h = 0.0f;
+    const QColor c = QColor::fromHsvF(h, std::clamp(sat, 0.0f, 1.0f), std::clamp(v, 0.0f, 1.0f));
+    out[0] = srgbToLinear(float(c.redF()));
+    out[1] = srgbToLinear(float(c.greenF()));
+    out[2] = srgbToLinear(float(c.blueF()));
+}
+
+void BrushStroke::marksFor(const StrokeSample &d, const QPointF &wide, QList<Mark> &out)
+{
+    const double p = std::clamp(d.pressure, 0.0, 1.0);
+    const double radius = std::max(0.5, m_settings.diameterAt(d.pressure) * 0.5);
+    const bool pixel = m_settings.pixel;
+    const double vj = std::clamp(m_settings.valueJitter, 0.0, 1.0);
+    const double hj = std::clamp(m_settings.hueJitter, 0.0, 1.0);
+    const auto plain = [&](Mark &m) { std::copy(m_color, m_color + 3, m.color); };
+    // Repeatable per stroke: the same stroke scatters the same way.
+    const auto roll = [&](int salt) {
+        return unit(hash2(int(m_jitterStep), int(m_strokeSeed & 0xFFFF) * 31 + salt));
+    };
+
+    const int count = pixel ? 1 : std::clamp(m_settings.marks, 1, 64);
+    if (count <= 1) {
+        Mark m{d.pos, d.pressure, radius, wide};
+        if (m_multiColor && (vj > 0.0 || hj > 0.0)) {
+            shadeColor((roll(5) * 2.0 - 1.0) * vj, (roll(6) * 2.0 - 1.0) * hj, 0.0, m.color);
+            ++m_jitterStep;
+        } else {
+            plain(m);
+        }
+        out.append(m);
+    } else {
+        // A cluster: fewer marks at a light touch, the full count pressed hard.
+        const int n = std::max(1, int(std::lround(count * (0.3 + 0.7 * p))));
+        const double markR = std::max(0.5, radius * std::clamp(m_settings.markSize, 0.05, 1.0));
+        const double sizeJ = std::clamp(m_settings.sizeJitter, 0.0, 0.95);
+        const double turnJ = std::clamp(m_settings.angleJitter, 0.0, 1.0) * 3.141592653589793;
+        for (int i = 0; i < n; ++i) {
+            Mark m;
+            m.pressure = d.pressure;
+            m.radius = std::max(0.5, markR * (1.0 - sizeJ * roll(3)));
+            // Evenly over the disc the marks stay inside.
+            const double reach = std::max(0.0, radius - m.radius);
+            const double dist = std::sqrt(roll(1)) * reach;
+            const double ang = roll(2) * 6.283185307179586;
+            m.pos = d.pos + QPointF(std::cos(ang), std::sin(ang)) * dist;
+            const double turn = (roll(4) * 2.0 - 1.0) * turnJ;
+            const double ct = std::cos(turn), st = std::sin(turn);
+            m.wide = QPointF(wide.x() * ct - wide.y() * st, wide.x() * st + wide.y() * ct);
+            if (m_multiColor)
+                shadeColor((roll(5) * 2.0 - 1.0) * vj, (roll(6) * 2.0 - 1.0) * hj, 0.0, m.color);
+            else
+                plain(m);
+            ++m_jitterStep;
+            out.append(m);
+        }
+    }
+
+    if (!pixel && m_settings.edge > 0.0 && m_mode == BrushMode::Paint && m_settings.marks <= 1) {
+        // Bark: a thin lit edge beside the groove, on the side facing the
+        // light, wandering a little in and out as a real edge does.
+        const double la = m_settings.lightAngle * 3.141592653589793 / 180.0;
+        const QPointF toLight(std::cos(la), std::sin(la));
+        const double side = wide.x() * toLight.x() + wide.y() * toLight.y() >= 0.0 ? 1.0 : -1.0;
+        const double er = std::max(0.5, radius * std::clamp(m_settings.edgeWidth, 0.05, 1.0));
+        const double wobble = 1.0 + 0.35 * (smoothNoise(int(m_jitterStep), 0, 5.0, 1.0, int(m_strokeSeed & 0xFF)) * 2.0 - 1.0);
+        ++m_jitterStep;
+        Mark e;
+        e.pressure = d.pressure;
+        e.radius = er;
+        e.wide = wide;
+        e.pos = d.pos + wide * (side * (radius + er * 0.8) * wobble);
+        shadeColor(std::clamp(m_settings.edge, 0.0, 1.0), 0.0, 0.7 * m_settings.edge, e.color);
+        out.append(e);
+    }
 }
 
 float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF &wide) const
@@ -363,7 +472,14 @@ float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF 
 
     float outside; // distance beyond the tip's edge, in pixels (negative inside)
     float depth;   // 0 at the centre, 1 at the edge
-    if (m_settings.tip == BrushTip::Flat) {
+    if (m_settings.tip == BrushTip::Leaf) {
+        // Pointed at both ends: as wide across as b in the middle, narrowing
+        // to nothing at either end of its length.
+        const float t = std::min(u / a, 1.0f);
+        const float half = b * (1.0f - t * t);
+        outside = std::max(v - half, u - a);
+        depth = std::max(t, half > 1e-3f ? v / half : 1.0f);
+    } else if (m_settings.tip == BrushTip::Flat) {
         // A bar with its corners a little rounded.
         const float r = b * 0.35f;
         const float qx = u - (a - r), qy = v - (b - r);
@@ -396,10 +512,12 @@ float BrushStroke::coverageAt(double dist, double radius) const
     return dabCoverage(dist, radius, m_settings.hardness);
 }
 
-void BrushStroke::paintDab(const StrokeSample &dab, const QPointF &wide)
+void BrushStroke::paintMark(const Mark &mark)
 {
     constexpr int N = TileStore::TileSize;
-    const double radius = std::max(0.5, m_settings.diameterAt(dab.pressure) * 0.5);
+    const StrokeSample dab{mark.pos, mark.pressure};
+    const QPointF &wide = mark.wide;
+    const double radius = mark.radius;
     const float strength = float(m_settings.dabStrengthAt(dab.pressure));
     if (strength <= 0.0f)
         return;
@@ -437,6 +555,13 @@ void BrushStroke::paintDab(const StrokeSample &dab, const QPointF &wide)
         std::vector<float> &mask = m_mask[c];
         if (mask.empty())
             mask.assign(size_t(N) * N, 0.0f);
+        float *paint = nullptr;
+        if (m_multiColor) {
+            std::vector<float> &pv = m_paint[c];
+            if (pv.empty())
+                pv.assign(size_t(N) * N * 3, 0.0f);
+            paint = pv.data();
+        }
         m_touched.insert(c);
 
         const QImage beforeImg = m_before.tile(c);
@@ -488,6 +613,15 @@ void BrushStroke::paintDab(const StrokeSample &dab, const QPointF &wide)
                 float &m = mask[size_t(i)];
                 m += a * (1.0f - m);
                 const float cov = m * opacity * clip;
+                // The stroke's colour here: each mark's laid over the last.
+                float col[3] = {mark.color[0], mark.color[1], mark.color[2]};
+                if (paint) {
+                    float *pc = paint + size_t(i) * 3;
+                    for (int k = 0; k < 3; ++k) {
+                        pc[k] = mark.color[k] * a + pc[k] * (1.0f - a);
+                        col[k] = pc[k] / std::max(m, 1e-6f);
+                    }
+                }
 
                 const Pixel &d = before ? before[i] : def;
                 const float dr = float(d.r), dg = float(d.g), db = float(d.b), da = float(d.a);
@@ -508,8 +642,8 @@ void BrushStroke::paintDab(const StrokeSample &dab, const QPointF &wide)
                 } else {
                     const float sa = m_colorAlpha * cov; // source alpha
                     const float k = 1.0f - sa;
-                    out[i] = makePixel(m_color[0] * sa + dr * k, m_color[1] * sa + dg * k,
-                                       m_color[2] * sa + db * k, sa + da * k);
+                    out[i] = makePixel(col[0] * sa + dr * k, col[1] * sa + dg * k,
+                                       col[2] * sa + db * k, sa + da * k);
                 }
             }
         }

@@ -1,6 +1,8 @@
 #include "brushpresets.h"
 
 #include <QPainter>
+
+#include <cmath>
 #include <QSet>
 #include <QTest>
 
@@ -70,7 +72,7 @@ private slots:
             }
         }
         QCOMPARE(groups, QStringList({QStringLiteral("Pencils"), QStringLiteral("Ink"), QStringLiteral("Charcoal"),
-                                      QStringLiteral("Paint")}));
+                                      QStringLiteral("Paint"), QStringLiteral("Trees")}));
         QVERIFY(!brushPreset(QStringLiteral("no-such-brush")));
 
         // The plain brush is what a brush has always been.
@@ -378,6 +380,146 @@ private slots:
             p.end();
             large.save(dir + QStringLiteral("/brush-previews-large.png"));
         }
+    }
+
+    void aColourBufferStrokeOfOneColourMatchesThePlainOne()
+    {
+        // Jitter too small to change a colour turns on the per-mark colour
+        // buffer; what it lays down must be what the plain stroke does.
+        BrushSettings soft = stick();
+        soft.hardness = 0.3;
+        soft.opacity = 0.7;
+        soft.flow = 0.4;
+        BrushSettings buffered = soft;
+        buffered.valueJitter = 1e-9;
+        const auto run = [](const BrushSettings &b) {
+            TileStore s(Qt::white);
+            BrushStroke stroke;
+            stroke.begin(&s, kBounds, b, QColor(40, 110, 60), BrushMode::Paint, {{40, 60}, 1.0});
+            for (int x = 44; x <= 360; x += 4)
+                stroke.moveTo({{double(x), 60 + 20 * std::sin(x / 40.0)}, 1.0});
+            stroke.end();
+            return s;
+        };
+        const TileStore a = run(soft), b = run(buffered);
+        for (int y = 30; y <= 90; ++y)
+            for (int x = 30; x <= 370; ++x) {
+                const QColor ca = pixelToColor(a.pixel(x, y)), cb = pixelToColor(b.pixel(x, y));
+                QVERIFY2(qAbs(ca.red() - cb.red()) <= 1 && qAbs(ca.green() - cb.green()) <= 1
+                             && qAbs(ca.blue() - cb.blue()) <= 1,
+                         qPrintable(QStringLiteral("%1,%2").arg(x).arg(y)));
+            }
+    }
+
+    void foliageScattersLeavesOfManyShades()
+    {
+        const BrushPreset *f = brushPreset(QStringLiteral("foliage"));
+        QVERIFY(f);
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        const QColor green(60, 120, 50);
+        stroke.begin(&s, kBounds, f->settings, green, BrushMode::Paint, {{60, 100}, 1.0});
+        for (int x = 64; x <= 340; x += 4)
+            stroke.moveTo({{double(x), 100}, 1.0});
+        stroke.end();
+
+        QSet<QRgb> shades;
+        int inked = 0, bare = 0, offLine = 0;
+        for (int y = 72; y <= 128; ++y)
+            for (int x = 80; x <= 320; ++x) {
+                const QColor c = pixelToColor(s.pixel(x, y));
+                if (c == QColor(Qt::white)) {
+                    ++bare;
+                    continue;
+                }
+                ++inked;
+                if (qAbs(y - 100) > 15)
+                    ++offLine;
+                if (c.alpha() == 255 && c.lightnessF() < 0.9)
+                    shades.insert(c.rgb());
+            }
+        // Leaves all over the brush, with paper showing between them, in
+        // plenty of greens.
+        QVERIFY2(inked > 2000, qPrintable(QString::number(inked)));
+        QVERIFY2(bare > 1000, qPrintable(QString::number(bare)));
+        QVERIFY2(offLine > 300, qPrintable(QString::number(offLine)));
+        QVERIFY2(shades.size() > 50, qPrintable(QString::number(shades.size())));
+        // Shades of the painting colour, not other colours: green stays on top.
+        for (const QRgb c : std::as_const(shades))
+            QVERIFY(qGreen(c) >= qRed(c) && qGreen(c) >= qBlue(c));
+    }
+
+    void foliagePressedLightlyLaysFewerLeaves()
+    {
+        const BrushPreset *f = brushPreset(QStringLiteral("foliage"));
+        QVERIFY(f);
+        BrushSettings b = f->settings;
+        b.pressureSize = false; // the same size, only the count changes
+        const double light = inkIn(strokeWith(b, 0.1), kBounds);
+        const double hard = inkIn(strokeWith(b, 1.0), kBounds);
+        QVERIFY2(hard > light * 1.4, qPrintable(QStringLiteral("%1 %2").arg(light).arg(hard)));
+    }
+
+    void foliageIsRepeatableAndMirrors()
+    {
+        const BrushPreset *f = brushPreset(QStringLiteral("foliage"));
+        QVERIFY(f);
+        const TileStore a = strokeWith(f->settings, 0.8, Symmetry::LeftRight);
+        const TileStore b = strokeWith(f->settings, 0.8, Symmetry::LeftRight);
+        // The same stroke scatters the same way, and its mirror image with it.
+        for (int y = 20; y <= 100; ++y)
+            for (int x = 0; x < 400; ++x) {
+                QCOMPARE(a.pixel(x, y), b.pixel(x, y));
+                const QColor l = pixelToColor(a.pixel(x, y)), r = pixelToColor(a.pixel(399 - x, y));
+                QVERIFY2(qAbs(l.lightness() - r.lightness()) <= 2, qPrintable(QStringLiteral("%1,%2").arg(x).arg(y)));
+            }
+    }
+
+    void barkHasALitEdgeOnTheLightsSideOnly()
+    {
+        const BrushPreset *bark = brushPreset(QStringLiteral("bark-left"));
+        QVERIFY(bark);
+        BrushSettings b = bark->settings;
+        b.size = 12;
+        b.pressureSize = false;
+        b.lightAngle = 270.0; // from above
+        const QColor ground(128, 128, 128);
+        TileStore s(ground);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, QColor(70, 45, 30), BrushMode::Paint, {{40, 100}, 1.0});
+        for (int x = 44; x <= 360; x += 4)
+            stroke.moveTo({{double(x), 100}, 1.0});
+        stroke.end();
+
+        const int groundL = ground.lightness();
+        int litAbove = 0, litBelow = 0, darkOnLine = 0;
+        for (int x = 80; x <= 320; ++x) {
+            for (int y = 86; y <= 99; ++y)
+                litAbove += pixelToColor(s.pixel(x, y)).lightness() > groundL + 20;
+            for (int y = 101; y <= 114; ++y)
+                litBelow += pixelToColor(s.pixel(x, y)).lightness() > groundL + 20;
+            darkOnLine += pixelToColor(s.pixel(x, 100)).lightness() < groundL - 40;
+        }
+        QVERIFY2(darkOnLine > 230, qPrintable(QString::number(darkOnLine)));
+        QVERIFY2(litAbove > 240, qPrintable(QString::number(litAbove)));
+        QCOMPARE(litBelow, 0);
+
+        // Light from the other side puts the edge there instead.
+        b.lightAngle = 90.0;
+        TileStore t(ground);
+        stroke.begin(&t, kBounds, b, QColor(70, 45, 30), BrushMode::Paint, {{40, 100}, 1.0});
+        for (int x = 44; x <= 360; x += 4)
+            stroke.moveTo({{double(x), 100}, 1.0});
+        stroke.end();
+        int below = 0, above = 0;
+        for (int x = 80; x <= 320; ++x) {
+            for (int y = 101; y <= 114; ++y)
+                below += pixelToColor(t.pixel(x, y)).lightness() > groundL + 20;
+            for (int y = 86; y <= 99; ++y)
+                above += pixelToColor(t.pixel(x, y)).lightness() > groundL + 20;
+        }
+        QVERIFY(below > 240);
+        QCOMPARE(above, 0);
     }
 };
 

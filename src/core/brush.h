@@ -20,8 +20,9 @@ namespace easeletch {
 
 // The shape of the brush's tip. Oval and Flat are as wide as the size and
 // BrushSettings::aspect times that thick: an oval for a filbert, a
-// square-ended bar for a flat brush or a knife.
-enum class BrushTip { Round, Oval, Flat };
+// square-ended bar for a flat brush or a knife. Leaf is pointed at both
+// ends, as long as the size and aspect times that across at its widest.
+enum class BrushTip { Round, Oval, Flat, Leaf };
 
 struct BrushSettings {
     double size = 24.0;      // diameter in canvas pixels at full pressure
@@ -61,6 +62,26 @@ struct BrushSettings {
     // Brush mode only: above 0 the stroke lays no paint. It drags what is
     // already there, this strongly, as a palette knife does.
     double smear = 0.0;
+
+    // Foliage: above 1, every dab is a cluster of this many marks scattered
+    // over the brush, each markSize times its diameter. More of them the
+    // harder it's pressed. The tip shapes each mark.
+    int marks = 1;
+    double markSize = 1.0;
+    double sizeJitter = 0.0;  // each mark up to this much smaller
+    double angleJitter = 0.0; // each mark turned up to this fraction of a half turn either way
+    // Each mark's colour wanders from the painting colour: lighter or darker
+    // by up to this much, and its hue by up to a twelfth of the way round.
+    double valueJitter = 0.0;
+    double hueJitter = 0.0;
+
+    // Bark: above 0, a thin lighter line runs beside the stroke on the side
+    // the light comes from, this much of the way to white. lightAngle is
+    // where the light comes from, in degrees (0 from the right, 90 from
+    // below, 180 from the left, 270 from above).
+    double edge = 0.0;
+    double lightAngle = 180.0;
+    double edgeWidth = 0.3; // across the edge, as a fraction of the tip's width
 
     static constexpr double MinSize = 1.0;
     static constexpr double MaxSize = 1000.0;
@@ -167,8 +188,18 @@ public:
 
 private:
     void paintDabs(const QList<StrokeSample> &dabs);
+    // One mark of paint: where, how big, which way, what colour.
+    struct Mark {
+        QPointF pos;
+        double pressure = 1.0;
+        double radius = 0.5;
+        QPointF wide;
+        float color[3] = {0, 0, 0}; // linear
+    };
     void paintOne(const StrokeSample &dab, const QPointF &wide);
-    void paintDab(const StrokeSample &dab, const QPointF &wide);
+    void marksFor(const StrokeSample &dab, const QPointF &wide, QList<Mark> &out);
+    void paintMark(const Mark &mark);
+    void shadeColor(double dv, double dh, double desaturate, float out[3]) const;
     void smudgeDab(const StrokeSample &dab, const QPointF &wide);
     bool smears() const { return m_mode == BrushMode::Smudge || (m_mode == BrushMode::Paint && m_settings.smear > 0.0); }
     // Coverage of the tip at an offset from the dab's centre. wide: the unit
@@ -191,6 +222,11 @@ private:
     Stabilizer m_stabilizer;
     DabSpacer m_spacer;
     QHash<TileCoord, std::vector<float>> m_mask;
+    // Strokes whose marks differ in colour keep, beside the coverage, the
+    // colour laid so far (linear, premultiplied by that coverage).
+    bool m_multiColor = false;
+    QHash<TileCoord, std::vector<float>> m_paint;
+    QColor m_baseColor;
     QSet<TileCoord> m_touched;
     Selection m_clip;
     int m_dabCount = 0;

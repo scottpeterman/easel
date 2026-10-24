@@ -125,7 +125,7 @@ private slots:
             }
         }
         QCOMPARE(rows, int(brushPresets().size()));
-        QCOMPARE(headings, 4);
+        QCOMPARE(headings, 5);
         // The whole list fits a 12" tablet's screen without scrolling.
         QVERIFY2(list->height() <= 680, qPrintable(QString::number(list->height())));
         QVERIFY(rowFor(list, QStringLiteral("knife")) && rowFor(list, QStringLiteral("flat")));

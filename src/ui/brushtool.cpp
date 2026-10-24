@@ -28,13 +28,22 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.minSize = s.value(QStringLiteral("minSize"), b.minSize).toDouble();
     b.jitter = s.value(QStringLiteral("jitter"), b.jitter).toDouble();
     const int tip = s.value(QStringLiteral("tip"), int(b.tip)).toInt();
-    b.tip = tip >= int(easeletch::BrushTip::Round) && tip <= int(easeletch::BrushTip::Flat) ? easeletch::BrushTip(tip)
+    b.tip = tip >= int(easeletch::BrushTip::Round) && tip <= int(easeletch::BrushTip::Leaf) ? easeletch::BrushTip(tip)
                                                                                            : easeletch::BrushTip::Round;
     b.aspect = s.value(QStringLiteral("aspect"), b.aspect).toDouble();
     b.followStroke = s.value(QStringLiteral("followStroke"), b.followStroke).toBool();
     b.angle = s.value(QStringLiteral("angle"), b.angle).toDouble();
     b.streaks = s.value(QStringLiteral("streaks"), b.streaks).toDouble();
     b.smear = s.value(QStringLiteral("smear"), b.smear).toDouble();
+    b.marks = s.value(QStringLiteral("marks"), b.marks).toInt();
+    b.markSize = s.value(QStringLiteral("markSize"), b.markSize).toDouble();
+    b.sizeJitter = s.value(QStringLiteral("sizeJitter"), b.sizeJitter).toDouble();
+    b.angleJitter = s.value(QStringLiteral("angleJitter"), b.angleJitter).toDouble();
+    b.valueJitter = s.value(QStringLiteral("valueJitter"), b.valueJitter).toDouble();
+    b.hueJitter = s.value(QStringLiteral("hueJitter"), b.hueJitter).toDouble();
+    b.edge = s.value(QStringLiteral("edge"), b.edge).toDouble();
+    b.lightAngle = s.value(QStringLiteral("lightAngle"), b.lightAngle).toDouble();
+    b.edgeWidth = s.value(QStringLiteral("edgeWidth"), b.edgeWidth).toDouble();
     s.endGroup();
 }
 
@@ -60,6 +69,15 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("angle"), b.angle);
     s.setValue(QStringLiteral("streaks"), b.streaks);
     s.setValue(QStringLiteral("smear"), b.smear);
+    s.setValue(QStringLiteral("marks"), b.marks);
+    s.setValue(QStringLiteral("markSize"), b.markSize);
+    s.setValue(QStringLiteral("sizeJitter"), b.sizeJitter);
+    s.setValue(QStringLiteral("angleJitter"), b.angleJitter);
+    s.setValue(QStringLiteral("valueJitter"), b.valueJitter);
+    s.setValue(QStringLiteral("hueJitter"), b.hueJitter);
+    s.setValue(QStringLiteral("edge"), b.edge);
+    s.setValue(QStringLiteral("lightAngle"), b.lightAngle);
+    s.setValue(QStringLiteral("edgeWidth"), b.edgeWidth);
     s.endGroup();
 }
 

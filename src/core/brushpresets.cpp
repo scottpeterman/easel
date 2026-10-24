@@ -21,6 +21,7 @@ const QList<BrushPreset> &brushPresets()
     const QString ink = QStringLiteral("Ink");
     const QString charcoal = QStringLiteral("Charcoal");
     const QString paint = QStringLiteral("Paint");
+    const QString trees = QStringLiteral("Trees");
 
     // Sizes suit a canvas a couple of thousand pixels across.
     static const QList<BrushPreset> presets = {
@@ -128,6 +129,42 @@ const QList<BrushPreset> &brushPresets()
              [](BrushSettings &b) {
                  b.size = 80, b.hardness = 0.0, b.opacity = 1.0, b.flow = 0.08, b.spacing = 0.06;
                  b.pressureSize = false, b.pressureOpacity = true;
+             }),
+
+        // Trees: the painter's round-brush leaf dabbing and knife-cut bark.
+        // Foliage is built up dark to light: a pass in the shadow colour,
+        // then the mid tone, then the lit leaves, each on its own layer.
+        make("foliage", QStringLiteral("Foliage"), trees,
+             [](BrushSettings &b) {
+                 b.size = 60, b.hardness = 0.75, b.opacity = 1.0, b.flow = 0.95, b.spacing = 0.45;
+                 b.pressureSize = true, b.minSize = 0.6, b.pressureOpacity = false;
+                 b.tip = BrushTip::Leaf, b.aspect = 0.5, b.followStroke = false, b.angle = 90.0;
+                 b.marks = 14, b.markSize = 0.22, b.sizeJitter = 0.5, b.angleJitter = 1.0;
+                 b.valueJitter = 0.18, b.hueJitter = 0.12;
+             }),
+        make("foliage-far", QStringLiteral("Distant foliage"), trees,
+             [](BrushSettings &b) {
+                 // Fine speckle for a treeline or a far canopy.
+                 b.size = 40, b.hardness = 0.5, b.opacity = 1.0, b.flow = 0.9, b.spacing = 0.4;
+                 b.pressureSize = true, b.minSize = 0.6, b.pressureOpacity = false;
+                 b.marks = 22, b.markSize = 0.1, b.sizeJitter = 0.6;
+                 b.valueJitter = 0.12, b.hueJitter = 0.08;
+             }),
+        make("bark-left", QStringLiteral("Bark, light from left"), trees,
+             [](BrushSettings &b) {
+                 // A dark groove that tapers at both ends, with a thin lit
+                 // edge beside it on the side the light comes from.
+                 b.size = 9, b.hardness = 0.9, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.15;
+                 b.pressureSize = true, b.minSize = 0.3, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.5, b.followStroke = true;
+                 b.edge = 0.65, b.lightAngle = 180.0, b.edgeWidth = 0.3;
+             }),
+        make("bark-right", QStringLiteral("Bark, light from right"), trees,
+             [](BrushSettings &b) {
+                 b.size = 9, b.hardness = 0.9, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.15;
+                 b.pressureSize = true, b.minSize = 0.3, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.5, b.followStroke = true;
+                 b.edge = 0.65, b.lightAngle = 0.0, b.edgeWidth = 0.3;
              }),
     };
     return presets;
