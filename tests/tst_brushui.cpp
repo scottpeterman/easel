@@ -115,6 +115,10 @@ private slots:
         int rows = 0, headings = 0;
         for (int i = 0; i < list->count(); ++i) {
             const QListWidgetItem *item = list->item(i);
+            if (item->data(MainWindow::BrushListSpacerRole).toBool()) {
+                QVERIFY(!(item->flags() & Qt::ItemIsSelectable));
+                continue;
+            }
             if (item->data(Qt::UserRole).toString().isEmpty()) {
                 QVERIFY(!(item->flags() & Qt::ItemIsSelectable));
                 ++headings;
@@ -128,6 +132,16 @@ private slots:
         QCOMPARE(headings, 5);
         // The whole list fits a 12" tablet's screen without scrolling.
         QVERIFY2(list->height() <= 680, qPrintable(QString::number(list->height())));
+        // In two columns, each starting at a heading: the trees beside the pencils.
+        const QListWidgetItem *pencils = list->item(0), *paint = nullptr;
+        for (int i = 0; i < list->count(); ++i)
+            if (list->item(i)->text() == QStringLiteral("Paint"))
+                paint = list->item(i);
+        QVERIFY(paint);
+        QCOMPARE(list->visualItemRect(paint).top(), list->visualItemRect(pencils).top());
+        QVERIFY(list->visualItemRect(paint).left() > list->visualItemRect(pencils).left());
+        const QRect trees = list->visualItemRect(rowFor(list, QStringLiteral("bark-right")));
+        QVERIFY2(list->viewport()->rect().contains(trees), "the last brush is out of view");
         QVERIFY(rowFor(list, QStringLiteral("knife")) && rowFor(list, QStringLiteral("flat")));
         QCOMPARE(list->currentItem(), rowFor(list, defaultBrushPresetId()));
     }

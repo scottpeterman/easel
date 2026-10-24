@@ -62,6 +62,9 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
+    // On the brush list's blank filler that starts its second column at a heading.
+    static constexpr int BrushListSpacerRole = Qt::UserRole + 1;
+
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 

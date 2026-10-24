@@ -917,33 +917,74 @@ void MainWindow::createBrushPresets()
     m_brushList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_brushList->setMouseTracking(true);
 
-    int height = 0, width = 0;
-    QString group;
-    const QFontMetrics metrics(m_brushList->font());
+    // Two columns, split between headings, so every brush is in view at once
+    // on a tablet without the list growing past its screen.
+    struct Group {
+        QString name;
+        QList<const easeletch::BrushPreset *> presets;
+        int height() const { return kHeadingHeight + int(presets.size()) * kRowHeight; }
+    };
+    QList<Group> groups;
     for (const easeletch::BrushPreset &p : easeletch::brushPresets()) {
-        if (p.group != group) {
-            group = p.group;
-            auto *heading = new QListWidgetItem(tr(qPrintable(group)), m_brushList);
-            heading->setFlags(Qt::NoItemFlags); // a heading: not to be chosen
-            QFont bold = m_brushList->font();
-            bold.setBold(true);
-            heading->setFont(bold);
-            heading->setSizeHint(QSize(0, kHeadingHeight));
-            height += kHeadingHeight;
-        }
-        auto *item = new QListWidgetItem(brushIcon(p.settings, kPreview, m_brushList), tr(qPrintable(p.name)),
-                                         m_brushList);
-        item->setData(Qt::UserRole, p.id);
-        item->setSizeHint(QSize(0, kRowHeight));
-        height += kRowHeight;
-        width = qMax(width, metrics.horizontalAdvance(item->text()));
+        if (groups.isEmpty() || groups.last().name != p.group)
+            groups.append({p.group, {}});
+        groups.last().presets.append(&p);
     }
-    const int scrollBar = style()->pixelMetric(QStyle::PM_ScrollBarExtent);
-    m_brushList->setFixedWidth(kPreview.width() + width + 28 + scrollBar);
-    // All of it at once where the screen is tall enough; scrolling where not.
-    const QScreen *display = screen() ? screen() : QGuiApplication::primaryScreen();
-    const int room = display ? display->availableGeometry().height() * 9 / 10 : height;
-    m_brushList->setFixedHeight(qMin(height + 4, qMax(room, 4 * kRowHeight)));
+    // The split that makes the taller column as short as it can be.
+    int split = int(groups.size()), column = 0;
+    {
+        int total = 0;
+        for (const Group &g : groups)
+            total += g.height();
+        int left = 0, best = total;
+        for (int i = 0; i < groups.size(); ++i) {
+            left += groups[i].height();
+            const int taller = qMax(left, total - left);
+            if (taller < best) {
+                best = taller;
+                split = i + 1;
+            }
+        }
+        column = best;
+    }
+
+    const QFontMetrics metrics(m_brushList->font());
+    int width = 0;
+    for (const Group &g : groups)
+        for (const easeletch::BrushPreset *p : g.presets)
+            width = qMax(width, metrics.horizontalAdvance(tr(qPrintable(p->name))));
+    const int columnWidth = kPreview.width() + width + 28;
+
+    m_brushList->setFlow(QListView::TopToBottom);
+    m_brushList->setWrapping(true);
+    m_brushList->setUniformItemSizes(false);
+    m_brushList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    int used = 0;
+    for (int gi = 0; gi < groups.size(); ++gi) {
+        if (gi == split && used < column) {
+            // Fill out the first column, so the second starts at a heading.
+            auto *pad = new QListWidgetItem(m_brushList);
+            pad->setFlags(Qt::NoItemFlags);
+            pad->setData(BrushListSpacerRole, true);
+            pad->setSizeHint(QSize(columnWidth, column - used));
+        }
+        const Group &g = groups[gi];
+        auto *heading = new QListWidgetItem(tr(qPrintable(g.name)), m_brushList);
+        heading->setFlags(Qt::NoItemFlags); // a heading: not to be chosen
+        QFont bold = m_brushList->font();
+        bold.setBold(true);
+        heading->setFont(bold);
+        heading->setSizeHint(QSize(columnWidth, kHeadingHeight));
+        for (const easeletch::BrushPreset *p : g.presets) {
+            auto *item = new QListWidgetItem(brushIcon(p->settings, kPreview, m_brushList), tr(qPrintable(p->name)),
+                                             m_brushList);
+            item->setData(Qt::UserRole, p->id);
+            item->setSizeHint(QSize(columnWidth, kRowHeight));
+        }
+        used += g.height();
+    }
+    const int columns = split < groups.size() ? 2 : 1;
+    m_brushList->setFixedSize(columns * columnWidth + 4, column + 4);
 
     auto *holder = new QWidgetAction(m_brushMenu);
     holder->setDefaultWidget(m_brushList);
