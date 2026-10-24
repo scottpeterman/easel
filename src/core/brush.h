@@ -22,7 +22,9 @@ namespace easeletch {
 // BrushSettings::aspect times that thick: an oval for a filbert, a
 // square-ended bar for a flat brush or a knife. Leaf is pointed at both
 // ends, as long as the size and aspect times that across at its widest.
-enum class BrushTip { Round, Oval, Flat, Leaf };
+// Fan is a fan brush: a spread of bristles whose ragged tips leave an arc of
+// separate marks, sagging away from the handle (down, held level).
+enum class BrushTip { Round, Oval, Flat, Leaf, Fan };
 
 struct BrushSettings {
     double size = 24.0;      // diameter in canvas pixels at full pressure
@@ -41,6 +43,10 @@ struct BrushSettings {
     // what makes a mark read as pencil or charcoal rather than paint.
     double grain = 0.0;
     double grainSize = 2.0; // across one bump of the paper, in canvas pixels
+    // Above 1, the paper's bumps are this many times longer along the stroke
+    // than across it: a loaded knife skipping over the canvas leaves broken
+    // streaks that run the way it was pulled.
+    double grainStretch = 1.0;
     // With pressure size: how much of the diameter is left at the lightest
     // touch. 0 tapers to nothing (a brush pen); 0.7 hardly changes (a pencil).
     double minSize = 0.0;
@@ -207,6 +213,7 @@ private:
     float tipCoverage(float dx, float dy, double radius, const QPointF &wide) const;
     void finishHeal();
     float coverageAt(double dist, double radius) const;
+    float fanCoverage(float u, float v, float a) const;
 
     TileStore *m_target = nullptr;
     TileStore m_before;

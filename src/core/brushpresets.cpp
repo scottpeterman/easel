@@ -125,6 +125,24 @@ const QList<BrushPreset> &brushPresets()
                  b.pressureSize = false, b.pressureOpacity = false;
                  b.tip = BrushTip::Flat, b.aspect = 0.12, b.smear = 0.85;
              }),
+        make("fan", QStringLiteral("Fan brush"), paint,
+             [](BrushSettings &b) {
+                 // Tap it for a fir's boughs: each touch leaves an arc of
+                 // bristle marks, drooping. Pull it for grass and branches.
+                 b.size = 36, b.hardness = 0.85, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.2;
+                 b.pressureSize = true, b.minSize = 0.45, b.pressureOpacity = false;
+                 b.tip = BrushTip::Fan, b.aspect = 1.0, b.followStroke = false, b.angle = 0.0;
+             }),
+        make("knife-loaded", QStringLiteral("Loaded knife"), paint,
+             [](BrushSettings &b) {
+                 // Lays paint, but only where it catches: pulled lightly it
+                 // skips in streaks the way it's going, as on a mountain's
+                 // snow; pressed hard it covers.
+                 b.size = 56, b.hardness = 1.0, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.35;
+                 b.pressureSize = false, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.14, b.followStroke = true;
+                 b.grain = 0.9, b.grainSize = 3.5, b.grainStretch = 7.0;
+             }),
         make("airbrush", QStringLiteral("Airbrush"), paint,
              [](BrushSettings &b) {
                  b.size = 80, b.hardness = 0.0, b.opacity = 1.0, b.flow = 0.08, b.spacing = 0.06;

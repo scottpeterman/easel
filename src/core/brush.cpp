@@ -27,7 +27,7 @@ double BrushSettings::spacingAt(double pressure) const
 {
     // A thin tip is spaced by its thickness, or it would leave gaps going sideways.
     // A cluster of marks is spaced by the cluster, whatever shape its marks are.
-    const double thick = tip == BrushTip::Round || marks > 1 ? 1.0 : std::clamp(aspect, 0.05, 1.0);
+    const double thick = tip == BrushTip::Round || tip == BrushTip::Fan || marks > 1 ? 1.0 : std::clamp(aspect, 0.05, 1.0);
     const double step = std::max(0.5, std::clamp(spacing, 0.01, 2.0) * diameterAt(pressure) * thick);
     // Pixel mode snaps dabs to pixels: step at most a pixel so lines stay unbroken.
     return pixel ? std::min(step, 1.0) : step;
@@ -215,7 +215,8 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     const bool shaped = settings.tip != BrushTip::Round && !settings.pixel;
     m_needsHeading = !settings.pixel
                      && ((shaped && settings.followStroke) || settings.streaks > 0.0
-                         || (settings.edge > 0.0 && mode == BrushMode::Paint));
+                         || (settings.edge > 0.0 && mode == BrushMode::Paint)
+                         || (settings.grain > 0.0 && settings.grainStretch > 1.0));
     m_hasHeading = false;
     m_hasPending = false;
     m_headingFrom = first.pos;
@@ -465,6 +466,8 @@ float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF 
 
     // In the tip's own terms: u along its wide side, v across it.
     const float wx = float(wide.x()), wy = float(wide.y());
+    if (m_settings.tip == BrushTip::Fan)
+        return fanCoverage(dx * wx + dy * wy, -dx * wy + dy * wx, float(radius));
     const float u = std::abs(dx * wx + dy * wy), v = std::abs(-dx * wy + dy * wx);
     const float a = float(radius);
     const float b = std::max(0.5f, a * float(std::clamp(m_settings.aspect, 0.05, 1.0)));
@@ -505,6 +508,38 @@ float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF 
     return std::min(rim, 1.0f - t * t * (3.0f - 2.0f * t));
 }
 
+float BrushStroke::fanCoverage(float u, float v, float a) const
+{
+    // The bristles spread from the ferrule, well behind the dab (towards -v),
+    // and touch down in an arc on the far side: what a tap of a fan leaves.
+    constexpr float kHalfAngle = 0.62f; // about 35 degrees each side
+    constexpr int kBristles = 19;
+    const float py = v + 1.55f * a; // from the ferrule
+    const float rho = std::sqrt(u * u + py * py);
+    if (rho < 1e-3f)
+        return 0.0f;
+    const float theta = std::atan2(u, py);
+    if (std::abs(theta) > kHalfAngle)
+        return 0.0f;
+    // Which bristle, and how far across it: each is a line with a gap beside it.
+    const float f = (theta / kHalfAngle * 0.5f + 0.5f) * float(kBristles);
+    const int b = std::clamp(int(f), 0, kBristles - 1);
+    const float across = std::abs((f - float(b)) - 0.5f) * 2.0f; // 0 middle, 1 edge
+    const float body = std::clamp((0.92f - across) / 0.3f, 0.0f, 1.0f);
+    if (body <= 0.0f)
+        return 0.0f;
+    // Each bristle reaches its own length, and only its end touches down.
+    const quint32 h = hash2(b, int(m_strokeSeed & 0xFFF));
+    const float reach = a * (2.1f + 0.65f * unit(h)); // tip
+    // Only the last stretch touches: a short, thick mark, not a long line.
+    const float from = reach - a * (0.45f + 0.4f * unit(hash2(int(h), 3)));
+    const float hard = float(std::clamp(m_settings.hardness, 0.0, 1.0));
+    const float soft = 1.0f + (1.0f - hard) * a * 0.4f;
+    const float inTip = std::clamp((reach - rho) / soft + 0.5f, 0.0f, 1.0f);
+    const float inHeel = std::clamp((rho - from) / (a * 0.35f), 0.0f, 1.0f);
+    return body * inTip * inHeel;
+}
+
 float BrushStroke::coverageAt(double dist, double radius) const
 {
     if (m_settings.pixel)
@@ -525,15 +560,17 @@ void BrushStroke::paintMark(const Mark &mark)
 
     const QPointF centre = dabCentre(dab.pos, m_settings.pixel);
     const double cx = centre.x(), cy = centre.y();
-    const QRect box = QRect(QPoint(int(std::floor(cx - radius - 1.0)), int(std::floor(cy - radius - 1.0))),
-                            QPoint(int(std::ceil(cx + radius + 1.0)), int(std::ceil(cy + radius + 1.0))))
+    // A fan's bristles splay out past its size; every other tip stays inside it.
+    const double extent = radius * (m_settings.tip == BrushTip::Fan && !m_settings.pixel ? 1.8 : 1.0);
+    const QRect box = QRect(QPoint(int(std::floor(cx - extent - 1.0)), int(std::floor(cy - extent - 1.0))),
+                            QPoint(int(std::ceil(cx + extent + 1.0)), int(std::ceil(cy + extent + 1.0))))
                       & m_bounds;
     if (box.isEmpty())
         return;
 
     const float opacity = float(std::clamp(m_settings.opacity, 0.0, 1.0));
     const Pixel def = m_before.defaultPixel();
-    const float reach = float(radius + 1.0);
+    const float reach = float(extent + 1.0);
     // Paper: how high a point of it has to be to take colour from this dab.
     // A light touch only marks the high points; a heavy one fills most of it.
     const float grain = m_settings.pixel ? 0.0f : float(std::clamp(m_settings.grain, 0.0, 1.0));
@@ -547,6 +584,9 @@ void BrushStroke::paintMark(const Mark &mark)
     const float bristleNeeded = streaks * (0.95f - 0.75f * float(std::clamp(dab.pressure, 0.0, 1.0)));
     const float wx = float(wide.x()), wy = float(wide.y());
     const float bristle = float(std::clamp(m_settings.size / 14.0, 1.2, 4.0)); // across one, in pixels
+    // Stretched paper runs along the stroke: the tip's narrow way.
+    const float stretch = float(std::clamp(m_settings.grainStretch, 1.0, 40.0));
+    const float ax = -wy, ay = wx;
 
     for (const TileCoord c : TileStore::tilesIntersecting(box)) {
         const QRect tr = TileStore::tileRect(c);
@@ -598,9 +638,18 @@ void BrushStroke::paintMark(const Mark &mark)
                         continue;
                 }
                 if (grain > 0.0f) {
-                    const float t = std::clamp(
-                        (paperTooth(x, y, m_settings.grainSize) - (toothNeeded - kToothEdge)) / (2.0f * kToothEdge),
-                        0.0f, 1.0f);
+                    float tooth;
+                    if (stretch > 1.0f) {
+                        // Paper turned to run along the stroke and drawn out that way.
+                        const int along = int(std::lround(float(x) * ax + float(y) * ay));
+                        const int over = int(std::lround(-float(x) * ay + float(y) * ax));
+                        const double gs = std::max(1.0, m_settings.grainSize);
+                        tooth = 0.65f * smoothNoise(over, along, gs, gs * stretch, 11)
+                                + 0.35f * smoothNoise(over, along, std::max(1.0, gs * 0.5), gs * stretch * 0.5, 12);
+                    } else {
+                        tooth = paperTooth(x, y, m_settings.grainSize);
+                    }
+                    const float t = std::clamp((tooth - (toothNeeded - kToothEdge)) / (2.0f * kToothEdge), 0.0f, 1.0f);
                     a *= t * t * (3.0f - 2.0f * t);
                     if (a <= 0.0f)
                         continue;

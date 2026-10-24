@@ -25,10 +25,11 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.pixel = s.value(QStringLiteral("pixel"), b.pixel).toBool();
     b.grain = s.value(QStringLiteral("grain"), b.grain).toDouble();
     b.grainSize = s.value(QStringLiteral("grainSize"), b.grainSize).toDouble();
+    b.grainStretch = s.value(QStringLiteral("grainStretch"), b.grainStretch).toDouble();
     b.minSize = s.value(QStringLiteral("minSize"), b.minSize).toDouble();
     b.jitter = s.value(QStringLiteral("jitter"), b.jitter).toDouble();
     const int tip = s.value(QStringLiteral("tip"), int(b.tip)).toInt();
-    b.tip = tip >= int(easeletch::BrushTip::Round) && tip <= int(easeletch::BrushTip::Leaf) ? easeletch::BrushTip(tip)
+    b.tip = tip >= int(easeletch::BrushTip::Round) && tip <= int(easeletch::BrushTip::Fan) ? easeletch::BrushTip(tip)
                                                                                            : easeletch::BrushTip::Round;
     b.aspect = s.value(QStringLiteral("aspect"), b.aspect).toDouble();
     b.followStroke = s.value(QStringLiteral("followStroke"), b.followStroke).toBool();
@@ -61,6 +62,7 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("pixel"), b.pixel);
     s.setValue(QStringLiteral("grain"), b.grain);
     s.setValue(QStringLiteral("grainSize"), b.grainSize);
+    s.setValue(QStringLiteral("grainStretch"), b.grainStretch);
     s.setValue(QStringLiteral("minSize"), b.minSize);
     s.setValue(QStringLiteral("jitter"), b.jitter);
     s.setValue(QStringLiteral("tip"), int(b.tip));

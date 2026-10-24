@@ -521,6 +521,78 @@ private slots:
         QVERIFY(below > 240);
         QCOMPARE(above, 0);
     }
+
+    void aFanTapLeavesAnArcOfSeparateBristles()
+    {
+        const BrushPreset *fan = brushPreset(QStringLiteral("fan"));
+        QVERIFY(fan);
+        BrushSettings b = fan->settings;
+        b.size = 60;
+        b.pressureSize = false;
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Paint, {{200, 80}, 1.0});
+        stroke.end();
+
+        // Across the imprint, one bristle after another with paper between.
+        int bestRuns = 0;
+        for (int y = 60; y <= 130; ++y) {
+            int runs = 0;
+            bool inInk = false;
+            for (int x = 120; x <= 280; ++x) {
+                const bool ink = pixelToColor(s.pixel(x, y)).lightness() < 128;
+                if (ink && !inInk)
+                    ++runs;
+                inInk = ink;
+            }
+            bestRuns = qMax(bestRuns, runs);
+        }
+        QVERIFY2(bestRuns >= 8, qPrintable(QString::number(bestRuns)));
+        // Held level, the bristles touch down below the handle: it droops.
+        const double below = inkIn(s, QRect(120, 81, 160, 60)), above = inkIn(s, QRect(120, 20, 160, 60));
+        QVERIFY2(below > above * 3, qPrintable(QStringLiteral("%1 %2").arg(above).arg(below)));
+        // And the splay reaches past an ordinary dab of that size.
+        QVERIFY(inkIn(s, QRect(120, 0, 40, 200)) + inkIn(s, QRect(240, 0, 40, 200)) > 0.0);
+    }
+
+    void aLoadedKnifeSkipsLightlyAndCoversWhenPressed()
+    {
+        const BrushPreset *knife = brushPreset(QStringLiteral("knife-loaded"));
+        QVERIFY(knife);
+        QVERIFY(knife->settings.smear == 0.0); // it lays paint
+        const auto pull = [&](double pressure) {
+            TileStore s(QColor(60, 50, 70));
+            BrushStroke stroke;
+            stroke.begin(&s, kBounds, knife->settings, Qt::white, BrushMode::Paint, {{40, 100}, pressure});
+            for (int x = 44; x <= 360; x += 3)
+                stroke.moveTo({{double(x), 100}, pressure});
+            stroke.end();
+            return s;
+        };
+        const QRect band(80, 84, 240, 32);
+        const auto covered = [&](const TileStore &s) {
+            int n = 0;
+            for (int y = band.top(); y <= band.bottom(); ++y)
+                for (int x = band.left(); x <= band.right(); ++x)
+                    n += pixelToColor(s.pixel(x, y)).lightness() > 160;
+            return double(n) / (band.width() * band.height());
+        };
+        const TileStore light = pull(0.2), hard = pull(1.0);
+        const double l = covered(light), h = covered(hard);
+        QVERIFY2(l > 0.1 && l < 0.65, qPrintable(QString::number(l)));
+        QVERIFY2(h > 0.85, qPrintable(QString::number(h)));
+
+        // Where it skips, it skips in streaks the way it was pulled: paint
+        // changes to bare far less often along the stroke than across it.
+        int along = 0, across = 0;
+        for (int y = band.top(); y < band.bottom(); ++y)
+            for (int x = band.left(); x < band.right(); ++x) {
+                const bool here = pixelToColor(light.pixel(x, y)).lightness() > 160;
+                along += here != (pixelToColor(light.pixel(x + 1, y)).lightness() > 160);
+                across += here != (pixelToColor(light.pixel(x, y + 1)).lightness() > 160);
+            }
+        QVERIFY2(across > along * 2, qPrintable(QStringLiteral("%1 %2").arg(along).arg(across)));
+    }
 };
 
 QTEST_MAIN(TestBrushPresets)
