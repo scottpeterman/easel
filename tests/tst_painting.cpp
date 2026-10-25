@@ -355,7 +355,8 @@ private slots:
         QVERIFY(w.brushTool()->settings().size > before);
 
         QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {150, 150}));
-        QCOMPARE(pixelToColor(w.layer()->pixel(150, 150)).alpha(), 0); // erased to transparent
+        // A plain page's background erases back to its own colour.
+        QCOMPARE(pixelToColor(w.layer()->pixel(150, 150)), QColor(Qt::white));
         QCOMPARE(w.history().label(0), QStringLiteral("Eraser"));
 
         QTest::keyClick(view, Qt::Key_B);
