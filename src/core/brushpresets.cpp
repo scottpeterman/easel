@@ -195,12 +195,14 @@ const QList<BrushPreset> &brushPresets()
                  b.size = 140, b.hardness = 0.35, b.opacity = 0.55, b.flow = 1.0, b.spacing = 0.08;
                  b.pressureSize = false, b.pressureOpacity = false;
                  b.watercolor = 0.5, b.granulation = 0.3, b.grainSize = 3.0;
+                 b.wetness = 0.9, b.bleed = 45;
              }),
         make("wc-round", QStringLiteral("Round watercolour"), water,
              [](BrushSettings &b) {
                  b.size = 28, b.hardness = 0.7, b.opacity = 0.7, b.flow = 1.0, b.spacing = 0.08;
                  b.pressureSize = true, b.minSize = 0.25, b.pressureOpacity = true;
                  b.watercolor = 0.75, b.granulation = 0.4, b.grainSize = 2.6;
+                 b.wetness = 0.5, b.bleed = 30;
              }),
         make("wc-flat", QStringLiteral("Flat watercolour"), water,
              [](BrushSettings &b) {
@@ -209,6 +211,15 @@ const QList<BrushPreset> &brushPresets()
                  b.pressureSize = true, b.minSize = 0.6, b.pressureOpacity = false;
                  b.tip = BrushTip::Flat, b.aspect = 0.35, b.followStroke = true, b.streaks = 0.15;
                  b.watercolor = 0.7, b.granulation = 0.5, b.grainSize = 3.0;
+                 b.wetness = 0.6, b.bleed = 35;
+             }),
+        make("wc-water", QStringLiteral("Clear water"), water,
+             [](BrushSettings &b) {
+                 // Wets the paper and lays no colour: paint laid into it
+                 // afterwards runs and feathers. The paper dries in under a minute.
+                 b.size = 120, b.hardness = 0.4, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.1;
+                 b.pressureSize = false, b.pressureOpacity = false;
+                 b.watercolor = 0.5, b.clearWater = true, b.wetness = 1.0;
              }),
     };
     return presets;
@@ -258,11 +269,30 @@ QImage brushPreview(const BrushSettings &settings, const QSize &size, const QCol
             stroke.end();
         }
     }
+    WetPaper wet;
+    if (b.clearWater)
+        stroke.setWetPaper(&wet, 0.0);
     stroke.begin(&store, bounds, b, ink, BrushMode::Paint, sample(0.0));
     const int steps = std::max(16, size.width());
     for (int i = 1; i <= steps; ++i)
         stroke.moveTo(sample(double(i) / steps));
     stroke.end();
+    if (b.clearWater) {
+        // Water alone leaves nothing to see: show what it's for, a few drops
+        // of colour running out into it.
+        BrushSettings drop;
+        drop.size = std::max(3.0, size.height() * 0.22);
+        drop.hardness = 0.7, drop.pressureSize = false, drop.opacity = 0.8;
+        drop.watercolor = 0.7, drop.bleed = size.height() * 0.35, drop.wetness = 0.5;
+        for (int i = 0; i < 4; ++i) {
+            BrushStroke dot;
+            dot.setWetPaper(&wet, 0.0);
+            const StrokeSample at = sample(0.2 + 0.2 * i);
+            dot.begin(&store, bounds, drop, ink, BrushMode::Paint, {at.pos, 1.0});
+            dot.moveTo({at.pos + QPointF(1.5, 0.5), 1.0});
+            dot.end();
+        }
+    }
 
     QPainter painter(&out);
     painter.setCompositionMode(QPainter::CompositionMode_Source);

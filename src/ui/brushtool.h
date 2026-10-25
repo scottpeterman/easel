@@ -6,6 +6,8 @@
 #include "history.h"
 
 #include <QColor>
+#include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QRect>
 
@@ -128,6 +130,10 @@ private:
     QPointF m_axis;
     bool m_hasLastEnd = false;
     QPointF m_lastEnd;
+    // Watercolour: which parts of each layer are still wet, by the layer's
+    // pixels, and the clock the water dries by.
+    QHash<const easeletch::TileStore *, easeletch::WetPaper> m_wet;
+    QElapsedTimer m_clock;
     easeletch::BrushStroke m_stroke;
 };
 

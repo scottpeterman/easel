@@ -745,6 +745,66 @@ private slots:
         QVERIFY2(smooth < 0.01, qPrintable(QString::number(smooth)));
         QVERIFY2(grainy > smooth + 0.015, qPrintable(QStringLiteral("%1 %2").arg(smooth).arg(grainy)));
     }
+
+    void watercolourBleedsOnlyIntoWetPaper()
+    {
+        const BrushPreset *wc = brushPreset(QStringLiteral("wc-round"));
+        const BrushPreset *water = brushPreset(QStringLiteral("wc-water"));
+        QVERIFY(wc && water);
+        BrushSettings b = wc->settings;
+        b.granulation = 0.0, b.pressureSize = false, b.size = 20;
+        const auto paint = [&](TileStore &s, WetPaper *wet, double now) {
+            BrushStroke stroke;
+            stroke.setWetPaper(wet, now);
+            stroke.begin(&s, kBounds, b, QColor(40, 70, 140), BrushMode::Paint, {{100, 100}, 1.0});
+            for (int x = 103; x <= 300; x += 3)
+                stroke.moveTo({{double(x), 100}, 1.0});
+            stroke.end();
+        };
+        // Paint that reaches 30 px away from the stroke's centre line.
+        const auto spread = [&](const TileStore &s) {
+            double ink = 0;
+            for (int x = 150; x <= 250; ++x)
+                ink += 1.0 - pixelToColor(s.pixel(x, 128)).lightnessF() + 1.0 - pixelToColor(s.pixel(x, 72)).lightnessF();
+            return ink;
+        };
+        const auto wetFirst = [&](WetPaper &wet) {
+            TileStore scratch(Qt::white);
+            BrushStroke w;
+            w.setWetPaper(&wet, 0.0);
+            BrushSettings wb = water->settings;
+            wb.size = 140;
+            w.begin(&scratch, kBounds, wb, Qt::white, BrushMode::Paint, {{60, 100}, 1.0});
+            for (int x = 63; x <= 340; x += 3)
+                w.moveTo({{double(x), 100}, 1.0});
+            w.end();
+            // Clear water lays no colour.
+            QCOMPARE(pixelToColor(scratch.pixel(200, 100)), QColor(Qt::white));
+        };
+
+        TileStore dry(Qt::white);
+        paint(dry, nullptr, 0.0);
+        QCOMPARE(spread(dry), 0.0);
+
+        WetPaper wet;
+        wetFirst(wet);
+        QVERIFY(wet.wetnessAt(200, 100, 1.0) > 0.8f);
+        TileStore bled(Qt::white);
+        paint(bled, &wet, 2.0);
+        QVERIFY2(spread(bled) > 1.0, qPrintable(QString::number(spread(bled))));
+
+        // A minute later the paper has dried: no bleed.
+        WetPaper later;
+        wetFirst(later);
+        QCOMPARE(later.wetnessAt(200, 100, WetPaper::DryTime + 1.0), 0.0f);
+        later.prune(WetPaper::DryTime + 1.0);
+        QVERIFY(later.isEmpty());
+        TileStore dried(Qt::white);
+        paint(dried, &later, WetPaper::DryTime + 1.0);
+        QCOMPARE(spread(dried), 0.0);
+        // That stroke wet the paper itself.
+        QVERIFY(later.wetnessAt(200, 100, WetPaper::DryTime + 2.0) > 0.0f);
+    }
 };
 
 QTEST_MAIN(TestBrushPresets)

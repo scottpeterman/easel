@@ -22,7 +22,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 
 ### Painting
 
-- **Ready-made brushes**: the Brush button is a list of pencils (HB, 2B, 6B, mechanical), ink (fineliner, tech pen, brush pen, marker), charcoal and chalk, paint (round, flat, filbert, dry brush, palette knife, fan, loaded knife, airbrush), trees (foliage, distant foliage, bark), and watercolour (wash, round, flat), each shown as a sample of its stroke
+- **Ready-made brushes**: the Brush button is a list of pencils (HB, 2B, 6B, mechanical), ink (fineliner, tech pen, brush pen, marker), charcoal and chalk, paint (round, flat, filbert, dry brush, palette knife, fan, loaded knife, airbrush), trees (foliage, distant foliage, bark), and watercolour (wash, round, flat, clear water), each shown as a sample of its stroke
 - Pencil and charcoal have **grain**: a light touch only catches the high points of the paper, and pressing harder fills it in
 - Flat and filbert brushes have a shaped tip that turns with the stroke, and bristles that leave streaks; the dry brush runs out of paint at a light touch
 - The **palette knife** lays no paint: it pushes what is already there
@@ -31,6 +31,7 @@ Packages for each release are on the [Releases page](https://github.com/scottpet
 - **Foliage** dabs a cluster of leaf-shaped marks with every touch, each a slightly different size, angle and shade of the painting colour; press harder for more leaves. Build a canopy dark to light: a pass in the shadow colour, then the mid tone, then the lit leaves. **Distant foliage** is a fine speckle for treelines
 - **Bark** cuts a dark groove with a thin lit edge beside it, on the side the light comes from (from the left or from the right)
 - **Watercolour** brushes stain rather than cover: each stroke darkens what's under it by its colour, so it never lightens and glazes deepen as they cross; when the stroke ends it dries with a darker, uneven edge, and the pigment settles in the paper's hollows. Paint each area in one stroke, as a wet wash, and lift paint out (snow, mist) with the eraser
+- **Wet-in-wet**: watercolour leaves the paper wet for about 45 seconds. Paint laid into wet paper runs out into it with soft, feathered edges instead of drying hard, so lay a wash and drop colour into it straight away, or wet an area with **Clear water** first. Wet paper is per layer
 - Every brush can be changed from there: size, opacity, hardness, flow, spacing and grain, and a stabilizer that steadies a shaky line
 - Pen pressure for size and for opacity
 - Eraser and Smudge

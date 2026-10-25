@@ -704,6 +704,9 @@ void BrushStroke::paintMark(const Mark &mark)
                     const float k = cov * 0.5f;
                     out[i] = makePixel(dr + (0.2f - dr) * k, dg + (0.2f - dg) * k, db + (0.2f - db) * k,
                                        da + (1.0f - da) * k);
+                } else if (m_watercolor && m_settings.clearWater) {
+                    // Water: nothing to see, only the mask, which wets the paper.
+                    continue;
                 } else if (m_watercolor) {
                     // Wet: an even stain for now; the rim darkens when it dries.
                     out[i] = stain(d, col, std::min(1.0f, m_colorAlpha * cov * (gran ? gran[i] : 1.0f)));
@@ -785,37 +788,101 @@ float BrushStroke::granuleAt(int x, int y) const
     return std::max(0.0f, 1.0f + gran * 1.1f * (0.5f - tooth));
 }
 
-void BrushStroke::finishWatercolor()
+// --- Wet paper ------------------------------------------------------------------
+
+float WetPaper::left(double age)
 {
-    // Drying: the pigment drifts out to the edge of the wet area. Where the
-    // stroke's coverage is well above its surroundings' average, just inside
-    // the edge, the stain gets stronger; well inside, a little weaker.
+    // Most of the water stays a while, then the paper dries off quickly.
+    const double t = std::clamp(age / DryTime, 0.0, 1.0);
+    return float(1.0 - t * t);
+}
+
+void WetPaper::sample(const QRect &area, double now, std::vector<float> &out) const
+{
     constexpr int N = TileStore::TileSize;
-    QRect area;
-    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it)
-        area |= TileStore::tileRect(it.key());
-    area &= m_bounds;
-    if (area.isEmpty())
+    out.assign(size_t(area.width()) * size_t(area.height()), 0.0f);
+    if (m_tiles.isEmpty())
         return;
-    const int w = area.width(), h = area.height();
-    std::vector<float> m(size_t(w) * size_t(h), 0.0f);
-    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
-        const QRect tr = TileStore::tileRect(it.key());
+    for (const TileCoord c : TileStore::tilesIntersecting(area)) {
+        const auto it = m_tiles.constFind(c);
+        if (it == m_tiles.cend())
+            continue;
+        const float k = left(now - it->time);
+        if (k <= 0.0f)
+            continue;
+        const QRect tr = TileStore::tileRect(c);
         const QRect part = tr & area;
-        const std::vector<float> &mask = it.value();
         for (int y = part.top(); y <= part.bottom(); ++y)
             for (int x = part.left(); x <= part.right(); ++x)
-                m[size_t(y - area.top()) * size_t(w) + size_t(x - area.left())] =
-                    mask[size_t((y - tr.top()) * N + (x - tr.left()))];
+                out[size_t(y - area.top()) * size_t(area.width()) + size_t(x - area.left())] =
+                    it->wet[size_t((y - tr.top()) * N + (x - tr.left()))] * k;
     }
-    // The neighbourhood's average, by two box blurs each way (close to a
-    // Gaussian), over a few pixels: the width of the dark rim.
-    const int r = int(std::clamp(m_settings.size * 0.08, 2.0, 10.0));
-    std::vector<float> blur = m, tmp(m.size());
-    const auto boxRows = [&](const std::vector<float> &in, std::vector<float> &out) {
+}
+
+float WetPaper::wetnessAt(int x, int y, double now) const
+{
+    constexpr int N = TileStore::TileSize;
+    const TileCoord c = TileStore::tileAt(x, y);
+    const auto it = m_tiles.constFind(c);
+    if (it == m_tiles.cend())
+        return 0.0f;
+    const QRect tr = TileStore::tileRect(c);
+    return it->wet[size_t((y - tr.top()) * N + (x - tr.left()))] * left(now - it->time);
+}
+
+void WetPaper::wet(const QRect &area, const std::vector<float> &amount, double now)
+{
+    constexpr int N = TileStore::TileSize;
+    for (const TileCoord c : TileStore::tilesIntersecting(area)) {
+        const QRect tr = TileStore::tileRect(c);
+        const QRect part = tr & area;
+        bool any = false;
+        for (int y = part.top(); y <= part.bottom() && !any; ++y)
+            for (int x = part.left(); x <= part.right(); ++x)
+                if (amount[size_t(y - area.top()) * size_t(area.width()) + size_t(x - area.left())] > 0.0f) {
+                    any = true;
+                    break;
+                }
+        if (!any)
+            continue;
+        Tile &t = m_tiles[c];
+        if (t.wet.empty()) {
+            t.wet.assign(size_t(N) * N, 0.0f);
+        } else {
+            // Bring what's there up to now before adding to it.
+            const float k = left(now - t.time);
+            for (float &v : t.wet)
+                v *= k;
+        }
+        t.time = now;
+        for (int y = part.top(); y <= part.bottom(); ++y)
+            for (int x = part.left(); x <= part.right(); ++x) {
+                float &v = t.wet[size_t((y - tr.top()) * N + (x - tr.left()))];
+                v = std::max(v, amount[size_t(y - area.top()) * size_t(area.width()) + size_t(x - area.left())]);
+            }
+    }
+}
+
+void WetPaper::prune(double now)
+{
+    for (auto it = m_tiles.begin(); it != m_tiles.end();)
+        it = now - it->time >= DryTime ? m_tiles.erase(it) : std::next(it);
+}
+
+namespace {
+
+// Two box blurs each way, radius r: close to a Gaussian. Rows and columns are
+// spread over the cores.
+void blurField(const std::vector<float> &in, std::vector<float> &out, int w, int h, int r)
+{
+    out = in;
+    if (r < 1)
+        return;
+    std::vector<float> tmp(in.size());
+    const auto rows = [&](const std::vector<float> &src, std::vector<float> &dst) {
         parallelFor(h, 64, [&](int y) {
-            const float *row = in.data() + size_t(y) * size_t(w);
-            float *o = out.data() + size_t(y) * size_t(w);
+            const float *row = src.data() + size_t(y) * size_t(w);
+            float *o = dst.data() + size_t(y) * size_t(w);
             float sum = 0.0f;
             for (int x = -r; x <= r; ++x)
                 sum += row[std::clamp(x, 0, w - 1)];
@@ -825,75 +892,182 @@ void BrushStroke::finishWatercolor()
             }
         });
     };
-    const auto boxCols = [&](const std::vector<float> &in, std::vector<float> &out) {
+    const auto cols = [&](const std::vector<float> &src, std::vector<float> &dst) {
         parallelFor(w, 64, [&](int x) {
             float sum = 0.0f;
             for (int y = -r; y <= r; ++y)
-                sum += in[size_t(std::clamp(y, 0, h - 1)) * size_t(w) + size_t(x)];
+                sum += src[size_t(std::clamp(y, 0, h - 1)) * size_t(w) + size_t(x)];
             for (int y = 0; y < h; ++y) {
-                out[size_t(y) * size_t(w) + size_t(x)] = sum / float(2 * r + 1);
-                sum += in[size_t(std::min(y + r + 1, h - 1)) * size_t(w) + size_t(x)]
-                       - in[size_t(std::max(y - r, 0)) * size_t(w) + size_t(x)];
+                dst[size_t(y) * size_t(w) + size_t(x)] = sum / float(2 * r + 1);
+                sum += src[size_t(std::min(y + r + 1, h - 1)) * size_t(w) + size_t(x)]
+                       - src[size_t(std::max(y - r, 0)) * size_t(w) + size_t(x)];
             }
         });
     };
     for (int pass = 0; pass < 2; ++pass) {
-        boxRows(blur, tmp);
-        boxCols(tmp, blur);
+        rows(out, tmp);
+        cols(tmp, out);
     }
+}
+
+} // namespace
+
+void BrushStroke::finishWatercolor()
+{
+    // Drying. Where the paper was dry, the pigment drifts out to the edge of
+    // the stroke and dries there darker. Where it was still wet, the paint
+    // runs out into the wet paper instead: soft, uneven, feathery, and the
+    // further the wetter it was, with only a faint edge where it stopped.
+    constexpr int N = TileStore::TileSize;
+    QRect strokeArea;
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it)
+        strokeArea |= TileStore::tileRect(it.key());
+    strokeArea &= m_bounds;
+    if (strokeArea.isEmpty())
+        return;
+    const int reach = m_wet && !m_wet->isEmpty() && !m_settings.clearWater
+                          ? int(std::clamp(m_settings.bleed, 0.0, 200.0))
+                          : 0;
+    const QRect area = strokeArea.adjusted(-2 * reach, -2 * reach, 2 * reach, 2 * reach) & m_bounds;
+    const int w = area.width(), h = area.height();
+    const size_t cells = size_t(w) * size_t(h);
+    const auto at = [&](int x, int y) { return size_t(y - area.top()) * size_t(w) + size_t(x - area.left()); };
+
+    std::vector<float> m(cells, 0.0f);
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
+        const QRect tr = TileStore::tileRect(it.key());
+        const QRect part = tr & area;
+        const std::vector<float> &mask = it.value();
+        for (int y = part.top(); y <= part.bottom(); ++y)
+            for (int x = part.left(); x <= part.right(); ++x)
+                m[at(x, y)] = mask[size_t((y - tr.top()) * N + (x - tr.left()))];
+    }
+    std::vector<float> wetBefore;
+    if (m_wet)
+        m_wet->sample(area, m_now, wetBefore);
+    else
+        wetBefore.assign(cells, 0.0f);
+
+    // How much paint ends up where: the stroke itself, and what ran out of it.
+    std::vector<float> cover = m;
+    bool bled = false;
+    if (reach > 0) {
+        std::vector<float> nearRun, farRun;
+        blurField(m, nearRun, w, h, std::max(2, reach / 4));
+        blurField(m, farRun, w, h, std::max(3, reach / 2));
+        parallelFor(h, 32, [&](int row) {
+            const int y = area.top() + row;
+            for (int x = area.left(); x <= area.right(); ++x) {
+                const size_t i = at(x, y);
+                const float wet = wetBefore[i];
+                if (wet <= 0.01f)
+                    continue;
+                // Some places it runs far, some it hardly moves: that's what
+                // gives a bleed its feathery, cauliflower edge.
+                const float far = smoothNoise(x, y, reach * 0.7, reach * 0.7, 41);
+                const float grit = smoothNoise(x, y, std::max(2.0, reach * 0.18), std::max(2.0, reach * 0.18), 42);
+                const float run = nearRun[i] * (1.0f - far) + farRun[i] * far;
+                // Uneven only out where it ran: inside the stroke it stays a wash.
+                const float uneven = 1.0f + (1.0f - m[i]) * (grit - 0.5f) * 1.4f;
+                const float flowed = std::clamp(run * wet * 1.5f * uneven, 0.0f, 1.0f);
+                // The stroke's own paint thins as it spreads into the water.
+                cover[i] = std::max(m[i] * (1.0f - 0.3f * wet), flowed);
+            }
+        });
+        bled = true;
+    }
+
+    // The dried edge: on dry paper a darker rim; on wet paper only a trace,
+    // and at the far edge of a bleed, where it stopped, a faint tide line.
+    std::vector<float> avg;
+    const int r = int(std::clamp(m_settings.size * 0.08, 2.0, 10.0));
+    blurField(cover, avg, w, h, r);
 
     const float strength = float(std::clamp(m_settings.watercolor, 0.0, 1.0));
     const float opacity = float(std::clamp(m_settings.opacity, 0.0, 1.0));
     const Pixel def = m_before.defaultPixel();
-    // Everything that touches the stroke's tables is fetched here, on this
-    // thread; the workers only read those and write their own tile.
-    struct Job {
-        TileCoord c;
-        const float *mask;
-        const float *paint;
-        const float *gran;
-        QImage before;
-        Pixel *out;
-    };
-    std::vector<Job> jobs;
-    jobs.reserve(size_t(m_mask.size()));
-    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
-        const TileCoord c = it.key();
-        const std::vector<float> *pv = m_multiColor && m_paint.contains(c) ? &m_paint[c] : nullptr;
-        jobs.push_back({c, it.value().data(), pv && !pv->empty() ? pv->data() : nullptr, granules(c), m_before.tile(c),
-                        reinterpret_cast<Pixel *>(m_target->writableTile(c).bits())});
-    }
-    parallelFor(int(jobs.size()), 4, [&](int j) {
-        const Job &job = jobs[size_t(j)];
-        const QRect tr = TileStore::tileRect(job.c);
-        const QRect part = tr & area;
-        const auto *before = job.before.isNull() ? nullptr : reinterpret_cast<const Pixel *>(job.before.constBits());
-        for (int y = part.top(); y <= part.bottom(); ++y)
-            for (int x = part.left(); x <= part.right(); ++x) {
-                const int i = (y - tr.top()) * N + (x - tr.left());
-                const float mv = job.mask[i];
-                if (mv <= 0.0f)
+    if (!m_settings.clearWater) {
+        struct Job {
+            TileCoord c;
+            const float *mask;
+            const float *paint;
+            const float *gran;
+            QImage before;
+            Pixel *out;
+        };
+        std::vector<Job> jobs;
+        for (const TileCoord c : TileStore::tilesIntersecting(area)) {
+            const auto mit = m_mask.constFind(c);
+            if (mit == m_mask.cend()) {
+                if (!bled)
                     continue;
-                const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
-                const float avg = blur[size_t(y - area.top()) * size_t(w) + size_t(x - area.left())];
-                // A dried edge is never even: it wanders in and out a little,
-                // and gathers more pigment in some places than others.
-                float cover = mv;
-                if (mv < 0.98f)
-                    cover = std::clamp(mv * (0.6f + 0.8f * smoothNoise(x, y, 7.0, 7.0, 31)), 0.0f, 1.0f);
-                // How much more of the stroke is here than around it: the rim.
-                float rim = std::clamp((mv - avg) * 2.5f, 0.0f, 1.0f);
-                if (rim > 0.0f)
-                    rim *= 0.35f + 0.9f * smoothNoise(x, y, 18.0, 18.0, 32);
-                const float density = 1.0f - 0.15f * strength + 0.9f * strength * rim;
-                const float k = std::min(1.0f, m_colorAlpha * cover * opacity * clip * (job.gran ? job.gran[i] : 1.0f) * density);
-                float col[3] = {m_color[0], m_color[1], m_color[2]};
-                if (job.paint)
-                    for (int ch = 0; ch < 3; ++ch)
-                        col[ch] = job.paint[size_t(i) * 3 + size_t(ch)] / std::max(mv, 1e-6f);
-                job.out[i] = stain(before ? before[i] : def, col, k);
+                // Paint may have run into this tile: only touch it if so.
+                const QRect part = TileStore::tileRect(c) & area;
+                bool any = false;
+                for (int y = part.top(); y <= part.bottom() && !any; ++y)
+                    for (int x = part.left(); x <= part.right(); ++x)
+                        if (cover[at(x, y)] > 0.002f) {
+                            any = true;
+                            break;
+                        }
+                if (!any)
+                    continue;
             }
-    });
+            const std::vector<float> *pv = m_multiColor && m_paint.contains(c) ? &m_paint[c] : nullptr;
+            m_touched.insert(c);
+            jobs.push_back({c, mit == m_mask.cend() ? nullptr : mit.value().data(), pv && !pv->empty() ? pv->data() : nullptr,
+                            granules(c), m_before.tile(c), reinterpret_cast<Pixel *>(m_target->writableTile(c).bits())});
+        }
+        parallelFor(int(jobs.size()), 4, [&](int j) {
+            const Job &job = jobs[size_t(j)];
+            const QRect tr = TileStore::tileRect(job.c);
+            const QRect part = tr & area;
+            const auto *before = job.before.isNull() ? nullptr : reinterpret_cast<const Pixel *>(job.before.constBits());
+            for (int y = part.top(); y <= part.bottom(); ++y)
+                for (int x = part.left(); x <= part.right(); ++x) {
+                    const int i = (y - tr.top()) * N + (x - tr.left());
+                    const size_t a = at(x, y);
+                    const float cv = cover[a];
+                    if (cv <= 0.0f)
+                        continue;
+                    const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
+                    if (clip <= 0.0f)
+                        continue;
+                    const float wet = wetBefore[a];
+                    // A dried edge is never even: it wanders in and out a little.
+                    // (A bleed's edge is uneven already, and its middle mustn't be.)
+                    float c = cv;
+                    if (cv < 0.98f && wet < 0.5f)
+                        c = std::clamp(cv * (1.0f + (1.0f - 2.0f * wet) * (smoothNoise(x, y, 7.0, 7.0, 31) * 0.8f - 0.4f)), 0.0f, 1.0f);
+                    float rim = std::clamp((cv - avg[a]) * 2.5f, 0.0f, 1.0f);
+                    if (rim > 0.0f)
+                        rim *= (0.35f + 0.9f * smoothNoise(x, y, 18.0, 18.0, 32)) * (1.0f - 0.8f * wet);
+                    // Where a bleed stopped: a faint line of pigment.
+                    float tide = 0.0f;
+                    if (wet > 0.05f && cv < 0.35f)
+                        tide = wet * std::clamp(1.0f - std::abs(cv - 0.15f) / 0.12f, 0.0f, 1.0f)
+                               * smoothNoise(x, y, 9.0, 9.0, 43);
+                    const float density = 1.0f - 0.15f * strength + 0.9f * strength * rim + 0.8f * tide;
+                    const float k = std::min(1.0f, m_colorAlpha * c * opacity * clip * (job.gran ? job.gran[i] : 1.0f) * density);
+                    float col[3] = {m_color[0], m_color[1], m_color[2]};
+                    if (job.paint && job.mask && job.mask[i] > 0.0f)
+                        for (int ch = 0; ch < 3; ++ch)
+                            col[ch] = job.paint[size_t(i) * 3 + size_t(ch)] / std::max(job.mask[i], 1e-6f);
+                    job.out[i] = stain(before ? before[i] : def, col, k);
+                }
+        });
+    }
+
+    // What's wet now: where the stroke went, by how wet the brush was.
+    if (m_wet) {
+        const float water = float(std::clamp(m_settings.clearWater ? std::max(m_settings.wetness, 0.9) : m_settings.wetness, 0.0, 1.0));
+        if (water > 0.0f) {
+            std::vector<float> amount(cells);
+            for (size_t i = 0; i < cells; ++i)
+                amount[i] = water * std::clamp(cover[i] * 1.4f, 0.0f, 1.0f);
+            m_wet->wet(area, amount, m_now);
+        }
+    }
 }
 
 void BrushStroke::finishHeal()

@@ -98,6 +98,13 @@ struct BrushSettings {
     // Watercolour: pigment settles in the paper's hollows and thins on its
     // high points, by this much (0..1), in bumps grainSize across.
     double granulation = 0.0;
+    // Watercolour on wet paper: how much water a stroke leaves behind (0..1),
+    // and how far, in pixels, paint runs into paper that's still wet.
+    double wetness = 0.0;
+    double bleed = 0.0;
+    // Watercolour: clear water. Lays no colour, only wets the paper, so the
+    // next strokes laid into it bleed.
+    bool clearWater = false;
 
     static constexpr double MinSize = 1.0;
     static constexpr double MaxSize = 1000.0;
@@ -175,6 +182,33 @@ private:
 // opacity setting, while a new stroke over the old one builds up as expected.
 // Smudge instead drags colour along the stroke (see smudgeDab). Painting is
 // clipped to the canvas bounds and to the selection, when there is one.
+// Where a layer's paper is still wet from watercolour, and how wet (0..1).
+// Water fades over DryTime seconds; times are seconds on any steady clock.
+class WetPaper
+{
+public:
+    static constexpr double DryTime = 45.0;
+
+    // Wetness over area at time now, row by row into out (resized to fit).
+    void sample(const QRect &area, double now, std::vector<float> &out) const;
+    float wetnessAt(int x, int y, double now) const;
+    // Wets area (amount row by row, as from sample) at time now: each place
+    // keeps the wetter of what it had left and what it's given.
+    void wet(const QRect &area, const std::vector<float> &amount, double now);
+    // Forgets paper that has dried.
+    void prune(double now);
+    void clear() { m_tiles.clear(); }
+    bool isEmpty() const { return m_tiles.isEmpty(); }
+
+private:
+    struct Tile {
+        std::vector<float> wet;
+        double time = 0.0;
+    };
+    static float left(double age);
+    QHash<TileCoord, Tile> m_tiles;
+};
+
 class BrushStroke
 {
 public:
@@ -190,6 +224,13 @@ public:
     // Mirrors the stroke about the lines through axis. Set before begin().
     // Paint and Erase only: the other modes work from what's under the
     // brush, which a mirror image of the stroke has no claim to.
+    // Watercolour strokes wet this paper, and bleed where it's already wet.
+    // now: the time, on the clock the paper's times are on. Set before begin().
+    void setWetPaper(WetPaper *paper, double now)
+    {
+        m_wet = paper;
+        m_now = now;
+    }
     void setSymmetry(Symmetry symmetry, const QPointF &axis)
     {
         m_symmetry = symmetry;
@@ -249,6 +290,8 @@ private:
     // colour laid so far (linear, premultiplied by that coverage).
     bool m_multiColor = false;
     bool m_watercolor = false;
+    WetPaper *m_wet = nullptr;
+    double m_now = 0.0;
     QHash<TileCoord, std::vector<float>> m_paint;
     QHash<TileCoord, std::vector<float>> m_granules;
     QColor m_baseColor;

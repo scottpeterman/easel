@@ -47,6 +47,9 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.edgeWidth = s.value(QStringLiteral("edgeWidth"), b.edgeWidth).toDouble();
     b.watercolor = s.value(QStringLiteral("watercolor"), b.watercolor).toDouble();
     b.granulation = s.value(QStringLiteral("granulation"), b.granulation).toDouble();
+    b.wetness = s.value(QStringLiteral("wetness"), b.wetness).toDouble();
+    b.bleed = s.value(QStringLiteral("bleed"), b.bleed).toDouble();
+    b.clearWater = s.value(QStringLiteral("clearWater"), b.clearWater).toBool();
     s.endGroup();
 }
 
@@ -84,6 +87,9 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("edgeWidth"), b.edgeWidth);
     s.setValue(QStringLiteral("watercolor"), b.watercolor);
     s.setValue(QStringLiteral("granulation"), b.granulation);
+    s.setValue(QStringLiteral("wetness"), b.wetness);
+    s.setValue(QStringLiteral("bleed"), b.bleed);
+    s.setValue(QStringLiteral("clearWater"), b.clearWater);
     s.endGroup();
 }
 
@@ -126,6 +132,7 @@ void BrushTool::setDocument(easeletch::TileStore *store, const QRect &bounds, ea
     m_bounds = bounds;
     m_history = history;
     if (resized) {
+        m_wet.clear(); // another canvas: nothing on it is wet
         m_hasLastEnd = false; // it was a place on another canvas
         emit symmetryChanged(); // a centred line moves with the canvas
     }
@@ -292,6 +299,16 @@ void BrushTool::press(const easeletch::StrokeSample &s)
         m_stroke.setCloneOffset(m_offset);
     }
     m_stroke.setSymmetry(m_symmetry, symmetryAxis());
+    if (m_mode == BrushMode::Paint && !m_layerMask && settings().watercolor > 0.0) {
+        if (!m_clock.isValid())
+            m_clock.start();
+        const double now = double(m_clock.elapsed()) / 1000.0;
+        easeletch::WetPaper &paper = m_wet[m_store];
+        paper.prune(now);
+        m_stroke.setWetPaper(&paper, now);
+    } else {
+        m_stroke.setWetPaper(nullptr, 0.0);
+    }
     // Shift: a straight line from where the last stroke ended to here.
     const bool line = m_hasLastEnd && QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
     m_stroke.begin(m_store, m_bounds, settings(), m_color, m_mode,
