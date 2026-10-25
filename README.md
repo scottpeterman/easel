@@ -170,6 +170,7 @@ Whole jobs, step by step, with pictures.
 - [Restoring old ink art](docs/restoring-ink-art.md): from a photo of an ink drawing on aged paper to clean line work, then shading under the lines.
 - [From a render to an ink plate](docs/render-to-ink-plate.md): a detailed colour picture turned into pencil and ink, the two combined, and a background put behind it.
 - [Metal on a line drawing](docs/metal-on-line-art.md): an ink drawing of a machine given dark polished plates, trim in a second colour, lettering laid on a slanted side, and a dark page behind it.
+- [Brushes, and painting trees](docs/brushes-and-trees.md): what each brush and brush setting does, then a cottonwood in leaves and bark, a fir tapped in with the fan, snow knifed onto a mountain, and colour laid over a pencil drawing.
 
 ## Keys and controls
 
