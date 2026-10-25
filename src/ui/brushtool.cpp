@@ -311,6 +311,14 @@ void BrushTool::press(const easeletch::StrokeSample &s)
         m_stroke.setCloneOffset(m_offset);
     }
     m_stroke.setSymmetry(m_symmetry, symmetryAxis());
+    // A layer with a solid fill (a plain page's background) erases back to
+    // that colour, as an eraser on paper leaves paper; any other layer
+    // erases to see-through. Masks are their own thing.
+    const easeletch::Pixel fill = m_store->defaultPixel();
+    if (m_mode == BrushMode::Erase && !m_layerMask && float(fill.a) >= 0.999f)
+        m_stroke.setEraseTo(fill);
+    else
+        m_stroke.clearEraseTo();
     if (m_mode == BrushMode::Paint && !m_layerMask && settings().watercolor > 0.0) {
         if (!m_clock.isValid())
             m_clock.start();

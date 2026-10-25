@@ -322,6 +322,27 @@ private slots:
         stroke.end();
         QVERIFY(near(at(off, 699, 400), Qt::white));
     }
+    void eraserCanLeaveThePagesColour()
+    {
+        // A background erases back to its own colour, fully opaque.
+        TileStore s(Qt::white);
+        BrushStroke paint;
+        paint.begin(&s, kBounds, hard(30), Qt::black, BrushMode::Paint, {{100, 100}, 1.0});
+        paint.end();
+        QCOMPARE(at(s, 100, 100), QColor(Qt::black));
+        BrushStroke erase;
+        erase.setEraseTo(s.defaultPixel());
+        erase.begin(&s, kBounds, hard(30), Qt::black, BrushMode::Erase, {{100, 100}, 1.0});
+        erase.end();
+        QCOMPARE(at(s, 100, 100), QColor(Qt::white));
+        QCOMPARE(at(s, 100, 100).alpha(), 255);
+        // Unset again, it erases to see-through as before.
+        erase.clearEraseTo();
+        erase.begin(&s, kBounds, hard(30), Qt::black, BrushMode::Erase, {{100, 100}, 1.0});
+        erase.end();
+        QCOMPARE(at(s, 100, 100).alpha(), 0);
+    }
+
 };
 
 QTEST_GUILESS_MAIN(TestBrush)

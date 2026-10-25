@@ -244,6 +244,11 @@ public:
     // before begin(). The copy is of the layer as it was when the stroke
     // began, so a stroke never copies its own paint.
     void setCloneOffset(const QPoint &offset) { m_cloneOffset = offset; }
+    // Erase: what erasing leaves behind. Transparent unless set; a page's
+    // solid background erases back to its own colour, as paper does. Set
+    // before begin().
+    void setEraseTo(const Pixel &p) { m_eraseTo = p; }
+    void clearEraseTo() { m_eraseTo = Pixel{}; }
     // Mirrors the stroke about the lines through axis. Set before begin().
     // Paint and Erase only: the other modes work from what's under the
     // brush, which a mirror image of the stroke has no claim to.
@@ -320,6 +325,7 @@ private:
     QRect m_bounds;
     QRect m_canvas; // the whole canvas, whatever the selection
     QPoint m_cloneOffset;
+    Pixel m_eraseTo{};
     Symmetry m_symmetry = Symmetry::Off;
     QPointF m_axis;
     BrushSettings m_settings;

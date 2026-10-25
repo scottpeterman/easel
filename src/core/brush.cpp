@@ -938,8 +938,10 @@ void BrushStroke::paintMark(const Mark &mark)
                 const Pixel &d = before ? before[i] : def;
                 const float dr = float(d.r), dg = float(d.g), db = float(d.b), da = float(d.a);
                 if (m_mode == BrushMode::Erase) {
+                    // Towards what erasing leaves: nothing, or the page's colour.
                     const float k = 1.0f - cov;
-                    out[i] = makePixel(dr * k, dg * k, db * k, da * k);
+                    out[i] = makePixel(dr * k + float(m_eraseTo.r) * cov, dg * k + float(m_eraseTo.g) * cov,
+                                       db * k + float(m_eraseTo.b) * cov, da * k + float(m_eraseTo.a) * cov);
                 } else if (m_mode == BrushMode::Clone) {
                     // A straight copy, transparency included: what's there
                     // turns into what's at the source, by the coverage.

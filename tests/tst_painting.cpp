@@ -193,7 +193,10 @@ private slots:
         w.brushTool()->setSettings(b);
         QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, viewPos(w, {50, 200}));
         QTest::mouseClick(view, Qt::LeftButton, Qt::ShiftModifier, viewPos(w, {350, 200}));
-        QCOMPARE(pixel(w, 200, 200).alpha(), 0);
+        // On a plain page's background it erases back to the page's colour,
+        // not to see-through.
+        QCOMPARE(pixel(w, 200, 200), QColor(Qt::white));
+        QCOMPARE(pixel(w, 200, 200).alpha(), 255);
         QCOMPARE(w.history().undoLabel(), QStringLiteral("Eraser"));
         w.brushTool()->setMode(BrushMode::Paint);
 
