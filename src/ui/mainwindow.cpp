@@ -917,8 +917,9 @@ void MainWindow::createBrushPresets()
     m_brushList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_brushList->setMouseTracking(true);
 
-    // Two columns, split between headings, so every brush is in view at once
-    // on a tablet without the list growing past its screen.
+    // As few columns as fit every brush in view at once on a tablet without
+    // the list growing past its screen; each column starts at a heading.
+    static constexpr int kMaxHeight = 676;
     struct Group {
         QString name;
         QList<const easeletch::BrushPreset *> presets;
@@ -930,22 +931,46 @@ void MainWindow::createBrushPresets()
             groups.append({p.group, {}});
         groups.last().presets.append(&p);
     }
-    // The split that makes the taller column as short as it can be.
-    int split = int(groups.size()), column = 0;
+    // For each count of columns, the split into runs of groups that makes the
+    // tallest column as short as it can be (there are only a few groups, so
+    // every split is tried): the fewest columns whose tallest fits.
+    const int n = int(groups.size());
+    QList<int> starts{0}; // the first group of each column
+    int column = 0;
     {
-        int total = 0;
-        for (const Group &g : groups)
-            total += g.height();
-        int left = 0, best = total;
-        for (int i = 0; i < groups.size(); ++i) {
-            left += groups[i].height();
-            const int taller = qMax(left, total - left);
-            if (taller < best) {
-                best = taller;
-                split = i + 1;
+        // best[k][i]: the shortest tallest column putting groups i.. in k columns.
+        QList<int> prefix(n + 1, 0);
+        for (int i = 0; i < n; ++i)
+            prefix[i + 1] = prefix[i] + groups[i].height();
+        const auto span = [&](int a, int b) { return prefix[b] - prefix[a]; };
+        for (int k = 1; k <= n; ++k) {
+            QList<QList<int>> best(k + 1, QList<int>(n + 1, INT_MAX));
+            QList<QList<int>> cut(k + 1, QList<int>(n + 1, n));
+            for (int i = 0; i < n; ++i)
+                best[1][i] = span(i, n);
+            for (int c = 2; c <= k; ++c)
+                for (int i = 0; i < n; ++i)
+                    for (int j = i + 1; j < n; ++j) {
+                        if (best[c - 1][j] == INT_MAX)
+                            continue;
+                        const int tallest = qMax(span(i, j), best[c - 1][j]);
+                        // On a tie, the later cut: fuller columns first.
+                        if (tallest <= best[c][i]) {
+                            best[c][i] = tallest;
+                            cut[c][i] = j;
+                        }
+                    }
+            if (best[k][0] == INT_MAX)
+                continue;
+            column = best[k][0];
+            starts = {0};
+            for (int c = k, i = 0; c > 1; --c) {
+                i = cut[c][i];
+                starts.append(i);
             }
+            if (column + 4 <= kMaxHeight)
+                break;
         }
-        column = best;
     }
 
     const QFontMetrics metrics(m_brushList->font());
@@ -960,13 +985,16 @@ void MainWindow::createBrushPresets()
     m_brushList->setUniformItemSizes(false);
     m_brushList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     int used = 0;
-    for (int gi = 0; gi < groups.size(); ++gi) {
-        if (gi == split && used < column) {
-            // Fill out the first column, so the second starts at a heading.
-            auto *pad = new QListWidgetItem(m_brushList);
-            pad->setFlags(Qt::NoItemFlags);
-            pad->setData(BrushListSpacerRole, true);
-            pad->setSizeHint(QSize(columnWidth, column - used));
+    for (int gi = 0; gi < n; ++gi) {
+        if (gi > 0 && starts.contains(gi)) {
+            if (used < column) {
+                // Fill out the column, so the next starts at a heading.
+                auto *pad = new QListWidgetItem(m_brushList);
+                pad->setFlags(Qt::NoItemFlags);
+                pad->setData(BrushListSpacerRole, true);
+                pad->setSizeHint(QSize(columnWidth, column - used));
+            }
+            used = 0;
         }
         const Group &g = groups[gi];
         auto *heading = new QListWidgetItem(tr(qPrintable(g.name)), m_brushList);
@@ -983,8 +1011,7 @@ void MainWindow::createBrushPresets()
         }
         used += g.height();
     }
-    const int columns = split < groups.size() ? 2 : 1;
-    m_brushList->setFixedSize(columns * columnWidth + 4, column + 4);
+    m_brushList->setFixedSize(int(starts.size()) * columnWidth + 4, column + 4);
 
     auto *holder = new QWidgetAction(m_brushMenu);
     holder->setDefaultWidget(m_brushList);

@@ -185,6 +185,52 @@ const QList<BrushPreset> &brushPresets()
                  b.tip = BrushTip::Flat, b.aspect = 0.5, b.followStroke = true;
                  b.edge = 0.65, b.lightAngle = 0.0, b.edgeWidth = 0.3;
              }),
+        make("bark-ridges", QStringLiteral("Bark ridges"), trees,
+             [](BrushSettings &b) {
+                 // A broad plate of bark: lit across its face from the
+                 // left, its sides torn and falling into the cracks, and
+                 // fibres and dry streaks running the way it's pulled,
+                 // round its curves. Pull long strokes up the trunk in the
+                 // mid colour; the shading comes with them.
+                 b.size = 30, b.hardness = 0.85, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.12;
+                 b.pressureSize = true, b.minSize = 0.35, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.35, b.followStroke = true;
+                 b.streaks = 0.35;
+                 b.grain = 0.35, b.grainSize = 2.0, b.grainStretch = 9.0, b.rollGrain = true;
+                 b.roughness = 0.6, b.relief = 0.6, b.lightAngle = 180.0;
+             }),
+        make("bark-texture", QStringLiteral("Bark texture"), trees,
+             [](BrushSettings &b) {
+                 // Plates of bark split by a net of dark fissures, as on a
+                 // cottonwood or an old aspen. Lay the trunk in its shadow
+                 // colour, then pull this up it in the plates' colour; the
+                 // fissures come with it. The net is fixed to the canvas,
+                 // running up and down, so strokes laid over each other
+                 // join up into one trunk.
+                 b.size = 70, b.hardness = 0.75, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.15;
+                 b.pressureSize = true, b.minSize = 0.6, b.pressureOpacity = false;
+                 b.roughness = 0.45;
+                 b.plates = 1.0, b.plateSize = 16.0, b.plateStretch = 6.0, b.lightAngle = 180.0;
+             }),
+        make("bark-texture-curved", QStringLiteral("Bark texture, curving"), trees,
+             [](BrushSettings &b) {
+                 // The same net laid along the stroke and bending with it:
+                 // for limbs, roots and a trunk that leans or twists.
+                 b.size = 50, b.hardness = 0.75, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.12;
+                 b.pressureSize = true, b.minSize = 0.5, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.4, b.followStroke = true;
+                 b.roughness = 0.45, b.rollGrain = true;
+                 b.plates = 1.0, b.plateSize = 13.0, b.plateStretch = 6.0, b.lightAngle = 180.0;
+             }),
+        make("bark-fissure", QStringLiteral("Fissure"), trees,
+             [](BrushSettings &b) {
+                 // A deep crack in the bark: dark, ragged-sided, thinning
+                 // away to nothing at a light touch. Paint it in the darkest
+                 // colour over the texture, up the trunk.
+                 b.size = 7, b.hardness = 0.9, b.opacity = 1.0, b.flow = 1.0, b.spacing = 0.1;
+                 b.pressureSize = true, b.minSize = 0.15, b.pressureOpacity = false;
+                 b.roughness = 0.85, b.jitter = 0.04;
+             }),
 
         // Watercolour: stains that darken what's under them rather than
         // covering it, dry with a darker edge, and settle in the paper.

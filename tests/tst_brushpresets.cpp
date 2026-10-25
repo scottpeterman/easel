@@ -2,7 +2,11 @@
 
 #include <QPainter>
 
+#include <algorithm>
+#include <algorithm>
 #include <cmath>
+#include <utility>
+#include <utility>
 #include <QSet>
 #include <QTest>
 
@@ -804,6 +808,115 @@ private slots:
         QCOMPARE(spread(dried), 0.0);
         // That stroke wet the paper itself.
         QVERIFY(later.wetnessAt(200, 100, WetPaper::DryTime + 2.0) > 0.0f);
+    }
+    void aTornEdgeWandersAlongTheStroke()
+    {
+        // Where the top edge of a level stroke is, column by column.
+        const auto edgeRange = [](const TileStore &s) {
+            int lo = 1000, hi = -1000;
+            for (int x = 80; x <= 320; ++x) {
+                int top = -1;
+                for (int y = 30; y <= 60 && top < 0; ++y)
+                    if (pixelToColor(s.pixel(x, y)).lightness() < 128)
+                        top = y;
+                if (top < 0)
+                    continue;
+                lo = std::min(lo, top);
+                hi = std::max(hi, top);
+            }
+            return hi - lo;
+        };
+        BrushSettings b = stick();
+        QVERIFY(edgeRange(strokeWith(b, 1.0)) <= 1);
+        b.roughness = 0.8;
+        const TileStore torn = strokeWith(b, 1.0);
+        const int range = edgeRange(torn);
+        QVERIFY2(range >= 4, qPrintable(QString::number(range)));
+        // Torn, it's still the same stroke: neither swollen nor eaten away.
+        const double plain = inkIn(strokeWith(stick(), 1.0), kBounds);
+        const double tornInk = inkIn(torn, kBounds);
+        QVERIFY2(tornInk > plain * 0.75 && tornInk < plain * 1.2, qPrintable(QStringLiteral("%1 %2").arg(tornInk).arg(plain)));
+        // And the same stroke tears the same way.
+        const TileStore again = strokeWith(b, 1.0);
+        for (int x = 0; x < 400; x += 3)
+            for (int y = 30; y <= 90; ++y)
+                QCOMPARE(torn.pixel(x, y), again.pixel(x, y));
+    }
+
+    void reliefLightsTheSideFacingTheLight()
+    {
+        BrushSettings b = stick();
+        b.relief = 0.6;
+        const auto halves = [&](double lightAngle) {
+            b.lightAngle = lightAngle;
+            TileStore s(Qt::white);
+            BrushStroke stroke;
+            stroke.begin(&s, kBounds, b, QColor(110, 90, 70), BrushMode::Paint, {{40, 60}, 1.0});
+            for (int x = 44; x <= 360; x += 4)
+                stroke.moveTo({{double(x), 60}, 1.0});
+            stroke.end();
+            double top = 0.0, bottom = 0.0;
+            for (int x = 80; x <= 320; ++x)
+                for (int d = 2; d <= 7; ++d) {
+                    top += pixelToColor(s.pixel(x, 60 - d)).lightnessF();
+                    bottom += pixelToColor(s.pixel(x, 60 + d)).lightnessF();
+                }
+            return std::make_pair(top, bottom);
+        };
+        const auto fromAbove = halves(270.0);
+        QVERIFY2(fromAbove.first > fromAbove.second * 1.15,
+                 qPrintable(QStringLiteral("%1 %2").arg(fromAbove.first).arg(fromAbove.second)));
+        const auto fromBelow = halves(90.0);
+        QVERIFY(fromBelow.second > fromBelow.first * 1.15);
+        // Light along the stroke falls on neither side more than the other.
+        const auto fromRight = halves(0.0);
+        QVERIFY(qAbs(fromRight.first - fromRight.second) < 0.06 * (fromRight.first + fromRight.second));
+    }
+
+    void rolledGrainBendsWithTheStroke()
+    {
+        // A quarter circle, setting off level and ending going straight down.
+        const QPointF centre(100, 180);
+        const double r = 110;
+        BrushSettings b = stick();
+        b.size = 24;
+        b.grain = 0.6;
+        b.grainSize = 2.0;
+        b.grainStretch = 10.0;
+        const auto paint = [&](bool roll) {
+            b.rollGrain = roll;
+            TileStore s(Qt::white);
+            BrushStroke stroke;
+            const auto at = [&](double t) {
+                const double a = -1.5707963 + t * 1.5707963;
+                return QPointF(centre.x() + r * std::cos(a), centre.y() + r * std::sin(a));
+            };
+            stroke.begin(&s, kBounds, b, Qt::black, BrushMode::Paint, {at(0.0), 1.0});
+            for (int i = 1; i <= 400; ++i)
+                stroke.moveTo({at(i / 400.0), 1.0});
+            stroke.end();
+            return s;
+        };
+        // How much the ink changes stepping along the stroke, against
+        // stepping across it, over its last stretch (where it runs down).
+        const auto alongOverAcross = [&](const TileStore &s) {
+            const auto ink = [&](double rad, double a) {
+                const int x = int(std::lround(centre.x() + rad * std::cos(a)));
+                const int y = int(std::lround(centre.y() + rad * std::sin(a)));
+                return 1.0 - pixelToColor(s.pixel(x, y)).lightnessF();
+            };
+            double along = 0.0, across = 0.0;
+            for (double a = -0.7; a <= -0.05; a += 0.004)
+                for (double rad = r - 7; rad <= r + 7; rad += 1.0) {
+                    along += std::abs(ink(rad, a) - ink(rad, a + 2.0 / r));
+                    across += std::abs(ink(rad, a) - ink(rad + 2.0, a));
+                }
+            return along / std::max(across, 1e-6);
+        };
+        const double rolled = alongOverAcross(paint(true));
+        const double fixed = alongOverAcross(paint(false));
+        QVERIFY2(rolled < 0.6, qPrintable(QString::number(rolled)));
+        QVERIFY2(rolled < fixed * 0.7, qPrintable(QStringLiteral("%1 %2").arg(rolled).arg(fixed)));
     }
 };
 

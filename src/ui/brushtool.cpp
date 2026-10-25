@@ -45,6 +45,12 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.edge = s.value(QStringLiteral("edge"), b.edge).toDouble();
     b.lightAngle = s.value(QStringLiteral("lightAngle"), b.lightAngle).toDouble();
     b.edgeWidth = s.value(QStringLiteral("edgeWidth"), b.edgeWidth).toDouble();
+    b.roughness = s.value(QStringLiteral("roughness"), b.roughness).toDouble();
+    b.rollGrain = s.value(QStringLiteral("rollGrain"), b.rollGrain).toBool();
+    b.relief = s.value(QStringLiteral("relief"), b.relief).toDouble();
+    b.plates = s.value(QStringLiteral("plates"), b.plates).toDouble();
+    b.plateSize = s.value(QStringLiteral("plateSize"), b.plateSize).toDouble();
+    b.plateStretch = s.value(QStringLiteral("plateStretch"), b.plateStretch).toDouble();
     b.watercolor = s.value(QStringLiteral("watercolor"), b.watercolor).toDouble();
     b.granulation = s.value(QStringLiteral("granulation"), b.granulation).toDouble();
     b.wetness = s.value(QStringLiteral("wetness"), b.wetness).toDouble();
@@ -85,6 +91,12 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("edge"), b.edge);
     s.setValue(QStringLiteral("lightAngle"), b.lightAngle);
     s.setValue(QStringLiteral("edgeWidth"), b.edgeWidth);
+    s.setValue(QStringLiteral("roughness"), b.roughness);
+    s.setValue(QStringLiteral("rollGrain"), b.rollGrain);
+    s.setValue(QStringLiteral("relief"), b.relief);
+    s.setValue(QStringLiteral("plates"), b.plates);
+    s.setValue(QStringLiteral("plateSize"), b.plateSize);
+    s.setValue(QStringLiteral("plateStretch"), b.plateStretch);
     s.setValue(QStringLiteral("watercolor"), b.watercolor);
     s.setValue(QStringLiteral("granulation"), b.granulation);
     s.setValue(QStringLiteral("wetness"), b.wetness);

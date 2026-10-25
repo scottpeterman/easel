@@ -89,6 +89,29 @@ struct BrushSettings {
     double lightAngle = 180.0;
     double edgeWidth = 0.3; // across the edge, as a fraction of the tip's width
 
+    // Torn edge: above 0, the sides of the stroke wander in and out by up to
+    // this much of its half-width, in stringy runs along it, as split bark
+    // and dry paint do. Both sides tear their own way.
+    double roughness = 0.0;
+    // Grain that rides the stroke: the paper's bumps, and with grainStretch
+    // its streaks, are laid out along the path the stroke takes, so they bend
+    // round its curves and stay parallel to its sides. Off, they're fixed to
+    // the canvas (or, stretched, to the way the stroke set off).
+    bool rollGrain = false;
+    // Relief: above 0, each stroke is lit across its width from lightAngle,
+    // lifted towards the light and sunk away from it by this much, with
+    // fibres running along it: a ridge of bark rather than a flat band.
+    double relief = 0.0;
+    // Bark plates: above 0, the stroke lays a net of plates split by dark
+    // fissures, this strongly. Each plate is lit on the side facing
+    // lightAngle and has its own shade. plateSize is across one, in pixels;
+    // plateStretch how many times longer than wide. With rollGrain the net
+    // runs along the stroke and bends with it; without, it's fixed to the
+    // canvas, running up and down, so overlapping strokes share one net.
+    double plates = 0.0;
+    double plateSize = 14.0;
+    double plateStretch = 3.5;
+
     // Watercolour: above 0, the paint is a stain, not a cover. It darkens
     // what's under it by its colour, as a glaze does (on an empty layer it
     // lays down as usual), so it never lightens and going over dry paint
@@ -252,16 +275,36 @@ private:
         double radius = 0.5;
         QPointF wide;
         float color[3] = {0, 0, 0}; // linear
+        // Where the mark is on the stroke: how far along it, which way it's
+        // going there (a unit vector), and how far off its middle (pixels,
+        // along the stroke's left hand). For grain that rides the stroke, the
+        // torn edge and relief.
+        double along = 0.0;
+        QPointF heading{1.0, 0.0};
+        double offset = 0.0;
     };
-    void paintOne(const StrokeSample &dab, const QPointF &wide);
-    void marksFor(const StrokeSample &dab, const QPointF &wide, QList<Mark> &out);
+    // along: how far along the stroke the dab is. offset: how far it was
+    // jittered off the stroke's middle, to its left.
+    void paintOne(const StrokeSample &dab, const QPointF &wide, double along = 0.0, double offset = 0.0);
+    void marksFor(const StrokeSample &dab, const QPointF &wide, double along, double offset, QList<Mark> &out);
+    // The way the stroke is going here, as a unit vector.
+    QPointF headingFor(const QPointF &wide) const;
     void paintMark(const Mark &mark);
     void shadeColor(double dv, double dh, double desaturate, float out[3]) const;
     void smudgeDab(const StrokeSample &dab, const QPointF &wide);
     bool smears() const { return m_mode == BrushMode::Smudge || (m_mode == BrushMode::Paint && m_settings.smear > 0.0); }
     // Coverage of the tip at an offset from the dab's centre. wide: the unit
     // vector along the tip's wide side. radius: half its width.
-    float tipCoverage(float dx, float dy, double radius, const QPointF &wide) const;
+    // grow: pixels to push the edge out by (in, below 0), for a torn edge.
+    float tipCoverage(float dx, float dy, double radius, const QPointF &wide, float grow = 0.0f) const;
+    // How far the torn edge reaches out at a place on the stroke, in pixels:
+    // along is the distance along it, side which side (+1 left, -1 right),
+    // halfWidth the stroke's half-width there.
+    float tear(double along, int side, double halfWidth) const;
+    // Bark plates at a point (px across the net, py along it): how much
+    // lighter (+) or darker (-) the paint is there. lx, ly: the direction
+    // the light comes from, in the same terms.
+    float plateShade(float px, float py, float lx, float ly) const;
     void finishHeal();
     void finishWatercolor();
     // Laying a stain of colour col (linear) at strength k over d.
@@ -306,6 +349,7 @@ private:
     QPointF m_headingFrom;
     bool m_hasPending = false;
     StrokeSample m_pending;
+    double m_pendingAlong = 0.0;
     quint32 m_strokeSeed = 0; // each stroke's bristles are its own
     quint32 m_jitterStep = 0; // one per dab on the line, so a mirrored stroke scatters the same way
     // Stretched grain runs one way for the whole stroke, from where it began:
@@ -313,6 +357,10 @@ private:
     bool m_hasGrainAxis = false;
     QPointF m_grainAxis;
     QPointF m_grainOrigin;
+    // How far along its path the stroke has come, at the dab being painted.
+    double m_along = 0.0;
+    bool m_hasLastDab = false;
+    QPointF m_lastDab;
 
     // Smudge: colour picked up under the brush, one premultiplied RGBA per
     // pixel offset from the dab centre.

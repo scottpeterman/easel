@@ -85,6 +85,23 @@ float bumps(int x, int y, float scale, int salt)
     return (a + (b - a) * tx) * (1.0f - ty) + (c + (d - c) * tx) * ty;
 }
 
+// Smooth noise at a point given in fractions of a pixel, with bumps scaleX
+// by scaleY across. For patterns laid along a stroke's path, whose
+// coordinates fall between pixels: rounding them to whole pixels would show
+// as a fine grid.
+float noiseAt(float x, float y, float scaleX, float scaleY, int salt)
+{
+    const float fx = x / std::max(scaleX, 1.0f), fy = y / std::max(scaleY, 1.0f);
+    const float flx = std::floor(fx), fly = std::floor(fy);
+    const int ix = int(flx) + salt * 7919, iy = int(fly) - salt * 104729;
+    float tx = fx - flx, ty = fy - fly;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    ty = ty * ty * (3.0f - 2.0f * ty);
+    const float a = unit(hash2(ix, iy)), b = unit(hash2(ix + 1, iy));
+    const float c = unit(hash2(ix, iy + 1)), d = unit(hash2(ix + 1, iy + 1));
+    return (a + (b - a) * tx) * (1.0f - ty) + (c + (d - c) * tx) * ty;
+}
+
 } // namespace
 
 float smoothNoise(int x, int y, double scaleX, double scaleY, int salt)
@@ -211,7 +228,8 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     m_granules.clear();
     m_watercolor = mode == BrushMode::Paint && !settings.pixel && settings.smear <= 0.0 && settings.watercolor > 0.0;
     m_multiColor = mode == BrushMode::Paint && !settings.pixel && settings.smear <= 0.0
-                   && (settings.valueJitter > 0.0 || settings.hueJitter > 0.0 || settings.edge > 0.0);
+                   && (settings.valueJitter > 0.0 || settings.hueJitter > 0.0 || settings.edge > 0.0
+                       || settings.relief > 0.0 || settings.plates > 0.0);
     if (m_multiColor)
         m_paint.reserve(8192);
     m_dabCount = 0;
@@ -222,9 +240,15 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     m_needsHeading = !settings.pixel
                      && ((shaped && settings.followStroke) || settings.streaks > 0.0
                          || (settings.edge > 0.0 && mode == BrushMode::Paint)
-                         || (settings.grain > 0.0 && settings.grainStretch > 1.0));
+                         || (settings.grain > 0.0 && (settings.grainStretch > 1.0 || settings.rollGrain))
+                         || settings.roughness > 0.0
+                         || (settings.relief > 0.0 && mode == BrushMode::Paint)
+                         || (settings.plates > 0.0 && settings.rollGrain && mode == BrushMode::Paint));
     m_hasHeading = false;
     m_hasPending = false;
+    m_pendingAlong = 0.0;
+    m_along = 0.0;
+    m_hasLastDab = false;
     m_headingFrom = first.pos;
     m_strokeSeed = hash2(int(std::lround(first.pos.x() * 16.0)), int(std::lround(first.pos.y() * 16.0)));
 
@@ -266,7 +290,7 @@ QHash<TileCoord, QImage> BrushStroke::end()
         // A click that never moved: there's no direction to turn to.
         m_hasPending = false;
         const double a = m_settings.angle * 3.141592653589793 / 180.0;
-        paintOne(m_pending, QPointF(std::cos(a), std::sin(a)));
+        paintOne(m_pending, QPointF(std::cos(a), std::sin(a)), m_pendingAlong);
     }
     if (m_mode == BrushMode::Heal)
         finishHeal();
@@ -304,6 +328,12 @@ void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
     const bool turns = m_needsHeading && m_settings.tip != BrushTip::Round && m_settings.followStroke;
 
     for (StrokeSample d : dabs) {
+        // How far along its path the stroke is here, measured on the line
+        // before any jitter knocks the dab off it.
+        if (m_hasLastDab)
+            m_along += std::hypot(d.pos.x() - m_lastDab.x(), d.pos.y() - m_lastDab.y());
+        m_lastDab = d.pos;
+        m_hasLastDab = true;
         if (m_needsHeading) {
             // The way the stroke is going, steadied over a few dabs so the
             // tip turns through a corner rather than snapping round it.
@@ -320,6 +350,7 @@ void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
             if (!m_hasHeading) {
                 // Nowhere yet: keep the dab until the stroke shows its direction.
                 m_pending = d;
+                m_pendingAlong = m_along;
                 m_hasPending = true;
                 continue;
             }
@@ -329,8 +360,9 @@ void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
         const QPointF wide = turns ? across : (m_needsHeading && m_settings.tip == BrushTip::Round) ? across : held;
         if (m_hasPending) {
             m_hasPending = false;
-            paintOne(m_pending, wide);
+            paintOne(m_pending, wide, m_pendingAlong);
         }
+        double offset = 0.0;
         if (jitter > 0.0) {
             // Off the line by a repeatable amount: the same stroke scatters the
             // same way, and its mirror images scatter with it.
@@ -338,20 +370,129 @@ void BrushStroke::paintDabs(const QList<StrokeSample> &dabs)
             ++m_jitterStep;
             const double angle = unit(h) * 6.283185307179586;
             const double reach = unit(hash2(int(h), 7)) * jitter * m_settings.diameterAt(d.pressure);
-            d.pos += QPointF(std::cos(angle), std::sin(angle)) * reach;
+            const QPointF shift = QPointF(std::cos(angle), std::sin(angle)) * reach;
+            d.pos += shift;
+            const QPointF head = headingFor(wide);
+            offset = shift.x() * -head.y() + shift.y() * head.x();
         }
-        paintOne(d, wide);
+        paintOne(d, wide, m_along, offset);
     }
 }
 
-void BrushStroke::paintOne(const StrokeSample &d, const QPointF &wide)
+QPointF BrushStroke::headingFor(const QPointF &wide) const
+{
+    if (m_hasHeading)
+        return m_heading;
+    // A tip turned with the stroke has its wide side square to the way it's
+    // going; one held still says nothing, so take the turn from it anyway.
+    return QPointF(wide.y(), -wide.x());
+}
+
+float BrushStroke::tear(double along, int side, double halfWidth) const
+{
+    const double rough = std::clamp(m_settings.roughness, 0.0, 1.0);
+    if (rough <= 0.0 || m_settings.pixel)
+        return 0.0f;
+    // Long runs along the stroke with shorter splits in them: the stringy,
+    // torn look of a bark plate's side. Each side, and each stroke, its own.
+    // The pattern's scale is the stroke's, not the dab's: dabs pressed
+    // harder or lighter must still agree on where the edge is.
+    const double hw = std::max(1.0, halfWidth);
+    const double scale = std::max(1.0, m_settings.size * 0.5);
+    const int salt = int(m_strokeSeed & 0x3FF) * 2 + (side > 0 ? 1 : 0) + 40;
+    const float at = float(along);
+    const float broad = noiseAt(at, 0.5f, float(std::max(2.0, scale * 1.6)), 1.0f, salt);
+    const float fine = noiseAt(at, 0.5f, float(std::max(1.5, scale * 0.3)), 1.0f, salt + 5000);
+    float g = (0.7f * broad + 0.3f * fine) * 2.0f - 1.0f; // -1..1
+    // Splits bite in deeper than the edge swells out.
+    if (g < 0.0f)
+        g = -std::pow(-g, 0.7f) * 1.25f;
+    return float(rough * hw * 0.5) * g;
+}
+
+float BrushStroke::plateShade(float px, float py, float lx, float ly) const
+{
+    const float cs = float(std::clamp(m_settings.plateSize, 3.0, 400.0));
+    const float st = float(std::clamp(m_settings.plateStretch, 1.0, 12.0));
+    const int salt = 61;
+    // Wander the net a little, so no fissure runs dead straight.
+    const float wx = (noiseAt(px, py, cs * 0.7f, cs * st * 0.5f, salt) - 0.5f) * cs * 0.55f;
+    const float wy = (noiseAt(px, py, cs * 0.9f, cs * st * 0.9f, salt + 1) - 0.5f) * cs * st * 0.3f;
+    // In plate units: one plate is about one unit each way.
+    const float qx = (px + wx) / cs, qy = (py + wy) / (cs * st);
+    const int ix = int(std::floor(qx)), iy = int(std::floor(qy));
+    // The nearest two plate centres: the fissure runs where they're equally near.
+    float f1 = 1e9f, f2 = 1e9f;
+    float c1x = 0.0f, c1y = 0.0f, c2x = 0.0f, c2y = 0.0f;
+    quint32 c1h = 0;
+    for (int j = -1; j <= 1; ++j)
+        for (int i = -1; i <= 1; ++i) {
+            const quint32 h = hash2(ix + i + salt * 7919, iy + j);
+            // Rows of plates offset like brickwork, which is how a fissure
+            // net interlaces; then each centre wanders within its cell.
+            const float cx = float(ix + i) + 0.5f + (unit(h) - 0.5f) * 0.7f;
+            const float cy = float(iy + j) + 0.5f * float((ix + i) & 1) + (unit(hash2(int(h), 3)) - 0.5f) * 0.6f;
+            const float ddx = qx - cx, ddy = (qy - cy) * 1.0f;
+            const float dd = ddx * ddx + ddy * ddy;
+            if (dd < f1) {
+                f2 = f1;
+                c2x = c1x;
+                c2y = c1y;
+                f1 = dd;
+                c1x = ddx;
+                c1y = ddy;
+                c1h = h;
+            } else if (dd < f2) {
+                f2 = dd;
+                c2x = ddx;
+                c2y = ddy;
+            }
+        }
+    const float d1 = std::sqrt(f1), d2 = std::sqrt(f2);
+    // How far from the fissure, in pixels across the plate.
+    const float edge = (d2 - d1) * 0.5f * cs;
+    // Fissures open and close as they run, and their sides are ragged.
+    const float width = std::max(0.8f, cs * 0.13f)
+                        * (0.45f + 1.1f * noiseAt(px, py, cs * 0.5f, cs * st * 0.35f, salt + 2))
+                        * (0.8f + 0.4f * noiseAt(px, py, 2.0f, 3.0f, salt + 3));
+    const float c = std::clamp((width - edge) / std::max(0.8f, width * 0.6f) + 0.5f, 0.0f, 1.0f);
+    float crack = c * c * (3.0f - 2.0f * c);
+    // Bark splits along the trunk as it grows. A fissure across it, between
+    // one plate and the next one up, is shallow and often not there at all.
+    const float nx = c2x - c1x, ny = (c2y - c1y) * st; // across the fissure, in true proportion
+    const float nl = std::sqrt(nx * nx + ny * ny);
+    if (nl > 1e-5f) {
+        const float acrossTrunk = std::abs(nx) / nl; // 1 for a fissure running along it
+        const float keep = noiseAt(px, py, cs * 1.5f, cs * st * 0.6f, salt + 5) > 0.55f ? 0.55f : 0.12f;
+        crack *= keep + (1.0f - keep) * acrossTrunk * acrossTrunk;
+    }
+
+    // Each plate is a little domed: lit on the side towards the light, and
+    // falling into shadow on the far side, nearest the fissure.
+    const float len = std::sqrt(c1x * c1x + c1y * c1y);
+    float shade = 0.0f;
+    if (len > 1e-4f) {
+        const float rim = std::clamp(1.0f - edge / (cs * 0.45f), 0.0f, 1.0f); // 1 at the fissure
+        shade = ((c1x * lx + c1y * ly) / len) * rim * rim * 0.4f;
+        // And both sides darken going down into the fissure.
+        shade -= rim * rim * rim * 0.45f;
+    }
+    // Plates differ: some lighter, some darker.
+    shade += (unit(hash2(int(c1h), 9)) - 0.5f) * 0.3f;
+    // Their faces are rough and stringy, with paler blotches like lichen.
+    shade += (noiseAt(px, py, std::max(1.0f, cs * 0.1f), cs * st * 0.25f, salt + 4) - 0.5f) * 0.3f;
+    shade += std::max(0.0f, noiseAt(px, py, cs * 0.6f, cs * 0.8f, salt + 6) - 0.62f) * 0.9f;
+    return shade - crack * 1.6f;
+}
+
+void BrushStroke::paintOne(const StrokeSample &d, const QPointF &wide, double along, double offset)
 {
     if (smears()) {
         smudgeDab(d, wide);
         return;
     }
     QList<Mark> marks;
-    marksFor(d, wide, marks);
+    marksFor(d, wide, along, offset, marks);
     const bool mirrored = m_symmetry != Symmetry::Off && (m_mode == BrushMode::Paint || m_mode == BrushMode::Erase);
     const bool acrossX = m_symmetry == Symmetry::LeftRight || m_symmetry == Symmetry::Quarters;
     const bool acrossY = m_symmetry == Symmetry::TopBottom || m_symmetry == Symmetry::Quarters;
@@ -365,19 +506,27 @@ void BrushStroke::paintOne(const StrokeSample &d, const QPointF &wide)
         const QPointF c = dabCentre(m.pos, m_settings.pixel);
         const QPointF flipped(2.0 * m_axis.x() - c.x(), 2.0 * m_axis.y() - c.y());
         Mark mm = m;
+        // A mirror image turns left into right: its offset off the middle of
+        // its stroke changes side. Turned both ways, it's only rotated.
         if (acrossX) {
             mm.pos = QPointF(flipped.x(), c.y());
             mm.wide = QPointF(-m.wide.x(), m.wide.y());
+            mm.heading = QPointF(-m.heading.x(), m.heading.y());
+            mm.offset = -m.offset;
             paintMark(mm);
         }
         if (acrossY) {
             mm.pos = QPointF(c.x(), flipped.y());
             mm.wide = QPointF(m.wide.x(), -m.wide.y());
+            mm.heading = QPointF(m.heading.x(), -m.heading.y());
+            mm.offset = -m.offset;
             paintMark(mm);
         }
         if (acrossX && acrossY) {
             mm.pos = flipped;
             mm.wide = QPointF(-m.wide.x(), -m.wide.y());
+            mm.heading = QPointF(-m.heading.x(), -m.heading.y());
+            mm.offset = m.offset;
             paintMark(mm);
         }
     }
@@ -399,8 +548,10 @@ void BrushStroke::shadeColor(double dv, double dh, double desaturate, float out[
     out[2] = srgbToLinear(float(c.blueF()));
 }
 
-void BrushStroke::marksFor(const StrokeSample &d, const QPointF &wide, QList<Mark> &out)
+void BrushStroke::marksFor(const StrokeSample &d, const QPointF &wide, double along, double offset,
+                           QList<Mark> &out)
 {
+    const int first = int(out.size());
     const double p = std::clamp(d.pressure, 0.0, 1.0);
     const double radius = std::max(0.5, m_settings.diameterAt(d.pressure) * 0.5);
     const bool pixel = m_settings.pixel;
@@ -466,12 +617,25 @@ void BrushStroke::marksFor(const StrokeSample &d, const QPointF &wide, QList<Mar
         shadeColor(std::clamp(m_settings.edge, 0.0, 1.0), 0.0, 0.7 * m_settings.edge, e.color);
         out.append(e);
     }
+
+    // Where each mark sits on the stroke.
+    const QPointF head = headingFor(wide);
+    const QPointF left(-head.y(), head.x());
+    for (int i = first; i < int(out.size()); ++i) {
+        Mark &m = out[i];
+        const QPointF rel = m.pos - d.pos;
+        m.heading = head;
+        m.along = along + rel.x() * head.x() + rel.y() * head.y();
+        m.offset = offset + rel.x() * left.x() + rel.y() * left.y();
+    }
 }
 
-float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF &wide) const
+float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF &wide, float grow) const
 {
-    if (m_settings.pixel || m_settings.tip == BrushTip::Round)
+    if (m_settings.pixel)
         return coverageAt(std::sqrt(dx * dx + dy * dy), radius);
+    if (m_settings.tip == BrushTip::Round)
+        return coverageAt(std::max(0.0f, std::sqrt(dx * dx + dy * dy) - grow), radius);
 
     // In the tip's own terms: u along its wide side, v across it.
     const float wx = float(wide.x()), wy = float(wide.y());
@@ -508,6 +672,9 @@ float BrushStroke::tipCoverage(float dx, float dy, double radius, const QPointF 
         outside = (k - 1.0f) / std::max(slope, 1e-6f);
         depth = k;
     }
+    // A torn edge moves the soft falloff out or in with it.
+    outside -= grow;
+    depth -= grow / a;
     const float rim = std::clamp(0.5f - outside, 0.0f, 1.0f); // antialiased over a pixel
     if (rim <= 0.0f)
         return 0.0f;
@@ -570,7 +737,9 @@ void BrushStroke::paintMark(const Mark &mark)
     const QPointF centre = dabCentre(dab.pos, m_settings.pixel);
     const double cx = centre.x(), cy = centre.y();
     // A fan's bristles splay out past its size; every other tip stays inside it.
-    const double extent = radius * (m_settings.tip == BrushTip::Fan && !m_settings.pixel ? 1.8 : 1.0);
+    // A torn edge can swell out past it by half its roughness.
+    const double rough = m_settings.pixel ? 0.0 : std::clamp(m_settings.roughness, 0.0, 1.0);
+    const double extent = radius * (m_settings.tip == BrushTip::Fan && !m_settings.pixel ? 1.8 : 1.0 + 0.5 * rough);
     const QRect box = QRect(QPoint(int(std::floor(cx - extent - 1.0)), int(std::floor(cy - extent - 1.0))),
                             QPoint(int(std::ceil(cx + extent + 1.0)), int(std::ceil(cy + extent + 1.0))))
                       & m_bounds;
@@ -601,6 +770,32 @@ void BrushStroke::paintMark(const Mark &mark)
     }
     const float ax = float(m_grainAxis.x()), ay = float(m_grainAxis.y());
     const float ox = float(m_grainOrigin.x()), oy = float(m_grainOrigin.y());
+
+    // Where a pixel is on the stroke's own path: along it and off its middle.
+    const bool rolling = !m_settings.pixel && m_settings.rollGrain && grain > 0.0f;
+    const float relief = (m_settings.pixel || m_mode != BrushMode::Paint)
+                             ? 0.0f
+                             : float(std::clamp(m_settings.relief, 0.0, 1.0));
+    const float plates = (m_settings.pixel || m_mode != BrushMode::Paint)
+                             ? 0.0f
+                             : float(std::clamp(m_settings.plates, 0.0, 1.0));
+    const bool platesRoll = plates > 0.0f && m_settings.rollGrain;
+    const bool onPath = rolling || rough > 0.0 || relief > 0.0f || platesRoll;
+    const float hx = float(mark.heading.x()), hy = float(mark.heading.y());
+    const float mAlong = float(mark.along), mOffset = float(mark.offset);
+    // The stroke's half-width here. The torn edge is keyed to the distance
+    // along the path, not to the dab, so overlapping dabs agree on it.
+    const float hw = float(std::max(1.0, radius));
+    // Relief: how squarely the light falls across the stroke (+ lights its
+    // left side).
+    float lightAcross = 0.0f, lightAlong = 0.0f, lightX = 0.0f, lightY = 0.0f;
+    if (relief > 0.0f || plates > 0.0f) {
+        const double la = m_settings.lightAngle * 3.141592653589793 / 180.0;
+        lightX = float(std::cos(la));
+        lightY = float(std::sin(la));
+        lightAcross = float(std::cos(la) * -mark.heading.y() + std::sin(la) * mark.heading.x());
+        lightAlong = float(std::cos(la) * mark.heading.x() + std::sin(la) * mark.heading.y());
+    }
 
     for (const TileCoord c : TileStore::tilesIntersecting(box)) {
         const QRect tr = TileStore::tileRect(c);
@@ -635,7 +830,13 @@ void BrushStroke::paintMark(const Mark &mark)
                 const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
                 if (clip <= 0.0f)
                     continue;
-                float a = tipCoverage(dx, dy, radius, wide) * strength;
+                float sAlong = 0.0f, sOver = 0.0f;
+                if (onPath) {
+                    sAlong = mAlong + dx * hx + dy * hy;
+                    sOver = mOffset + (-dx * hy + dy * hx);
+                }
+                const float grow = rough > 0.0 ? tear(sAlong, sOver >= 0.0f ? 1 : -1, hw) : 0.0f;
+                float a = tipCoverage(dx, dy, radius, wide, grow) * strength;
                 if (a <= 0.0f)
                     continue;
                 if (streaks > 0.0f) {
@@ -654,7 +855,14 @@ void BrushStroke::paintMark(const Mark &mark)
                 }
                 if (grain > 0.0f) {
                     float tooth;
-                    if (stretch > 1.0f) {
+                    if (rolling) {
+                        // Paper laid along the stroke's path: its streaks
+                        // bend round with it, square to its sides.
+                        const float gs = float(std::max(1.0, m_settings.grainSize));
+                        const int salt = 21 + int(m_strokeSeed & 0xFF) * 2;
+                        tooth = 0.65f * noiseAt(sOver, sAlong, gs, gs * stretch, salt)
+                                + 0.35f * noiseAt(sOver, sAlong, std::max(1.0f, gs * 0.5f), gs * stretch * 0.5f, salt + 1);
+                    } else if (stretch > 1.0f) {
                         // Paper turned to run along the stroke and drawn out that way.
                         const float rx = float(x) - ox, ry = float(y) - oy;
                         const int along = int(std::lround(rx * ax + ry * ay));
@@ -679,11 +887,50 @@ void BrushStroke::paintMark(const Mark &mark)
                 m += a * (1.0f - m);
                 const float cov = m * opacity * clip;
                 // The stroke's colour here: each mark's laid over the last.
-                float col[3] = {mark.color[0], mark.color[1], mark.color[2]};
+                float mc[3] = {mark.color[0], mark.color[1], mark.color[2]};
+                if (relief > 0.0f || plates > 0.0f) {
+                    float s = 0.0f;
+                    if (plates > 0.0f) {
+                        // The net across and along: the stroke's path, or the
+                        // canvas running up and down. The canvas's "along"
+                        // is downwards, its "across" to the right; the
+                        // stroke's across is to its left.
+                        s += plates * (platesRoll ? plateShade(sOver, sAlong, lightAcross, lightAlong)
+                                                  : plateShade(float(x) + 0.5f, float(y) + 0.5f, lightX, lightY));
+                    }
+                    if (relief > 0.0f) {
+                        // Across the ridge, -1 one side to 1 the other, and how
+                        // much light that part of its round face catches.
+                        const float t = std::clamp(sOver / hw, -1.0f, 1.0f);
+                        s += relief * 1.2f * lightAcross * (0.75f * t + 0.25f * t * std::abs(t));
+                        // Its sides fall away into the cracks between ridges.
+                        const float t2 = t * t;
+                        s -= relief * 0.7f * t2 * t2;
+                        // Fibres: fine light and dark threads running along it,
+                        // and here and there a dark split. Sized by the stroke,
+                        // not the dab, so every dab lays the same threads.
+                        const float fw = float(std::max(1.5, m_settings.size * 0.06));
+                        const int fs = 31 + int(m_strokeSeed & 0xFF) * 3;
+                        const float fib = 0.65f * noiseAt(sOver, sAlong, fw, fw * 10.0f, fs)
+                                          + 0.35f * noiseAt(sOver, sAlong, fw * 0.6f, fw * 5.0f, fs + 1);
+                        s += relief * 0.55f * (fib * 2.0f - 1.0f);
+                        const float split = noiseAt(sOver, sAlong, fw * 1.6f, fw * 22.0f, fs + 2);
+                        const float sk = std::clamp((split - 0.7f) / 0.12f, 0.0f, 1.0f);
+                        s -= relief * 1.3f * sk * sk * (3.0f - 2.0f * sk);
+                    }
+                    s = std::clamp(s, -0.95f, 1.0f);
+                    // Linear light: shade by exposure, so the hue holds; a
+                    // touch of warm white on the brightest catches.
+                    const float gain = s >= 0.0f ? 1.0f + 2.6f * s : 1.0f + s;
+                    const float lift = std::max(0.0f, s - 0.55f) * 0.25f;
+                    for (int k = 0; k < 3; ++k)
+                        mc[k] = std::min(1.0f, mc[k] * gain + lift);
+                }
+                float col[3] = {mc[0], mc[1], mc[2]};
                 if (paint) {
                     float *pc = paint + size_t(i) * 3;
                     for (int k = 0; k < 3; ++k) {
-                        pc[k] = mark.color[k] * a + pc[k] * (1.0f - a);
+                        pc[k] = mc[k] * a + pc[k] * (1.0f - a);
                         col[k] = pc[k] / std::max(m, 1e-6f);
                     }
                 }
