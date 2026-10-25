@@ -247,6 +247,11 @@ private:
     StrokeSample m_pending;
     quint32 m_strokeSeed = 0; // each stroke's bristles are its own
     quint32 m_jitterStep = 0; // one per dab on the line, so a mirrored stroke scatters the same way
+    // Stretched grain runs one way for the whole stroke, from where it began:
+    // turning it with every bend would make the streaks swirl.
+    bool m_hasGrainAxis = false;
+    QPointF m_grainAxis;
+    QPointF m_grainOrigin;
 
     // Smudge: colour picked up under the brush, one premultiplied RGBA per
     // pixel offset from the dab centre.

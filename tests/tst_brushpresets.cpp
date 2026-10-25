@@ -593,6 +593,39 @@ private slots:
             }
         QVERIFY2(across > along * 2, qPrintable(QStringLiteral("%1 %2").arg(along).arg(across)));
     }
+
+    void aLoadedKnifeSkipsTheSameWayWhereverItIsPulled()
+    {
+        // The streaks belong to the stroke, not to where it is on the canvas:
+        // the same pull far from the corner leaves the same pattern.
+        const BrushPreset *knife = brushPreset(QStringLiteral("knife-loaded"));
+        QVERIFY(knife);
+        const QRect big(0, 0, 3000, 2000);
+        const auto pull = [&](const QPointF &at) {
+            TileStore s(QColor(60, 50, 70));
+            BrushStroke stroke;
+            stroke.begin(&s, big, knife->settings, Qt::white, BrushMode::Paint, {at, 0.25});
+            for (int i = 1; i <= 60; ++i)
+                stroke.moveTo({at + QPointF(i * 2.0, i * 1.2), 0.25});
+            stroke.end();
+            return s;
+        };
+        const QPointF near(60, 60), far(2600, 1700);
+        const TileStore a = pull(near), b = pull(far);
+        int same = 0, total = 0;
+        for (int y = 30; y < 170; ++y)
+            for (int x = 30; x < 200; ++x) {
+                const bool pa = pixelToColor(a.pixel(x, y)).lightness() > 160;
+                const QPoint q = QPoint(x, y) + (far - near).toPoint();
+                const bool pb = pixelToColor(b.pixel(q.x(), q.y())).lightness() > 160;
+                if (pa || pb) {
+                    ++total;
+                    same += pa == pb;
+                }
+            }
+        QVERIFY(total > 500);
+        QVERIFY2(same > total * 0.97, qPrintable(QStringLiteral("%1 of %2").arg(same).arg(total)));
+    }
 };
 
 QTEST_MAIN(TestBrushPresets)

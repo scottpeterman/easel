@@ -212,6 +212,8 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
         m_paint.reserve(8192);
     m_dabCount = 0;
     m_jitterStep = 0;
+    m_hasGrainAxis = false;
+    m_grainOrigin = first.pos;
     const bool shaped = settings.tip != BrushTip::Round && !settings.pixel;
     m_needsHeading = !settings.pixel
                      && ((shaped && settings.followStroke) || settings.streaks > 0.0
@@ -586,7 +588,12 @@ void BrushStroke::paintMark(const Mark &mark)
     const float bristle = float(std::clamp(m_settings.size / 14.0, 1.2, 4.0)); // across one, in pixels
     // Stretched paper runs along the stroke: the tip's narrow way.
     const float stretch = float(std::clamp(m_settings.grainStretch, 1.0, 40.0));
-    const float ax = -wy, ay = wx;
+    if (stretch > 1.0f && !m_hasGrainAxis) {
+        m_grainAxis = QPointF(-wy, wx); // along the stroke as it set off
+        m_hasGrainAxis = true;
+    }
+    const float ax = float(m_grainAxis.x()), ay = float(m_grainAxis.y());
+    const float ox = float(m_grainOrigin.x()), oy = float(m_grainOrigin.y());
 
     for (const TileCoord c : TileStore::tilesIntersecting(box)) {
         const QRect tr = TileStore::tileRect(c);
@@ -641,8 +648,9 @@ void BrushStroke::paintMark(const Mark &mark)
                     float tooth;
                     if (stretch > 1.0f) {
                         // Paper turned to run along the stroke and drawn out that way.
-                        const int along = int(std::lround(float(x) * ax + float(y) * ay));
-                        const int over = int(std::lround(-float(x) * ay + float(y) * ax));
+                        const float rx = float(x) - ox, ry = float(y) - oy;
+                        const int along = int(std::lround(rx * ax + ry * ay));
+                        const int over = int(std::lround(-rx * ay + ry * ax));
                         const double gs = std::max(1.0, m_settings.grainSize);
                         tooth = 0.65f * smoothNoise(over, along, gs, gs * stretch, 11)
                                 + 0.35f * smoothNoise(over, along, std::max(1.0, gs * 0.5), gs * stretch * 0.5, 12);
