@@ -22,6 +22,7 @@ const QList<BrushPreset> &brushPresets()
     const QString charcoal = QStringLiteral("Charcoal");
     const QString paint = QStringLiteral("Paint");
     const QString trees = QStringLiteral("Trees");
+    const QString water = QStringLiteral("Watercolour");
 
     // Sizes suit a canvas a couple of thousand pixels across.
     static const QList<BrushPreset> presets = {
@@ -183,6 +184,31 @@ const QList<BrushPreset> &brushPresets()
                  b.pressureSize = true, b.minSize = 0.3, b.pressureOpacity = false;
                  b.tip = BrushTip::Flat, b.aspect = 0.5, b.followStroke = true;
                  b.edge = 0.65, b.lightAngle = 0.0, b.edgeWidth = 0.3;
+             }),
+
+        // Watercolour: stains that darken what's under them rather than
+        // covering it, dry with a darker edge, and settle in the paper.
+        // Light colours first; each stroke over dry paint deepens it.
+        make("wc-wash", QStringLiteral("Wash"), water,
+             [](BrushSettings &b) {
+                 // A broad, even, pale stain for skies and first layers.
+                 b.size = 140, b.hardness = 0.35, b.opacity = 0.55, b.flow = 1.0, b.spacing = 0.08;
+                 b.pressureSize = false, b.pressureOpacity = false;
+                 b.watercolor = 0.5, b.granulation = 0.3, b.grainSize = 3.0;
+             }),
+        make("wc-round", QStringLiteral("Round watercolour"), water,
+             [](BrushSettings &b) {
+                 b.size = 28, b.hardness = 0.7, b.opacity = 0.7, b.flow = 1.0, b.spacing = 0.08;
+                 b.pressureSize = true, b.minSize = 0.25, b.pressureOpacity = true;
+                 b.watercolor = 0.75, b.granulation = 0.4, b.grainSize = 2.6;
+             }),
+        make("wc-flat", QStringLiteral("Flat watercolour"), water,
+             [](BrushSettings &b) {
+                 // Broad planes: a mountain's faces, a field, a band of trees.
+                 b.size = 54, b.hardness = 0.75, b.opacity = 0.65, b.flow = 1.0, b.spacing = 0.1;
+                 b.pressureSize = true, b.minSize = 0.6, b.pressureOpacity = false;
+                 b.tip = BrushTip::Flat, b.aspect = 0.35, b.followStroke = true, b.streaks = 0.15;
+                 b.watercolor = 0.7, b.granulation = 0.5, b.grainSize = 3.0;
              }),
     };
     return presets;

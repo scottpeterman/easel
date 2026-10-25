@@ -72,7 +72,8 @@ private slots:
             }
         }
         QCOMPARE(groups, QStringList({QStringLiteral("Pencils"), QStringLiteral("Ink"), QStringLiteral("Charcoal"),
-                                      QStringLiteral("Paint"), QStringLiteral("Trees")}));
+                                      QStringLiteral("Paint"), QStringLiteral("Trees"),
+                                      QStringLiteral("Watercolour")}));
         QVERIFY(!brushPreset(QStringLiteral("no-such-brush")));
 
         // The plain brush is what a brush has always been.
@@ -625,6 +626,124 @@ private slots:
             }
         QVERIFY(total > 500);
         QVERIFY2(same > total * 0.97, qPrintable(QStringLiteral("%1 of %2").arg(same).arg(total)));
+    }
+
+    void watercolourStainsAndNeverLightens()
+    {
+        const BrushPreset *wc = brushPreset(QStringLiteral("wc-round"));
+        QVERIFY(wc);
+        BrushSettings b = wc->settings;
+        b.granulation = 0.0;
+        b.pressureSize = false;
+        b.size = 30;
+        // Pale yellow over a dark ground: a stain only darkens.
+        const QColor ground(40, 50, 80);
+        TileStore s(ground);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, QColor(250, 235, 140), BrushMode::Paint, {{40, 100}, 1.0});
+        for (int x = 44; x <= 360; x += 3)
+            stroke.moveTo({{double(x), 100}, 1.0});
+        stroke.end();
+        int touched = 0;
+        for (int y = 70; y <= 130; ++y)
+            for (int x = 30; x <= 370; ++x) {
+                const QColor c = pixelToColor(s.pixel(x, y));
+                QVERIFY(c.red() <= ground.red() + 1 && c.green() <= ground.green() + 1 && c.blue() <= ground.blue() + 1);
+                touched += c != ground;
+            }
+        QVERIFY(touched > 1000);
+    }
+
+    void watercolourGlazesDeepenAndKeepTheirHue()
+    {
+        const BrushPreset *wc = brushPreset(QStringLiteral("wc-round"));
+        QVERIFY(wc);
+        BrushSettings b = wc->settings;
+        b.granulation = 0.0;
+        b.pressureSize = false;
+        b.size = 40;
+        const QColor blue(90, 130, 200);
+        const auto pass = [&](TileStore &s, double y) {
+            BrushStroke stroke;
+            stroke.begin(&s, kBounds, b, blue, BrushMode::Paint, {{40, y}, 1.0});
+            for (int x = 44; x <= 360; x += 3)
+                stroke.moveTo({{double(x), y}, 1.0});
+            stroke.end();
+        };
+        TileStore s(Qt::white);
+        pass(s, 100);
+        const QColor once = pixelToColor(s.pixel(200, 100));
+        pass(s, 100);
+        const QColor twice = pixelToColor(s.pixel(200, 100));
+        QVERIFY2(twice.lightness() < once.lightness() - 10, qPrintable(QStringLiteral("%1 %2").arg(once.lightness()).arg(twice.lightness())));
+        // Still blue: blue the strongest channel, red the weakest.
+        QVERIFY(once.blue() > once.green() && once.green() > once.red());
+        QVERIFY(twice.blue() > twice.green() && twice.green() > twice.red());
+
+        // On an empty layer it lays down, and glazes there too.
+        TileStore layer;
+        pass(layer, 100);
+        const Pixel p1 = layer.pixel(200, 100);
+        QVERIFY(float(p1.a) > 0.4f);
+        pass(layer, 100);
+        const Pixel p2 = layer.pixel(200, 100);
+        QVERIFY(float(p2.r) < float(p1.r) && float(p2.g) < float(p1.g));
+    }
+
+    void watercolourDriesDarkerAtTheEdge()
+    {
+        const BrushPreset *wc = brushPreset(QStringLiteral("wc-round"));
+        QVERIFY(wc);
+        BrushSettings b = wc->settings;
+        b.granulation = 0.0;
+        b.pressureSize = false;
+        b.hardness = 1.0;
+        b.size = 60;
+        TileStore s(Qt::white);
+        BrushStroke stroke;
+        stroke.begin(&s, kBounds, b, QColor(170, 80, 70), BrushMode::Paint, {{60, 100}, 1.0});
+        for (int x = 63; x <= 340; x += 3)
+            stroke.moveTo({{double(x), 100}, 1.0});
+        // Wet: even right across.
+        const double wetEdge = pixelToColor(s.pixel(200, 75)).lightnessF(), wetMiddle = pixelToColor(s.pixel(200, 100)).lightnessF();
+        QVERIFY(std::abs(wetEdge - wetMiddle) < 0.02);
+        stroke.end();
+        // Dry: a darker band just inside the edge, all along it.
+        double edge = 0, middle = 0;
+        for (int x = 100; x <= 300; ++x) {
+            edge += pixelToColor(s.pixel(x, 74)).lightnessF() + pixelToColor(s.pixel(x, 126)).lightnessF();
+            middle += 2 * pixelToColor(s.pixel(x, 100)).lightnessF();
+        }
+        QVERIFY2(edge < middle - 0.03 * 402, qPrintable(QStringLiteral("%1 %2").arg(edge).arg(middle)));
+    }
+
+    void watercolourGranulatesInThePaper()
+    {
+        const BrushPreset *wc = brushPreset(QStringLiteral("wc-wash"));
+        QVERIFY(wc);
+        const auto spread = [&](double gran) {
+            BrushSettings b = wc->settings;
+            b.granulation = gran;
+            b.size = 120;
+            TileStore s(Qt::white);
+            BrushStroke stroke;
+            stroke.begin(&s, kBounds, b, QColor(60, 80, 140), BrushMode::Paint, {{40, 100}, 1.0});
+            for (int x = 44; x <= 360; x += 3)
+                stroke.moveTo({{double(x), 100}, 1.0});
+            stroke.end();
+            double sum = 0, sq = 0;
+            int n = 0;
+            for (int y = 85; y <= 115; ++y)
+                for (int x = 120; x <= 280; ++x) {
+                    const double l = pixelToColor(s.pixel(x, y)).lightnessF();
+                    sum += l, sq += l * l, ++n;
+                }
+            const double mean = sum / n;
+            return std::sqrt(std::max(0.0, sq / n - mean * mean));
+        };
+        const double smooth = spread(0.0), grainy = spread(0.8);
+        QVERIFY2(smooth < 0.01, qPrintable(QString::number(smooth)));
+        QVERIFY2(grainy > smooth + 0.015, qPrintable(QStringLiteral("%1 %2").arg(smooth).arg(grainy)));
     }
 };
 

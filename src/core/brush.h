@@ -89,6 +89,16 @@ struct BrushSettings {
     double lightAngle = 180.0;
     double edgeWidth = 0.3; // across the edge, as a fraction of the tip's width
 
+    // Watercolour: above 0, the paint is a stain, not a cover. It darkens
+    // what's under it by its colour, as a glaze does (on an empty layer it
+    // lays down as usual), so it never lightens and going over dry paint
+    // deepens it. When the stroke ends it dries: the pigment drifts to the
+    // edge, which comes out darker by this much.
+    double watercolor = 0.0;
+    // Watercolour: pigment settles in the paper's hollows and thins on its
+    // high points, by this much (0..1), in bumps grainSize across.
+    double granulation = 0.0;
+
     static constexpr double MinSize = 1.0;
     static constexpr double MaxSize = 1000.0;
 
@@ -212,6 +222,12 @@ private:
     // vector along the tip's wide side. radius: half its width.
     float tipCoverage(float dx, float dy, double radius, const QPointF &wide) const;
     void finishHeal();
+    void finishWatercolor();
+    // Laying a stain of colour col (linear) at strength k over d.
+    static Pixel stain(const Pixel &d, const float col[3], float k);
+    float granuleAt(int x, int y) const;
+    // granuleAt for every pixel of a tile, worked out once per stroke.
+    const float *granules(TileCoord c);
     float coverageAt(double dist, double radius) const;
     float fanCoverage(float u, float v, float a) const;
 
@@ -232,7 +248,9 @@ private:
     // Strokes whose marks differ in colour keep, beside the coverage, the
     // colour laid so far (linear, premultiplied by that coverage).
     bool m_multiColor = false;
+    bool m_watercolor = false;
     QHash<TileCoord, std::vector<float>> m_paint;
+    QHash<TileCoord, std::vector<float>> m_granules;
     QColor m_baseColor;
     QSet<TileCoord> m_touched;
     Selection m_clip;

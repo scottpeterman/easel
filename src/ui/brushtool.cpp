@@ -45,6 +45,8 @@ void load(QSettings &s, const QString &group, BrushSettings &b)
     b.edge = s.value(QStringLiteral("edge"), b.edge).toDouble();
     b.lightAngle = s.value(QStringLiteral("lightAngle"), b.lightAngle).toDouble();
     b.edgeWidth = s.value(QStringLiteral("edgeWidth"), b.edgeWidth).toDouble();
+    b.watercolor = s.value(QStringLiteral("watercolor"), b.watercolor).toDouble();
+    b.granulation = s.value(QStringLiteral("granulation"), b.granulation).toDouble();
     s.endGroup();
 }
 
@@ -80,6 +82,8 @@ void save(QSettings &s, const QString &group, const BrushSettings &b)
     s.setValue(QStringLiteral("edge"), b.edge);
     s.setValue(QStringLiteral("lightAngle"), b.lightAngle);
     s.setValue(QStringLiteral("edgeWidth"), b.edgeWidth);
+    s.setValue(QStringLiteral("watercolor"), b.watercolor);
+    s.setValue(QStringLiteral("granulation"), b.granulation);
     s.endGroup();
 }
 

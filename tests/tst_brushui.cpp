@@ -129,7 +129,7 @@ private slots:
             }
         }
         QCOMPARE(rows, int(brushPresets().size()));
-        QCOMPARE(headings, 5);
+        QCOMPARE(headings, 6);
         // The whole list fits a 12" tablet's screen without scrolling.
         QVERIFY2(list->height() <= 680, qPrintable(QString::number(list->height())));
         // In two columns, each starting at a heading: the trees beside the pencils.

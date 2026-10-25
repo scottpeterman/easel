@@ -17,7 +17,7 @@ struct BrushPreset {
 };
 
 // Built in, in the order they're listed: pencils, ink, charcoal and chalk,
-// paint (round, flat, filbert, dry brush, palette knife, fan, loaded knife, airbrush), trees (foliage, bark). The first of the paint ones, "round", is the plain brush Easeletch
+// paint (round, flat, filbert, dry brush, palette knife, fan, loaded knife, airbrush), trees (foliage, bark), watercolour (wash, round, flat). The first of the paint ones, "round", is the plain brush Easeletch
 // has always had.
 const QList<BrushPreset> &brushPresets();
 // Null if there's no such preset.

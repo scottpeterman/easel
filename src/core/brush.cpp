@@ -3,7 +3,9 @@
 #include "heal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <thread>
 
 namespace easeletch {
 
@@ -206,6 +208,8 @@ void BrushStroke::begin(TileStore *target, const QRect &bounds, const BrushSetti
     // and showed up as 5-10 ms hitches at 512 and 1024 touched tiles.
     m_mask.reserve(8192);
     m_paint.clear();
+    m_granules.clear();
+    m_watercolor = mode == BrushMode::Paint && !settings.pixel && settings.smear <= 0.0 && settings.watercolor > 0.0;
     m_multiColor = mode == BrushMode::Paint && !settings.pixel && settings.smear <= 0.0
                    && (settings.valueJitter > 0.0 || settings.hueJitter > 0.0 || settings.edge > 0.0);
     if (m_multiColor)
@@ -266,6 +270,8 @@ QHash<TileCoord, QImage> BrushStroke::end()
     }
     if (m_mode == BrushMode::Heal)
         finishHeal();
+    if (m_watercolor)
+        finishWatercolor();
 
     for (const TileCoord c : std::as_const(m_touched))
         before.insert(c, m_before.tile(c));
@@ -274,6 +280,7 @@ QHash<TileCoord, QImage> BrushStroke::end()
     m_before = TileStore();
     m_mask.clear();
     m_paint.clear();
+    m_granules.clear();
     m_touched.clear();
     m_carry.clear();
     return before;
@@ -602,6 +609,7 @@ void BrushStroke::paintMark(const Mark &mark)
         std::vector<float> &mask = m_mask[c];
         if (mask.empty())
             mask.assign(size_t(N) * N, 0.0f);
+        const float *gran = m_watercolor ? granules(c) : nullptr;
         float *paint = nullptr;
         if (m_multiColor) {
             std::vector<float> &pv = m_paint[c];
@@ -696,6 +704,9 @@ void BrushStroke::paintMark(const Mark &mark)
                     const float k = cov * 0.5f;
                     out[i] = makePixel(dr + (0.2f - dr) * k, dg + (0.2f - dg) * k, db + (0.2f - db) * k,
                                        da + (1.0f - da) * k);
+                } else if (m_watercolor) {
+                    // Wet: an even stain for now; the rim darkens when it dries.
+                    out[i] = stain(d, col, std::min(1.0f, m_colorAlpha * cov * (gran ? gran[i] : 1.0f)));
                 } else {
                     const float sa = m_colorAlpha * cov; // source alpha
                     const float k = 1.0f - sa;
@@ -705,6 +716,184 @@ void BrushStroke::paintMark(const Mark &mark)
             }
         }
     }
+}
+
+namespace {
+
+// Runs work(i) for i in [0, n), spread over the cores when there's enough of it.
+template <typename F>
+void parallelFor(int n, int minPerWorker, const F &work)
+{
+    const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned workers = std::min<unsigned>({cores, 16u, unsigned(std::max(1, n / std::max(1, minPerWorker)))});
+    std::atomic<int> next{0};
+    const auto run = [&] {
+        for (int i = next.fetch_add(1); i < n; i = next.fetch_add(1))
+            work(i);
+    };
+    if (workers <= 1) {
+        run();
+        return;
+    }
+    std::vector<std::thread> pool;
+    for (unsigned t = 1; t < workers; ++t)
+        pool.emplace_back(run);
+    run();
+    for (std::thread &t : pool)
+        t.join();
+}
+
+} // namespace
+
+Pixel BrushStroke::stain(const Pixel &d, const float col[3], float k)
+{
+    // Over paint, it multiplies: each channel keeps (1 - k) of itself plus k
+    // of itself times the colour, so it can only darken. Over nothing, it lays
+    // down as a wash of that strength. A half-covered pixel gets some of both.
+    const float da = float(d.a), empty = 1.0f - da;
+    const float r = float(d.r) * (1.0f - k * (1.0f - col[0])) + col[0] * k * empty;
+    const float g = float(d.g) * (1.0f - k * (1.0f - col[1])) + col[1] * k * empty;
+    const float b = float(d.b) * (1.0f - k * (1.0f - col[2])) + col[2] * k * empty;
+    return makePixel(r, g, b, da + k * empty);
+}
+
+const float *BrushStroke::granules(TileCoord c)
+{
+    if (m_settings.granulation <= 0.0)
+        return nullptr;
+    constexpr int N = TileStore::TileSize;
+    std::vector<float> &g = m_granules[c];
+    if (g.empty()) {
+        g.resize(size_t(N) * N);
+        const QRect tr = TileStore::tileRect(c);
+        for (int y = 0; y < N; ++y)
+            for (int x = 0; x < N; ++x)
+                g[size_t(y * N + x)] = granuleAt(tr.left() + x, tr.top() + y);
+    }
+    return g.data();
+}
+
+float BrushStroke::granuleAt(int x, int y) const
+{
+    const float gran = float(std::clamp(m_settings.granulation, 0.0, 1.0));
+    if (gran <= 0.0f)
+        return 1.0f;
+    // More in the hollows, less on the high points: soft clumps a few bumps
+    // of the paper across, with a little finer grit in them.
+    const double gs = std::max(1.0, m_settings.grainSize);
+    const float tooth = 0.65f * smoothNoise(x, y, gs * 2.2, gs * 2.2, 21) + 0.35f * smoothNoise(x, y, gs, gs, 22);
+    return std::max(0.0f, 1.0f + gran * 1.1f * (0.5f - tooth));
+}
+
+void BrushStroke::finishWatercolor()
+{
+    // Drying: the pigment drifts out to the edge of the wet area. Where the
+    // stroke's coverage is well above its surroundings' average, just inside
+    // the edge, the stain gets stronger; well inside, a little weaker.
+    constexpr int N = TileStore::TileSize;
+    QRect area;
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it)
+        area |= TileStore::tileRect(it.key());
+    area &= m_bounds;
+    if (area.isEmpty())
+        return;
+    const int w = area.width(), h = area.height();
+    std::vector<float> m(size_t(w) * size_t(h), 0.0f);
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
+        const QRect tr = TileStore::tileRect(it.key());
+        const QRect part = tr & area;
+        const std::vector<float> &mask = it.value();
+        for (int y = part.top(); y <= part.bottom(); ++y)
+            for (int x = part.left(); x <= part.right(); ++x)
+                m[size_t(y - area.top()) * size_t(w) + size_t(x - area.left())] =
+                    mask[size_t((y - tr.top()) * N + (x - tr.left()))];
+    }
+    // The neighbourhood's average, by two box blurs each way (close to a
+    // Gaussian), over a few pixels: the width of the dark rim.
+    const int r = int(std::clamp(m_settings.size * 0.08, 2.0, 10.0));
+    std::vector<float> blur = m, tmp(m.size());
+    const auto boxRows = [&](const std::vector<float> &in, std::vector<float> &out) {
+        parallelFor(h, 64, [&](int y) {
+            const float *row = in.data() + size_t(y) * size_t(w);
+            float *o = out.data() + size_t(y) * size_t(w);
+            float sum = 0.0f;
+            for (int x = -r; x <= r; ++x)
+                sum += row[std::clamp(x, 0, w - 1)];
+            for (int x = 0; x < w; ++x) {
+                o[x] = sum / float(2 * r + 1);
+                sum += row[std::min(x + r + 1, w - 1)] - row[std::max(x - r, 0)];
+            }
+        });
+    };
+    const auto boxCols = [&](const std::vector<float> &in, std::vector<float> &out) {
+        parallelFor(w, 64, [&](int x) {
+            float sum = 0.0f;
+            for (int y = -r; y <= r; ++y)
+                sum += in[size_t(std::clamp(y, 0, h - 1)) * size_t(w) + size_t(x)];
+            for (int y = 0; y < h; ++y) {
+                out[size_t(y) * size_t(w) + size_t(x)] = sum / float(2 * r + 1);
+                sum += in[size_t(std::min(y + r + 1, h - 1)) * size_t(w) + size_t(x)]
+                       - in[size_t(std::max(y - r, 0)) * size_t(w) + size_t(x)];
+            }
+        });
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        boxRows(blur, tmp);
+        boxCols(tmp, blur);
+    }
+
+    const float strength = float(std::clamp(m_settings.watercolor, 0.0, 1.0));
+    const float opacity = float(std::clamp(m_settings.opacity, 0.0, 1.0));
+    const Pixel def = m_before.defaultPixel();
+    // Everything that touches the stroke's tables is fetched here, on this
+    // thread; the workers only read those and write their own tile.
+    struct Job {
+        TileCoord c;
+        const float *mask;
+        const float *paint;
+        const float *gran;
+        QImage before;
+        Pixel *out;
+    };
+    std::vector<Job> jobs;
+    jobs.reserve(size_t(m_mask.size()));
+    for (auto it = m_mask.cbegin(); it != m_mask.cend(); ++it) {
+        const TileCoord c = it.key();
+        const std::vector<float> *pv = m_multiColor && m_paint.contains(c) ? &m_paint[c] : nullptr;
+        jobs.push_back({c, it.value().data(), pv && !pv->empty() ? pv->data() : nullptr, granules(c), m_before.tile(c),
+                        reinterpret_cast<Pixel *>(m_target->writableTile(c).bits())});
+    }
+    parallelFor(int(jobs.size()), 4, [&](int j) {
+        const Job &job = jobs[size_t(j)];
+        const QRect tr = TileStore::tileRect(job.c);
+        const QRect part = tr & area;
+        const auto *before = job.before.isNull() ? nullptr : reinterpret_cast<const Pixel *>(job.before.constBits());
+        for (int y = part.top(); y <= part.bottom(); ++y)
+            for (int x = part.left(); x <= part.right(); ++x) {
+                const int i = (y - tr.top()) * N + (x - tr.left());
+                const float mv = job.mask[i];
+                if (mv <= 0.0f)
+                    continue;
+                const float clip = m_clip.isEmpty() ? 1.0f : m_clip.coverage(x, y);
+                const float avg = blur[size_t(y - area.top()) * size_t(w) + size_t(x - area.left())];
+                // A dried edge is never even: it wanders in and out a little,
+                // and gathers more pigment in some places than others.
+                float cover = mv;
+                if (mv < 0.98f)
+                    cover = std::clamp(mv * (0.6f + 0.8f * smoothNoise(x, y, 7.0, 7.0, 31)), 0.0f, 1.0f);
+                // How much more of the stroke is here than around it: the rim.
+                float rim = std::clamp((mv - avg) * 2.5f, 0.0f, 1.0f);
+                if (rim > 0.0f)
+                    rim *= 0.35f + 0.9f * smoothNoise(x, y, 18.0, 18.0, 32);
+                const float density = 1.0f - 0.15f * strength + 0.9f * strength * rim;
+                const float k = std::min(1.0f, m_colorAlpha * cover * opacity * clip * (job.gran ? job.gran[i] : 1.0f) * density);
+                float col[3] = {m_color[0], m_color[1], m_color[2]};
+                if (job.paint)
+                    for (int ch = 0; ch < 3; ++ch)
+                        col[ch] = job.paint[size_t(i) * 3 + size_t(ch)] / std::max(mv, 1e-6f);
+                job.out[i] = stain(before ? before[i] : def, col, k);
+            }
+    });
 }
 
 void BrushStroke::finishHeal()
